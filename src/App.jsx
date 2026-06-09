@@ -340,12 +340,13 @@ async function saveItem() {
   let imageUrl = "";
 
   if (coverFile) {
-    const fileExt = coverFile.name.split(".").pop();
-    const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+    const fileExt = coverFile.type?.split("/")[1] || "jpg";    const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
 
     const { error: uploadError } = await supabase.storage
       .from("book-covers")
-      .upload(fileName, coverFile);
+      .upload(fileName, coverFile, {
+  contentType: coverFile.type || "image/jpeg",
+});
 
     if (uploadError) {
       alert("Image upload failed: " + uploadError.message);
