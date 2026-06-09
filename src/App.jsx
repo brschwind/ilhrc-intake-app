@@ -63,6 +63,8 @@ export default function App() {
   const [sortBy, setSortBy] = useState("title");
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
 
+  const listingPhotoInputRef = useRef(null);
+
   async function loadItems() {
     const { data, error } = await supabase
       .from("items")
@@ -95,25 +97,151 @@ export default function App() {
     setBookData(null);
   }
 
+function handleListingPhoto(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  setCoverPhoto(URL.createObjectURL(file));
+  setCoverFile(file);
+}
+
+function suggestPricingCategory(book) {
+  const text = `${book.title || ""} ${book.publisher || ""} ${
+    book.categories?.join(" ") || ""
+  }`.toLowerCase();
+
+  if (
+    text.includes("student activity") ||
+    text.includes("student workbook") ||
+    text.includes("workbook")
+  ) {
+    return pricingGuide.find(
+      (item) => item.item_name === "Workbook - Full year/curriculum"
+    );
+  }
+
+  if (
+    text.includes("teacher") ||
+    text.includes("answer key") ||
+    text.includes("solution") ||
+    text.includes("manual")
+  ) {
+    return pricingGuide.find((item) => item.item_name === "Answer Key");
+  }
+
+  if (
+    text.includes("science") ||
+    text.includes("history") ||
+    text.includes("math") ||
+    text.includes("grammar") ||
+    text.includes("textbook")
+  ) {
+    return pricingGuide.find((item) => item.item_name === "Textbook (Softcover)");
+  }
+
+  if (
+    text.includes("picture book") ||
+    text.includes("juvenile fiction") ||
+    text.includes("children")
+  ) {
+    return pricingGuide.find((item) => item.item_name === "Picture Book");
+  }
+
+  if (
+    text.includes("biography") ||
+    text.includes("fiction") ||
+    text.includes("literature") ||
+    text.includes("juvenile")
+  ) {
+    return pricingGuide.find((item) => item.item_name === "Reading Book");
+  }
+
+  return pricingGuide.find((item) => item.item_name === "Reading Book");
+}
+
 async function lookupBookByIsbn(isbn) {
   try {
-    const response = await fetch(
-      `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`
-    );
+    // 1. Try Google Books first
+    const googleUrl =
+  `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&key=${import.meta.env.VITE_GOOGLE_BOOKS_API_KEY}`;
 
-    const data = await response.json();
+console.log("API Key:", import.meta.env.VITE_GOOGLE_BOOKS_API_KEY);
 
-    if (!data.items || data.items.length === 0) {
-      alert("ISBN scanned, but no book data found.");
+const googleResponse = await fetch(googleUrl);
+console.log("Google Status:", googleResponse.status);
+
+const googleData = await googleResponse.json();
+console.log("Google Books response:", googleData);
+
+    if (googleData.items && googleData.items.length > 0) {
+      const book = googleData.items[0].volumeInfo;
+      const suggested = suggestPricingCategory(book);
+
+const coverUrl =
+  book.imageLinks?.thumbnail ||
+  book.imageLinks?.smallThumbnail ||
+  "";
+
+setBookData({
+  title: book.title || "",
+  curriculum: book.publisher || "",
+  subject: book.categories?.[0] || "",
+  grade_level: "",
+  edition: "",
+  isbn,
+  category: suggested?.item_name || "",
+  suggested_price: suggested?.price || "",
+  final_price: suggested?.price || "",
+  quantity: 1,
+  status: "Available",
+  notes: book.description || "",
+  confidence: "Google Books ISBN lookup",
+  public_visible: true,
+  image_url: "",});
+
       return;
     }
 
-    const book = data.items[0].volumeInfo;
+    // 2. Try Open Library second
+    const openLibraryResponse = await fetch(
+      `https://openlibrary.org/isbn/${isbn}.json`
+    );
 
+    if (openLibraryResponse.ok) {
+      const openLibraryData = await openLibraryResponse.json();
+      const suggested = suggestPricingCategory({
+  title: openLibraryData.title || "",
+  publisher: openLibraryData.publishers?.[0] || "",
+  categories: [],
+});
+
+console.log("Open Library response:", openLibraryData);
+
+      setBookData({
+        title: openLibraryData.title || "",
+        curriculum: openLibraryData.publishers?.[0] || "",
+        subject: "",
+        grade_level: "",
+        edition: "",
+        isbn,
+       category: suggested?.item_name || "",
+        suggested_price: suggested?.price || "",
+        final_price: suggested?.price || "",
+        quantity: 1,
+        status: "Available",
+        notes: "",
+        confidence: "Open Library ISBN lookup",
+        public_visible: true,
+      });
+
+      return;
+    }
+
+    // 3. If neither source finds it, still fill ISBN
     setBookData({
-      title: book.title || "",
-      curriculum: book.publisher || "",
-      subject: book.categories?.[0] || "",
+      title: "",
+      curriculum: "",
+      subject: "",
       grade_level: "",
       edition: "",
       isbn,
@@ -121,9 +249,12 @@ async function lookupBookByIsbn(isbn) {
       final_price: "",
       quantity: 1,
       status: "Available",
-      notes: book.description || "",
-      confidence: "Google Books ISBN lookup",
+      notes: "",
+      confidence: "ISBN scanned only",
+      public_visible: true,
     });
+
+    alert("ISBN scanned, but no book data was found. You can enter the details manually.");
   } catch (error) {
     alert("Book lookup failed: " + error.message);
   }
@@ -203,106 +334,120 @@ await lookupBookByIsbn(scannedIsbn);
   return `ILHRC-${String(nextNumber).padStart(6, "0")}`;
 }
 
-  async function saveItem() {
-    if (!bookData) return;
+async function saveItem() {
+  if (!bookData) return;
 
-    let imageUrl = "";
+  let imageUrl = "";
 
-    if (coverFile) {
-      const fileExt = coverFile.name.split(".").pop();
-      const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+  if (coverFile) {
+    const fileExt = coverFile.name.split(".").pop();
+    const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
 
-      const { error: uploadError } = await supabase.storage
-        .from("book-covers")
-        .upload(fileName, coverFile);
+    const { error: uploadError } = await supabase.storage
+      .from("book-covers")
+      .upload(fileName, coverFile);
 
-      if (uploadError) {
-        alert("Image upload failed: " + uploadError.message);
-        return;
-      }
-
-      const { data } = supabase.storage
-        .from("book-covers")
-        .getPublicUrl(fileName);
-
-      imageUrl = data.publicUrl;
-    }
-
-    const newSku = await generateSku();
-
-const itemToSave = {
-  sku: newSku,
-      title: bookData.title || "",
-      curriculum: bookData.curriculum || "",
-      subject: bookData.subject || "",
-      grade_level: bookData.grade_level || bookData.grade || "",
-      edition: bookData.edition || "",
-      isbn: bookData.isbn || "",
-      category: bookData.category || "",
-      suggested_price: bookData.suggested_price || null,
-      final_price: bookData.final_price ? Number(bookData.final_price) : null,
-      quantity: bookData.quantity ? Number(bookData.quantity) : 1,
-      status: bookData.status || "Available",
-      notes: bookData.notes || "",
-      image_url: imageUrl,
-      ai_confidence: bookData.confidence || null,
-      public_visible: true,
-    };
-
-    const { data: existingItems, error: searchError } = await supabase
-      .from("items")
-      .select("*")
-      .eq("title", itemToSave.title)
-      .eq("curriculum", itemToSave.curriculum)
-      .eq("edition", itemToSave.edition)
-      .eq("category", itemToSave.category)
-      .eq("final_price", itemToSave.final_price)
-      .limit(1);
-
-    if (searchError) {
-      alert("Could not check for existing item: " + searchError.message);
+    if (uploadError) {
+      alert("Image upload failed: " + uploadError.message);
       return;
     }
 
-    if (existingItems && existingItems.length > 0) {
-      const existingItem = existingItems[0];
+    const { data } = supabase.storage
+      .from("book-covers")
+      .getPublicUrl(fileName);
 
-      const newQuantity =
-        Number(existingItem.quantity || 0) + Number(itemToSave.quantity || 1);
+    imageUrl = data.publicUrl;
+  }
 
-      const { error: updateError } = await supabase
-        .from("items")
-        .update({
-          quantity: newQuantity,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingItem.id);
+  const newSku = await generateSku();
 
-      if (updateError) {
-        alert("Quantity update failed: " + updateError.message);
-        return;
-      }
+  const itemToSave = {
+    sku: newSku,
+    title: bookData.title || "",
+    curriculum: bookData.curriculum || "",
+    subject: bookData.subject || "",
+    grade_level: bookData.grade_level || bookData.grade || "",
+    edition: bookData.edition || "",
+    isbn: bookData.isbn || "",
+    category: bookData.category || "",
+    suggested_price: bookData.suggested_price || null,
+    final_price:
+      bookData.final_price === "" ||
+      bookData.final_price === null ||
+      bookData.final_price === undefined ||
+      bookData.final_price === "null"
+        ? null
+        : Number(bookData.final_price),
+    quantity: bookData.quantity ? Number(bookData.quantity) : 1,
+    status: bookData.status || "Available",
+    notes: bookData.notes || "",
+    image_url: imageUrl || bookData.image_url || "",
+    ai_confidence:
+      typeof bookData.confidence === "number" ? bookData.confidence : null,
+    public_visible: true,
+  };
 
-      alert("Existing item found. Quantity updated!");
-    } else {
-      const { error: insertError } = await supabase
-        .from("items")
-        .insert([itemToSave]);
+  let duplicateQuery = supabase
+    .from("items")
+    .select("*")
+    .eq("title", itemToSave.title)
+    .eq("curriculum", itemToSave.curriculum)
+    .eq("edition", itemToSave.edition)
+    .eq("category", itemToSave.category);
 
-      if (insertError) {
-        alert("Save failed: " + insertError.message);
-        return;
-      }
+  if (itemToSave.final_price === null) {
+    duplicateQuery = duplicateQuery.is("final_price", null);
+  } else {
+    duplicateQuery = duplicateQuery.eq("final_price", itemToSave.final_price);
+  }
 
-      alert("New item saved!");
+  const { data: existingItems, error: searchError } =
+    await duplicateQuery.limit(1);
+
+  if (searchError) {
+    alert("Could not check for existing item: " + searchError.message);
+    return;
+  }
+
+  if (existingItems && existingItems.length > 0) {
+    const existingItem = existingItems[0];
+
+    const newQuantity =
+      Number(existingItem.quantity || 0) + Number(itemToSave.quantity || 1);
+
+    const { error: updateError } = await supabase
+      .from("items")
+      .update({
+        quantity: newQuantity,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existingItem.id);
+
+    if (updateError) {
+      alert("Quantity update failed: " + updateError.message);
+      return;
     }
 
-    setBookData(null);
-    setCoverPhoto(null);
-    setCoverFile(null);
-    setIsbnPhoto(null);
-    setIsbnFile(null);
+    alert("Existing item found. Quantity updated!");
+  } else {
+    const { error: insertError } = await supabase
+      .from("items")
+      .insert([itemToSave]);
+
+    if (insertError) {
+      alert("Save failed: " + insertError.message);
+      return;
+    }
+
+    alert("New item saved!");
   }
+
+  setBookData(null);
+  setCoverPhoto(null);
+  setCoverFile(null);
+  setIsbnPhoto(null);
+  setIsbnFile(null);
+}  
 
   function startEditing(item) {
     setEditingItem(item);
@@ -596,13 +741,6 @@ onClick={() => {
             hidden={!isScanningBarcode}
           />
 
-          <button
-            className="primary"
-            onClick={() => coverInputRef.current.click()}
-          >
-            Take / Upload Cover Photo
-          </button>
-
           <input
             ref={coverInputRef}
             type="file"
@@ -666,9 +804,39 @@ onClick={() => {
 
           {bookData && (
             <section className="card">
-              <h2>Review & Edit Details</h2>
+  <h2>Review & Edit Details</h2>
 
-              <label>Title</label>
+<button
+  className="secondary"
+  onClick={() => listingPhotoInputRef.current.click()}
+>
+  Add Actual Cover Photo to Listing
+</button>
+
+<input
+  ref={listingPhotoInputRef}
+  type="file"
+  accept="image/*"
+  capture="environment"
+  onChange={handleListingPhoto}
+  hidden
+/>
+
+{coverPhoto && (
+  <section className="preview">
+    <h2>Listing Photo</h2>
+    <img src={coverPhoto} alt="Book cover" />
+  </section>
+)}
+
+  {coverPhoto && (
+    <section className="preview">
+      <h2>Selected Cover Photo</h2>
+      <img src={coverPhoto} alt="Book cover" />
+    </section>
+  )}
+
+  <label>Title</label>
               <input
                 value={bookData.title || ""}
                 onChange={(e) =>
