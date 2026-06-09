@@ -57,6 +57,10 @@ export default function App() {
   const [pendingCategoryFilter, setPendingCategoryFilter] = useState("");
   const [pendingGradeFilter, setPendingGradeFilter] = useState("");
 
+  const [selectedCatalogItem, setSelectedCatalogItem] = useState(null);
+
+  const [sortBy, setSortBy] = useState("title");
+
   async function loadItems() {
     const { data, error } = await supabase
       .from("items")
@@ -183,6 +187,7 @@ const itemToSave = {
       notes: bookData.notes || "",
       image_url: imageUrl,
       ai_confidence: bookData.confidence || null,
+      public_visible: true,
     };
 
     const { data: existingItems, error: searchError } = await supabase
@@ -313,6 +318,7 @@ async function deleteItem() {
         notes: editData.notes || "",
         sku: editData.sku || "",
         updated_at: new Date().toISOString(),
+        public_visible: editData.public_visible !== false,
       })
       .eq("id", editingItem.id);
 
@@ -342,35 +348,55 @@ const publicItems = items.filter(
     item.public_visible !== false
 );
 
-const filteredCatalogItems = publicItems.filter((item) => {
-  const matchesSearch = (item.title || "")
-    .toLowerCase()
-    .includes(searchTerm.toLowerCase());
+const filteredCatalogItems = publicItems
+  .filter((item) => {
+    const matchesSearch = (item.title || "")
+      .toLowerCase()
+      .includes(searchTerm.toLowerCase());
 
-  const matchesCurriculum =
-    !curriculumFilter ||
-    item.curriculum === curriculumFilter;
+    const matchesCurriculum =
+      !curriculumFilter || item.curriculum === curriculumFilter;
 
-  const matchesSubject =
-    !subjectFilter ||
-    item.subject === subjectFilter;
+    const matchesSubject =
+      !subjectFilter || item.subject === subjectFilter;
 
-  const matchesCategory =
-    !categoryFilter ||
-    item.category === categoryFilter;
+    const matchesCategory =
+      !categoryFilter || item.category === categoryFilter;
 
-  const matchesGrade =
-    !gradeFilter ||
-    item.grade_level === gradeFilter;
+    const matchesGrade =
+      !gradeFilter || item.grade_level === gradeFilter;
 
-  return (
-    matchesSearch &&
-    matchesCurriculum &&
-    matchesSubject &&
-    matchesCategory &&
-    matchesGrade
-  );
-});
+    return (
+      matchesSearch &&
+      matchesCurriculum &&
+      matchesSubject &&
+      matchesCategory &&
+      matchesGrade
+    );
+  })
+  .sort((a, b) => {
+    if (sortBy === "title") {
+      return (a.title || "").localeCompare(b.title || "");
+    }
+
+    if (sortBy === "curriculum") {
+      return (a.curriculum || "").localeCompare(b.curriculum || "");
+    }
+
+    if (sortBy === "priceLow") {
+      return Number(a.final_price || 0) - Number(b.final_price || 0);
+    }
+
+    if (sortBy === "priceHigh") {
+      return Number(b.final_price || 0) - Number(a.final_price || 0);
+    }
+
+    if (sortBy === "newest") {
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    }
+
+    return 0;
+  });
 
 const curriculumOptions = [
   ...new Set(
@@ -461,8 +487,8 @@ function clearCatalogFilters() {
     <main className="app">
       <h1>IL HRC Book Intake</h1>
 
-      <div className="nav-buttons">
-        <button
+{view !== "catalog" && (
+  <div className="nav-buttons">        <button
           className={view === "add" ? "primary" : "secondary"}
           onClick={() => {
             setView("add");
@@ -485,17 +511,18 @@ function clearCatalogFilters() {
 
         <button
   className={view === "catalog" ? "primary" : "secondary"}
-  onClick={() => {
-    setView("catalog");
-    cancelEditing();
-    loadItems();
-  }}
+onClick={() => {
+  setView("catalog");
+  cancelEditing();
+  setSelectedCatalogItem(null);
+  loadItems();
+}}
 >
   Public Catalog
 </button>
 
       </div>
-
+)}
       {view === "add" && (
         <>
           <p>Use the cover photo and ISBN/barcode when available.</p>
@@ -515,6 +542,18 @@ function clearCatalogFilters() {
             onChange={handleCoverPhoto}
             hidden
           />
+
+<button
+  className="secondary"
+  onClick={() => {
+    setView("catalog");
+    cancelEditing();
+    setSelectedCatalogItem(null);
+    loadItems();
+  }}
+>
+  Preview Public Catalog
+</button>
 
           <button
             className="secondary"
@@ -664,6 +703,20 @@ function clearCatalogFilters() {
                 <option>Hold</option>
                 <option>Removed</option>
               </select>
+
+                <label className="checkbox-label">
+  <input
+    type="checkbox"
+    checked={editData.public_visible !== false}
+    onChange={(e) =>
+      setEditData({
+        ...editData,
+        public_visible: e.target.checked,
+      })
+    }
+  />
+  Show in Public Catalog
+</label>
 
               <label>Notes</label>
               <textarea
@@ -835,10 +888,24 @@ function clearCatalogFilters() {
                 <option>Sold</option>
                 <option>Hold</option>
                 <option>Removed</option>
-              </select>
+</select>
 
-              <label>Notes</label>
-              <textarea
+<label className="checkbox-label">
+  <input
+    type="checkbox"
+    checked={editData.public_visible !== false}
+    onChange={(e) =>
+      setEditData({
+        ...editData,
+        public_visible: e.target.checked,
+      })
+    }
+  />
+  Show in Public Catalog
+</label>
+
+<label>Notes</label>
+<textarea
                 value={editData.notes || ""}
                 onChange={(e) =>
                   setEditData({ ...editData, notes: e.target.value })
@@ -875,7 +942,9 @@ function clearCatalogFilters() {
                   ${item.final_price} • Qty: {item.quantity}
                 </p>
                 <p>Status: {item.status}</p>
-
+                  <p>
+                    Public: {item.public_visible !== false ? "Yes" : "No"}
+                  </p>
                 <button
                   className="secondary"
                   onClick={() => startEditing(item)}
@@ -893,6 +962,41 @@ function clearCatalogFilters() {
     <p>
       These are the items families would see in the public searchable catalog.
     </p>
+
+{selectedCatalogItem && (
+  <section className="catalog-detail">
+    <button
+      className="secondary"
+      onClick={() => setSelectedCatalogItem(null)}
+    >
+      ← Back to Catalog
+    </button>
+
+    {selectedCatalogItem.image_url && (
+      <img
+        src={selectedCatalogItem.image_url}
+        alt={selectedCatalogItem.title}
+        className="catalog-detail-image"
+      />
+    )}
+
+    <h2>{selectedCatalogItem.title}</h2>
+
+    <p><strong>Curriculum:</strong> {selectedCatalogItem.curriculum || "N/A"}</p>
+    <p><strong>Subject:</strong> {selectedCatalogItem.subject || "N/A"}</p>
+    <p><strong>Grade Level:</strong> {selectedCatalogItem.grade_level || "N/A"}</p>
+    <p><strong>Category:</strong> {selectedCatalogItem.category || "N/A"}</p>
+    <p><strong>Edition:</strong> {selectedCatalogItem.edition || "N/A"}</p>
+    <p><strong>ISBN:</strong> {selectedCatalogItem.isbn || "N/A"}</p>
+    <p><strong>Price:</strong> ${selectedCatalogItem.final_price}</p>
+    <p><strong>Available:</strong> {selectedCatalogItem.quantity || 1}</p>
+
+    <p className="catalog-note">Available in store</p>
+  </section>
+)}
+
+{!selectedCatalogItem && (
+  <>
 
     <input
       placeholder="Search title, curriculum, subject, grade..."
@@ -940,7 +1044,7 @@ function clearCatalogFilters() {
 
   <select
     value={pendingGradeFilter}
-    onChange={(e) => setGradeFilter(e.target.value)}
+    onChange={(e) => setPendingGradeFilter(e.target.value)}
   >
     <option value="">All Grades</option>
     {gradeOptions.map((item) => (
@@ -951,6 +1055,15 @@ function clearCatalogFilters() {
   </select>
 
 </div>
+
+<label>Sort By</label>
+<select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+  <option value="title">Title A-Z</option>
+  <option value="curriculum">Curriculum</option>
+  <option value="priceLow">Price Low-High</option>
+  <option value="priceHigh">Price High-Low</option>
+  <option value="newest">Newest Added</option>
+</select>
 
 <button className="primary" onClick={applyCatalogFilters}>
   Apply Filters
@@ -978,11 +1091,19 @@ function clearCatalogFilters() {
             </p>
 
             <p className="catalog-note">Available in store</p>
+            <button
+            className="secondary"
+            onClick={() => setSelectedCatalogItem(item)}
+          >
+            View Details
+          </button>
           </div>
         </div>
       ))}
 
     {filteredCatalogItems.length === 0 && <p>No matching catalog items found.</p>}
+    </>
+)}
   </section>
 )}
     </main>
