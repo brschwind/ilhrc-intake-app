@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 import "./App.css";
 import { supabase } from "./supabaseClient";
 
@@ -60,6 +61,7 @@ export default function App() {
   const [selectedCatalogItem, setSelectedCatalogItem] = useState(null);
 
   const [sortBy, setSortBy] = useState("title");
+  const [isScanningBarcode, setIsScanningBarcode] = useState(false);
 
   async function loadItems() {
     const { data, error } = await supabase
@@ -93,6 +95,32 @@ export default function App() {
     setBookData(null);
   }
 
+async function scanIsbnBarcode() {
+  setIsScanningBarcode(true);
+
+  try {
+    const codeReader = new BrowserMultiFormatReader();
+
+    const result = await codeReader.decodeOnceFromVideoDevice(
+      undefined,
+      "barcode-video"
+    );
+
+    const scannedIsbn = result.getText();
+
+    setBookData({
+      ...(bookData || {}),
+      isbn: scannedIsbn,
+    });
+
+    alert(`ISBN scanned: ${scannedIsbn}`);
+  } catch (error) {
+    alert("Barcode scan failed: " + error.message);
+  } finally {
+    setIsScanningBarcode(false);
+  }
+}
+
   async function analyzePhoto() {
     if (!coverFile && !isbnFile) return;
 
@@ -104,7 +132,7 @@ export default function App() {
       if (coverFile) formData.append("cover", coverFile);
       if (isbnFile) formData.append("isbnImage", isbnFile);
 
-      const response = await fetch("http://localhost:5001/analyze-book", {
+      const response = await fetch("https://ilhrc-intake-app.onrender.com/analyze-book", {
         method: "POST",
         body: formData,
       });
@@ -527,6 +555,16 @@ onClick={() => {
         <>
           <p>Use the cover photo and ISBN/barcode when available.</p>
 
+          <button className="secondary" onClick={scanIsbnBarcode}>
+            {isScanningBarcode ? "Scanning..." : "Scan ISBN Barcode"}
+          </button>
+
+          <video
+            id="barcode-video"
+            className="barcode-video"
+            hidden={!isScanningBarcode}
+          />
+
           <button
             className="primary"
             onClick={() => coverInputRef.current.click()}
@@ -704,19 +742,7 @@ onClick={() => {
                 <option>Removed</option>
               </select>
 
-                <label className="checkbox-label">
-  <input
-    type="checkbox"
-    checked={editData.public_visible !== false}
-    onChange={(e) =>
-      setEditData({
-        ...editData,
-        public_visible: e.target.checked,
-      })
-    }
-  />
-  Show in Public Catalog
-</label>
+              
 
               <label>Notes</label>
               <textarea
