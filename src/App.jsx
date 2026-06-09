@@ -95,6 +95,40 @@ export default function App() {
     setBookData(null);
   }
 
+async function lookupBookByIsbn(isbn) {
+  try {
+    const response = await fetch(
+      `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}`
+    );
+
+    const data = await response.json();
+
+    if (!data.items || data.items.length === 0) {
+      alert("ISBN scanned, but no book data found.");
+      return;
+    }
+
+    const book = data.items[0].volumeInfo;
+
+    setBookData({
+      title: book.title || "",
+      curriculum: book.publisher || "",
+      subject: book.categories?.[0] || "",
+      grade_level: "",
+      edition: "",
+      isbn,
+      category: "",
+      final_price: "",
+      quantity: 1,
+      status: "Available",
+      notes: book.description || "",
+      confidence: "Google Books ISBN lookup",
+    });
+  } catch (error) {
+    alert("Book lookup failed: " + error.message);
+  }
+}
+
 async function scanIsbnBarcode() {
   setIsScanningBarcode(true);
 
@@ -106,14 +140,11 @@ async function scanIsbnBarcode() {
       "barcode-video"
     );
 
-    const scannedIsbn = result.getText();
+const scannedIsbn = result.getText();
 
-    setBookData({
-      ...(bookData || {}),
-      isbn: scannedIsbn,
-    });
+alert(`ISBN scanned: ${scannedIsbn}`);
 
-    alert(`ISBN scanned: ${scannedIsbn}`);
+await lookupBookByIsbn(scannedIsbn);
   } catch (error) {
     alert("Barcode scan failed: " + error.message);
   } finally {
