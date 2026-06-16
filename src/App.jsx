@@ -65,6 +65,8 @@ export default function App() {
 
   const listingPhotoInputRef = useRef(null);
 
+  const [isSaving, setIsSaving] = useState(false);
+
   async function loadItems() {
     const { data, error } = await supabase
       .from("items")
@@ -87,6 +89,8 @@ export default function App() {
     setCoverFile(file);
     setBookData(null);
   }
+
+  setTimeout(() => analyzePhoto(), 100);
 
   function handleIsbnPhoto(event) {
     const file = event.target.files?.[0];
@@ -335,32 +339,36 @@ await lookupBookByIsbn(scannedIsbn);
 }
 
 async function saveItem() {
-  if (!bookData) return;
+  if (!bookData || isSaving) return;
 
-  let imageUrl = "";
+  setIsSaving(true);
 
-  if (coverFile) {
-    const fileExt = coverFile.type?.split("/")[1] || "jpg";    const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+  try {
+    let imageUrl = "";
 
-    const { error: uploadError } = await supabase.storage
-      .from("book-covers")
-      .upload(fileName, coverFile, {
-  contentType: coverFile.type || "image/jpeg",
-});
+    if (coverFile) {
+      const fileExt = coverFile.type?.split("/")[1] || "jpg";
+      const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
 
-    if (uploadError) {
-      alert("Image upload failed: " + uploadError.message);
-      return;
+      const { error: uploadError } = await supabase.storage
+        .from("book-covers")
+        .upload(fileName, coverFile, {
+          contentType: coverFile.type || "image/jpeg",
+        });
+
+      if (uploadError) {
+        alert("Image upload failed: " + uploadError.message);
+        return;
+      }
+
+      const { data } = supabase.storage
+        .from("book-covers")
+        .getPublicUrl(fileName);
+
+      imageUrl = data.publicUrl;
     }
 
-    const { data } = supabase.storage
-      .from("book-covers")
-      .getPublicUrl(fileName);
-
-    imageUrl = data.publicUrl;
-  }
-
-  const newSku = await generateSku();
+    const newSku = await generateSku();
 
   const itemToSave = {
     sku: newSku,
@@ -448,7 +456,13 @@ async function saveItem() {
   setCoverFile(null);
   setIsbnPhoto(null);
   setIsbnFile(null);
-}  
+
+  } catch (error) {
+    alert("Save failed: " + error.message);
+  } finally {
+    setIsSaving(false);
+  }
+} 
 
   function startEditing(item) {
     setEditingItem(item);
@@ -732,16 +746,6 @@ onClick={() => {
         <>
           <p>Use the cover photo and ISBN/barcode when available.</p>
 
-          <button className="secondary" onClick={scanIsbnBarcode}>
-            {isScanningBarcode ? "Scanning..." : "Scan ISBN Barcode"}
-          </button>
-
-          <video
-            id="barcode-video"
-            className="barcode-video"
-            hidden={!isScanningBarcode}
-          />
-
           <input
             ref={coverInputRef}
             type="file"
@@ -751,24 +755,23 @@ onClick={() => {
             hidden
           />
 
-<button
-  className="secondary"
-  onClick={() => {
-    setView("catalog");
-    cancelEditing();
-    setSelectedCatalogItem(null);
-    loadItems();
-  }}
->
-  Preview Public Catalog
+
+          <button className="secondary" onClick={scanIsbnBarcode}>
+  {isScanningBarcode ? "Scanning..." : "Scan ISBN Barcode"}
 </button>
 
-          <button
-            className="secondary"
-            onClick={() => isbnInputRef.current.click()}
-          >
-            Take / Upload ISBN or Barcode Photo
-          </button>
+<video
+  id="barcode-video"
+  className="barcode-video"
+  hidden={!isScanningBarcode}
+/>
+
+<button
+  className="secondary"
+  onClick={() => coverInputRef.current.click()}
+>
+  Analyze Book Cover
+</button>
 
           <input
             ref={isbnInputRef}
@@ -793,15 +796,6 @@ onClick={() => {
             </section>
           )}
 
-          {(coverPhoto || isbnPhoto) && (
-            <button
-              className="primary"
-              onClick={analyzePhoto}
-              disabled={isAnalyzing}
-            >
-              {isAnalyzing ? "Analyzing..." : "Analyze Book"}
-            </button>
-          )}
 
           {bookData && (
             <section className="card">
@@ -956,9 +950,9 @@ onClick={() => {
                 <strong>AI Confidence:</strong> {bookData.confidence}
               </p>
 
-              <button className="primary" onClick={saveItem}>
-                Save Item
-              </button>
+              <button className="primary" onClick={saveItem} disabled={isSaving}>
+  {isSaving ? "Saving..." : "Save Item"}
+</button>
             </section>
           )}
         </>
