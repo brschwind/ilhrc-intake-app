@@ -17,6 +17,33 @@ app.get("/", (req, res) => {
   res.send("IL HRC AI Vision Server Running");
 });
 
+app.get("/test-square", async (req, res) => {
+  try {
+    const response = await fetch("https://connect.squareupsandbox.com/v2/locations", {
+      headers: {
+        Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+    });
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json(data);
+    }
+
+    res.json({
+      success: true,
+      locations: data.locations,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 app.post("/analyze-book", upload.any(), async (req, res) => {
   try {
     const coverFile =
