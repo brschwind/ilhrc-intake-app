@@ -3,33 +3,6 @@ import { BrowserMultiFormatReader } from "@zxing/browser";
 import "./App.css";
 import { supabase } from "./supabaseClient";
 
-const pricingGuide = [
-  { item_name: "DVD (Education/Movies)", category: "Media", price: 5 },
-  { item_name: "Dollar", category: "Reading", price: 1 },
-  { item_name: "Picture Book", category: "Reading", price: 2 },
-  { item_name: "Readers (Early)", category: "Reading", price: 0.5 },
-  { item_name: "Reading Book", category: "Reading", price: 4 },
-  { item_name: "Reading Book (Premium)", category: "Reading", price: 6 },
-  { item_name: "Flashcards", category: "Supplements", price: 0.5 },
-  { item_name: "Games", category: "Supplements", price: 5 },
-  { item_name: "Kit (Science)", category: "Supplements", price: 25 },
-  { item_name: "Kit (Premium)", category: "Supplements", price: 50 },
-  { item_name: "Manipulatives (Large)", category: "Supplements", price: 10 },
-  { item_name: "Manipulatives (Small)", category: "Supplements", price: 5 },
-  { item_name: "Reference/Skill Books (Premium)", category: "Supplements", price: 6 },
-  { item_name: "Reference/Skill Books", category: "Supplements", price: 3 },
-  { item_name: "Answer Key", category: "Textbooks & Teacher", price: 1 },
-  { item_name: "Textbook (Hardcover)", category: "Textbooks & Teacher", price: 10 },
-  { item_name: "Textbook (Premium)", category: "Textbooks & Teacher", price: 15 },
-  { item_name: "Textbook (Softcover)", category: "Textbooks & Teacher", price: 5 },
-  { item_name: "Box Set", category: "Workbooks (Consumable)", price: 25 },
-  { item_name: "Box Set (Premium)", category: "Workbooks (Consumable)", price: 40 },
-  { item_name: "Workbook - Full year/curriculum", category: "Workbooks (Consumable)", price: 8 },
-  { item_name: "Workbook - Premium", category: "Workbooks (Consumable)", price: 12 },
-  { item_name: "Workbook - Small", category: "Workbooks (Consumable)", price: 2 },
-];
-
-
 export default function App() {
   const [view, setView] = useState("add");
   const [items, setItems] = useState([]);
@@ -81,6 +54,7 @@ export default function App() {
   const [curriculumOptions, setCurriculumOptions] = useState([]);
   const [subjectOptions, setSubjectOptions] = useState([]);
   const [gradeOptions, setGradeOptions] = useState([]);
+  const [categoryOptions, setCategoryOptions] = useState([]);
 
   const [selectedItemIds, setSelectedItemIds] = useState([]);
 
@@ -88,6 +62,8 @@ export default function App() {
   const [bulkSubject, setBulkSubject] = useState("");
   const [bulkGrade, setBulkGrade] = useState("");
   const [bulkStatus, setBulkStatus] = useState("");
+  const [bulkCategory, setBulkCategory] = useState("");
+
 
   async function loadItems() {
     const { data, error } = await supabase
@@ -118,10 +94,17 @@ async function loadOptionLists() {
     .from("grade_options")
     .select("name")
     .order("name");
+    
+
+    const { data: categories } = await supabase
+      .from("category_options")
+      .select("*")
+      .order("name");
 
   setCurriculumOptions(curricula?.map((x) => x.name) || []);
   setSubjectOptions(subjects?.map((x) => x.name) || []);
   setGradeOptions(grades?.map((x) => x.name) || []);
+  setCategoryOptions(categories || []);
 }
 
 function toggleSelectedItem(id) {
@@ -139,6 +122,7 @@ async function applyBulkEdit() {
   if (bulkSubject) updates.subject = bulkSubject;
   if (bulkGrade) updates.grade_level = bulkGrade;
   if (bulkStatus) updates.status = bulkStatus;
+  if (bulkCategory) updates.category = bulkCategory;
 
   if (Object.keys(updates).length === 0) {
     alert("Choose at least one field to update.");
@@ -162,6 +146,7 @@ async function applyBulkEdit() {
   setBulkSubject("");
   setBulkGrade("");
   setBulkStatus("");
+  setBulkCategory("");
 
   loadItems();
 }
@@ -208,53 +193,81 @@ function suggestPricingCategory(book) {
     book.categories?.join(" ") || ""
   }`.toLowerCase();
 
+  if (!categoryOptions.length) return null;
+
+  let suggestedName = "Reader / Chapter Book";
+
   if (
     text.includes("student activity") ||
     text.includes("student workbook") ||
     text.includes("workbook")
   ) {
-    return pricingGuide.find(
-      (item) => item.item_name === "Workbook - Full year/curriculum"
-    );
-  }
-
-  if (
-    text.includes("teacher") ||
+    suggestedName = "Workbook";
+  } else if (
     text.includes("answer key") ||
     text.includes("solution") ||
-    text.includes("manual")
+    text.includes("solutions manual")
   ) {
-    return pricingGuide.find((item) => item.item_name === "Answer Key");
-  }
-
-  if (
+    suggestedName = "Answer Key";
+  } else if (
+    text.includes("teacher") ||
+    text.includes("manual") ||
+    text.includes("resource")
+  ) {
+    suggestedName = "Teacher Resource";
+  } else if (
+    text.includes("bible")
+  ) {
+    suggestedName = "Bible";
+  } else if (
+    text.includes("devotional") ||
+    text.includes("devotion")
+  ) {
+    suggestedName = "Devotional";
+  } else if (
+    text.includes("biography") ||
+    text.includes("memoir")
+  ) {
+    suggestedName = "Biography";
+  } else if (
+    text.includes("picture book")
+  ) {
+    suggestedName = "Picture Book";
+  } else if (
+    text.includes("early reader") ||
+    text.includes("beginning reader")
+  ) {
+    suggestedName = "Early Reader";
+  } else if (
+    text.includes("science kit") ||
+    text.includes("experiment kit")
+  ) {
+    suggestedName = "Science Kit";
+  } else if (
+    text.includes("dvd") ||
+    text.includes("video")
+  ) {
+    suggestedName = "DVD / Media";
+  } else if (
+    text.includes("game")
+  ) {
+    suggestedName = "Game";
+  } else if (
+    text.includes("flashcard") ||
+    text.includes("flash card")
+  ) {
+    suggestedName = "Flashcards";
+  } else if (
     text.includes("science") ||
     text.includes("history") ||
     text.includes("math") ||
     text.includes("grammar") ||
     text.includes("textbook")
   ) {
-    return pricingGuide.find((item) => item.item_name === "Textbook (Softcover)");
+    suggestedName = "Textbook";
   }
 
-  if (
-    text.includes("picture book") ||
-    text.includes("juvenile fiction") ||
-    text.includes("children")
-  ) {
-    return pricingGuide.find((item) => item.item_name === "Picture Book");
-  }
-
-  if (
-    text.includes("biography") ||
-    text.includes("fiction") ||
-    text.includes("literature") ||
-    text.includes("juvenile")
-  ) {
-    return pricingGuide.find((item) => item.item_name === "Reading Book");
-  }
-
-  return pricingGuide.find((item) => item.item_name === "Reading Book");
+  return categoryOptions.find((item) => item.name === suggestedName);
 }
 
 async function lookupBookByIsbn(isbn) {
@@ -287,9 +300,9 @@ setBookData({
   grade_level: "",
   edition: "",
   isbn,
-  category: suggested?.item_name || "",
-  suggested_price: suggested?.price || "",
-  final_price: suggested?.price || "",
+  category: suggested?.name || "",
+  suggested_price: suggested?.default_price || "",
+  final_price: suggested?.default_price || "",
   quantity: 1,
   status: "Available",
   notes: book.description || "",
@@ -407,7 +420,18 @@ async function analyzePhotoWithFile(file) {
     }
 
     setAnalysisStatus("Filling book details...");
-    setBookData(data);
+    const improvedData = improveDetectedBookData(data);
+    const suggested = suggestPricingCategory(improvedData);
+
+setBookData({
+  ...improvedData,
+  category: improvedData.category || suggested?.name || "",
+  suggested_price:
+    improvedData.suggested_price || suggested?.default_price || "",
+  final_price:
+    improvedData.final_price || suggested?.default_price || "",
+});
+
 
     setAnalysisStatus("Analysis complete!");
     setTimeout(() => setAnalysisStatus(""), 2500);
@@ -490,6 +514,7 @@ async function saveItem() {
     await saveOptionIfNew("curriculum_options", bookData.curriculum);
     await saveOptionIfNew("subject_options", bookData.subject);
     await saveOptionIfNew("grade_options", bookData.grade_level || bookData.grade);
+    await saveOptionIfNew("category_options", bookData.category);
 
     await loadOptionLists();
 
@@ -642,6 +667,12 @@ async function deleteItem() {
 
   async function updateItem() {
     if (!editingItem || !editData) return;
+    await saveOptionIfNew("curriculum_options", editData.curriculum);
+    await saveOptionIfNew("subject_options", editData.subject);
+    await saveOptionIfNew("grade_options", editData.grade_level);
+    await saveOptionIfNew("category_options", editData.category);
+
+await loadOptionLists();
 
     let updatedImageUrl = editData.image_url || "";
 
@@ -813,7 +844,7 @@ const catalogSubjectOptions = [
   ),
 ];
 
-const categoryOptions = [
+const catalogCategoryOptions = [
   ...new Set(
     items
       .map((item) => item.category)
@@ -1046,13 +1077,19 @@ onClick={() => {
 
             {(!curriculumOptions.includes(bookData.curriculum) ||
               bookData.curriculum === "") && (
-              <input
-                placeholder="Enter curriculum"
-                value={bookData.curriculum || ""}
-                onChange={(e) =>
-                  setBookData({ ...bookData, curriculum: e.target.value })
-                }
-              />
+              <>
+                <input
+                  placeholder="Add new curriculum"
+                  value={bookData.curriculum || ""}
+                  onChange={(e) =>
+                    setBookData({ ...bookData, curriculum: e.target.value })
+                  }
+                />
+
+                <p className="helper-text">
+                  This will be added to your curriculum list when you save.
+                </p>
+              </>
             )}
 
               <label>Subject</label>
@@ -1136,29 +1173,44 @@ onClick={() => {
                 }
               />
 
-              <label>Pricing Category</label>
+              <label>Category</label>
               <select
                 value={bookData.category || ""}
                 onChange={(e) => {
-                  const selected = pricingGuide.find(
-                    (item) => item.item_name === e.target.value
-                  );
+                  const selected = categoryOptions.find(
+                      (item) => item.name === e.target.value                          
+                    );
 
-                  setBookData({
-                    ...bookData,
-                    category: selected?.item_name || "",
-                    suggested_price: selected?.price || "",
-                    final_price: selected?.price || "",
-                  });
+                    setBookData({
+                      ...bookData,
+                      category: selected?.name || "",
+                      suggested_price: selected?.default_price || "",
+                      final_price:
+                        bookData.final_price ||
+                        selected?.default_price ||
+                        "",
+                    });
                 }}
               >
-                <option value="">Choose a pricing category</option>
-                {pricingGuide.map((item) => (
-                  <option key={item.item_name} value={item.item_name}>
-                    {item.item_name} — ${item.price}
-                  </option>
-                ))}
-              </select>
+                <option value="">Choose a category</option>
+
+                  {categoryOptions.map((item) => (
+                    <option key={item.name} value={item.name}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+
+                {bookData.category && (
+                  <p>
+                    <strong>Suggested Price:</strong> $
+                    {
+                      categoryOptions.find(
+                        (item) => item.name === bookData.category
+                      )?.default_price
+                    }
+                  </p>
+                )} 
 
               <label>Final Price</label>
               <input
@@ -1282,7 +1334,7 @@ onClick={() => {
     onChange={(e) => setCategoryFilter(e.target.value)}
   >
     <option value="">All Categories</option>
-    {categoryOptions.map((item) => (
+    {catalogCategoryOptions.map((item) => (
       <option key={item} value={item}>
         {item}
       </option>
@@ -1463,29 +1515,36 @@ onClick={() => {
                 }
               />
 
-              <label>Pricing Category</label>
-
+              <label>Category</label>
               <select
                 value={editData.category || ""}
                 onChange={(e) => {
-                  const selected = pricingGuide.find(
-                    (item) => item.item_name === e.target.value
+                  const selected = categoryOptions.find(
+                    (item) => item.name === e.target.value
                   );
 
                   setEditData({
                     ...editData,
-                    category: selected?.item_name || "",
-                    final_price: selected?.price || "",
+                    category: selected?.name || "",
+                    final_price: editData.final_price || selected?.default_price || "",
                   });
                 }}
               >
-                <option value="">Choose a pricing category</option>
-                {pricingGuide.map((item) => (
-                  <option key={item.item_name} value={item.item_name}>
-                    {item.item_name} — ${item.price}
+                <option value="">Choose a category</option>
+                {categoryOptions.map((item) => (
+                  <option key={item.name} value={item.name}>
+                    {item.name}
                   </option>
                 ))}
               </select>
+
+              {editData.category && (
+                <p>
+                  <strong>Suggested Price:</strong> $
+                  {categoryOptions.find((item) => item.name === editData.category)
+                    ?.default_price || ""}
+                </p>
+              )}
 
               <label>Final Price</label>
               <input
@@ -1673,6 +1732,21 @@ onClick={() => {
   </select>
 </div>
 
+<div className="bulk-edit-field">
+  <label>Category</label>
+  <select
+    value={bulkCategory}
+    onChange={(e) => setBulkCategory(e.target.value)}
+  >
+    <option value="">No Change</option>
+    {categoryOptions.map((option) => (
+      <option key={option.name} value={option.name}>
+        {option.name}
+      </option>
+    ))}
+  </select>
+</div>
+
     <div className="bulk-edit-field">
   <label>Status</label>
   <select
@@ -1810,7 +1884,7 @@ onClick={() => {
     onChange={(e) => setPendingCategoryFilter(e.target.value)}
   >
     <option value="">All Categories</option>
-    {categoryOptions.map((item) => (
+    {catalogCategoryOptions.map((item) => (
       <option key={item} value={item}>
         {item}
       </option>

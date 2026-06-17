@@ -59,34 +59,81 @@ app.post("/analyze-book", upload.any(), async (req, res) => {
               text: `
 You are helping the Illinois Homeschool Resource Center catalog used homeschool curriculum and books.
 
-Look at the uploaded image(s). They may include:
-- front cover
-- back cover
-- barcode / ISBN area
+Look at all uploaded images carefully. Images may include:
+
+* Front cover
+* Back cover
+* Spine
+* Copyright page
+* Barcode / ISBN area
 
 Identify the book as accurately as possible.
 
 Return ONLY valid JSON in this exact format:
 
 {
-  "title": "",
-  "curriculum": "",
-  "subject": "",
-  "grade": "",
-  "edition": "",
-  "isbn": "",
-  "confidence": 0.0 to 1.0
-  "notes": ""
+"title": "",
+"curriculum": "",
+"subject": "",
+"grade": "",
+"edition": "",
+"isbn": "",
+"confidence": 0.0,
+"notes": ""
 }
 
 Rules:
-- Use the title visible on the book cover if available.
-- Curriculum should be the homeschool publisher/brand if recognizable, such as Apologia, Abeka, BJU Press, Notgrass, IEW, Saxon, Math-U-See, Master Books, The Good and the Beautiful, etc.
-- Subject should be one of: Science, Math, History, Language Arts, Bible, Geography, Art, Music, Foreign Language, Preschool, Elective, General.
-- Grade should be a simple range like "7-8", "9-12", "K-2", or blank if unclear.
-- Edition should be short, like "2nd Edition".
-- ISBN should only be included if clearly visible.
-- If uncertain, explain briefly in notes.
+
+* Use the exact title visible on the book whenever possible.
+* Curriculum should be the homeschool publisher, curriculum provider, or educational brand if recognizable.
+
+Common curriculum examples include:
+Apologia, Abeka, BJU Press, Notgrass, IEW, Saxon, Math-U-See, Master Books, The Good and the Beautiful, Teaching Textbooks, Sonlight, Mystery of History, All About Reading, All About Spelling, Singapore Math, Alpha Omega, Lifepac, Bob Jones, Rod & Staff, Christian Light Education, Easy Grammar, Shurley English, Veritas Press, Memoria Press, Answers in Genesis, ACE, and Classical Conversations.
+
+* If the curriculum is clearly visible, populate the curriculum field.
+
+* If the curriculum is not visible but strongly implied by branding, use your best judgment.
+
+* If uncertain, leave curriculum blank and explain in notes.
+
+* Subject must be one of:
+  Science, Math, History, Language Arts, Bible, Geography, Art, Music, Foreign Language, Preschool, Elective, General.
+
+* Grade should be a simple value such as:
+  Pre-K, K, 1, 2, 3, 4, 5, 6, 7, 8, 9-12, K-2, 3-5, 6-8, 7-8, High School.
+
+* Look carefully for grade indicators in the title, subtitle, cover text, level markings, or series name.
+  Examples:
+
+  * "Math 5" → "5"
+  * "Grade 3" → "3"
+  * "Level K" → "K"
+  * "Algebra 1" → "9-12"
+  * "Biology" → "9-12" unless another grade is visible
+
+* Edition should be short and standardized, such as:
+
+  * "2nd Edition"
+  * "3rd Edition"
+  * "Revised Edition"
+  * "Updated Edition"
+
+* ISBN should only be included if clearly visible.
+
+* Remove spaces and dashes from ISBN values.
+
+* If no ISBN is visible, return an empty string.
+
+* Confidence should be a number between 0.0 and 1.0 indicating overall confidence in the identification.
+
+* Notes should briefly explain any uncertainty, assumptions, missing information, or alternate possibilities.
+
+* Never invent information that is not supported by the images.
+
+* Prefer leaving a field blank over guessing wildly.
+
+* Return ONLY valid JSON and no additional text.
+
               `,
             },
             ...imageParts,
