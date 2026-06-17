@@ -886,14 +886,61 @@ if (editCoverFile) {
 }
 
 if (editingItem.square_item_id && editingItem.square_variation_id) {
+  const squareUpdateResponse = await fetch(
+    "https://ilhrc-intake-app.onrender.com/update-square-item",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        square_item_id: editingItem.square_item_id,
+        square_variation_id: editingItem.square_variation_id,
+        title: editData.title || "",
+        sku: editData.sku || "",
+        final_price: editData.final_price || 0,
+        quantity: editData.quantity || 0,
+        notes: editData.notes || "",
+      }),
+    }
+  );
+
   const squareUpdateData = await squareUpdateResponse.json();
 
-if (!squareUpdateResponse.ok || !squareUpdateData.success) {
-  alert(
-    "Square update failed. Supabase was not updated. " +
-    JSON.stringify(squareUpdateData.error)
-  );
-  return;
+  if (!squareUpdateResponse.ok || !squareUpdateData.success) {
+    alert(
+      "Square update failed. Supabase was not updated. " +
+        JSON.stringify(squareUpdateData.error)
+    );
+    return;
+  }
+
+  if (Number(editData.quantity || 0) <= 0) {
+    const archiveResponse = await fetch(
+      "https://ilhrc-intake-app.onrender.com/archive-square-item",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          square_item_id: editingItem.square_item_id,
+        }),
+      }
+    );
+
+    const archiveData = await archiveResponse.json();
+
+    if (!archiveResponse.ok || !archiveData.success) {
+      alert(
+        "Square item updated, but archive failed. " +
+          JSON.stringify(archiveData.error)
+      );
+      return;
+    }
+
+    editData.status = "Sold";
+  }
 }
 
 if (Number(editData.quantity || 0) <= 0) {
@@ -937,7 +984,7 @@ if (Number(editData.quantity || 0) <= 0) {
           editData.final_price === "" || editData.final_price === null
             ? null
             : Number(editData.final_price),
-        quantity: editData.quantity ? Number(editData.quantity) : 1,
+       quantity: Number(editData.quantity || 0),
         status: editData.status || "Available",
         notes: editData.notes || "",
         sku: editData.sku || "",
