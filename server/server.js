@@ -4,16 +4,6 @@ const multer = require("multer");
 const OpenAI = require("openai");
 require("dotenv").config();
 
-const { Client, Environment } = require("square");
-
-const squareClient = new Client({
-  accessToken: process.env.SQUARE_ACCESS_TOKEN,
-  environment:
-    process.env.SQUARE_ENVIRONMENT === "production"
-      ? Environment.Production
-      : Environment.Sandbox,
-});
-
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -56,35 +46,52 @@ app.get("/test-square", async (req, res) => {
 
 app.get("/test-square-item", async (req, res) => {
   try {
-    const result = await squareClient.catalogApi.upsertCatalogObject({
-      idempotencyKey: Date.now().toString(),
-      object: {
-        type: "ITEM",
-        id: "#TEMP_ITEM",
-        itemData: {
-          name: "IL HRC Test Book",
-          description: "Created from IL HRC Inventory App",
-          variations: [
-            {
-              type: "ITEM_VARIATION",
-              id: "#TEMP_VARIATION",
-              itemVariationData: {
-                sku: "ILHRC-TEST-001",
-                pricingType: "FIXED_PRICING",
-                priceMoney: {
-                  amount: 100,
-                  currency: "USD",
-                },
-              },
-            },
-          ],
+    const response = await fetch(
+      "https://connect.squareupsandbox.com/v2/catalog/object",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
         },
-      },
-    });
+        body: JSON.stringify({
+          idempotency_key: Date.now().toString(),
+          object: {
+            type: "ITEM",
+            id: "#TEMP_ITEM",
+            item_data: {
+              name: "IL HRC Test Book",
+              description: "Created from IL HRC Inventory App",
+              variations: [
+                {
+                  type: "ITEM_VARIATION",
+                  id: "#TEMP_VARIATION",
+                  item_variation_data: {
+                    sku: "ILHRC-TEST-001",
+                    pricing_type: "FIXED_PRICING",
+                    price_money: {
+                      amount: 100,
+                      currency: "USD",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json(data);
+    }
 
     res.json({
       success: true,
-      squareItemId: result.result.catalogObject.id,
+      squareItemId: data.catalog_object?.id,
+      data,
     });
   } catch (error) {
     console.error(error);
