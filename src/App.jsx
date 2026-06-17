@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import "./App.css";
 import { supabase } from "./supabaseClient";
@@ -28,6 +28,7 @@ const pricingGuide = [
   { item_name: "Workbook - Premium", category: "Workbooks (Consumable)", price: 12 },
   { item_name: "Workbook - Small", category: "Workbooks (Consumable)", price: 2 },
 ];
+
 
 export default function App() {
   const [view, setView] = useState("add");
@@ -72,6 +73,14 @@ export default function App() {
   const [editCoverPreview, setEditCoverPreview] = useState(null);
 
   const [analysisStatus, setAnalysisStatus] = useState("");
+        useEffect(() => {
+        loadItems();
+        loadOptionLists();
+      }, []);
+
+  const [curriculumOptions, setCurriculumOptions] = useState([]);
+  const [subjectOptions, setSubjectOptions] = useState([]);
+  const [gradeOptions, setGradeOptions] = useState([]);
 
   async function loadItems() {
     const { data, error } = await supabase
@@ -86,6 +95,27 @@ export default function App() {
 
     setItems(data || []);
   }
+
+async function loadOptionLists() {
+  const { data: curricula } = await supabase
+    .from("curriculum_options")
+    .select("name")
+    .order("name");
+
+  const { data: subjects } = await supabase
+    .from("subject_options")
+    .select("name")
+    .order("name");
+
+  const { data: grades } = await supabase
+    .from("grade_options")
+    .select("name")
+    .order("name");
+
+  setCurriculumOptions(curricula?.map((x) => x.name) || []);
+  setSubjectOptions(subjects?.map((x) => x.name) || []);
+  setGradeOptions(grades?.map((x) => x.name) || []);
+}
 
 function handleCoverPhoto(event) {
   const file = event.target.files?.[0];
@@ -669,7 +699,7 @@ const filteredCatalogItems = publicItems
     return 0;
   });
 
-const curriculumOptions = [
+const catalogCurriculumOptions = [
   ...new Set(
     items
       .map((item) => item.curriculum)
@@ -678,7 +708,7 @@ const curriculumOptions = [
   ),
 ];
 
-const subjectOptions = [
+const catalogSubjectOptions = [
   ...new Set(
     items
       .map((item) => item.subject)
@@ -696,7 +726,7 @@ const categoryOptions = [
   ),
 ];
 
-const gradeOptions = [
+const catalogGradeOptions = [
   ...new Set(
     items
       .map((item) => item.grade_level)
@@ -766,7 +796,7 @@ function clearCatalogFilters() {
             cancelEditing();
           }}
         >
-          Add Item
+          <label>Add Item</label>
         </button>
 
         <button
@@ -829,14 +859,6 @@ onClick={() => {
   <p className="status-message">{analysisStatus}</p>
 )}
 
-<input
-  ref={isbnInputRef}
-  type="file"
-  accept="image/*"
-  capture="environment"
-  onChange={handleIsbnPhoto}
-  hidden
-/>
 
           <input
             ref={isbnInputRef}
@@ -905,28 +927,102 @@ onClick={() => {
               />
 
               <label>Curriculum</label>
+              <select
+              value={
+                curriculumOptions.includes(bookData.curriculum)
+                  ? bookData.curriculum
+                  : "Other"
+              }
+              onChange={(e) =>
+                setBookData({
+                  ...bookData,
+                  curriculum: e.target.value === "Other" ? "" : e.target.value,
+                })
+              }
+            >
+              <option value="">Choose curriculum</option>
+              {curriculumOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+
+            {(!curriculumOptions.includes(bookData.curriculum) ||
+              bookData.curriculum === "") && (
               <input
+                placeholder="Enter curriculum"
                 value={bookData.curriculum || ""}
                 onChange={(e) =>
                   setBookData({ ...bookData, curriculum: e.target.value })
                 }
               />
+            )}
 
               <label>Subject</label>
+              <select
+              value={
+                subjectOptions.includes(bookData.subject)
+                  ? bookData.subject
+                  : "Other"
+              }
+              onChange={(e) =>
+                setBookData({
+                  ...bookData,
+                  subject: e.target.value === "Other" ? "" : e.target.value,
+                })
+              }
+            >
+              <option value="">Choose subject</option>
+              {subjectOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+
+            {(!subjectOptions.includes(bookData.subject) || bookData.subject === "") && (
               <input
+                placeholder="Enter subject"
                 value={bookData.subject || ""}
                 onChange={(e) =>
                   setBookData({ ...bookData, subject: e.target.value })
                 }
               />
+            )}
 
               <label>Grade Level</label>
+              <select
+              value={
+                gradeOptions.includes(bookData.grade_level || bookData.grade)
+                  ? (bookData.grade_level || bookData.grade)
+                  : "Other"
+              }
+              onChange={(e) =>
+                setBookData({
+                  ...bookData,
+                  grade_level: e.target.value === "Other" ? "" : e.target.value,
+                })
+              }
+            >
+              <option value="">Choose grade level</option>
+              {gradeOptions.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+
+            {(!gradeOptions.includes(bookData.grade_level || bookData.grade) ||
+              (bookData.grade_level || bookData.grade) === "") && (
               <input
+                placeholder="Enter grade level"
                 value={bookData.grade_level || bookData.grade || ""}
                 onChange={(e) =>
                   setBookData({ ...bookData, grade_level: e.target.value })
                 }
               />
+            )}
 
               <label>Edition</label>
               <input
@@ -1323,7 +1419,7 @@ onClick={() => {
     onChange={(e) => setPendingCurriculumFilter(e.target.value)}
   >
     <option value="">All Curricula</option>
-    {curriculumOptions.map((item) => (
+    {catalogCurriculumOptions.map((item) => (
       <option key={item} value={item}>
         {item}
       </option>
@@ -1335,7 +1431,7 @@ onClick={() => {
     onChange={(e) => setPendingSubjectFilter(e.target.value)}
   >
     <option value="">All Subjects</option>
-    {subjectOptions.map((item) => (
+    {catalogSubjectOptions.map((item) => (
       <option key={item} value={item}>
         {item}
       </option>
@@ -1359,7 +1455,7 @@ onClick={() => {
     onChange={(e) => setPendingGradeFilter(e.target.value)}
   >
     <option value="">All Grades</option>
-    {gradeOptions.map((item) => (
+    {catalogGradeOptions.map((item) => (
       <option key={item} value={item}>
         {item}
       </option>
