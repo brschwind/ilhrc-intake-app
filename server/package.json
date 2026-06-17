@@ -13,6 +13,7 @@
     "express": "^5.2.1",
     "multer": "^2.0.2",
     "openai": "^6.42.0",
+    "square": "^44.1.0",
     "tesseract.js": "^7.0.0"
   }
 }
