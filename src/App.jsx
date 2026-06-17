@@ -303,10 +303,13 @@ await lookupBookByIsbn(scannedIsbn);
 }
 
 async function analyzePhoto() {
+  console.log("STARTING ANALYSIS");
   if (!coverFile && !isbnFile) return;
 
   setIsAnalyzing(true);
   setAnalysisStatus("Preparing image...");
+  console.log("Preparing image");
+
 
   try {
     const formData = new FormData();
@@ -315,11 +318,14 @@ async function analyzePhoto() {
     if (isbnFile) formData.append("isbnImage", isbnFile);
 
     setAnalysisStatus("Sending image to AI server...");
+    console.log("Sending image to AI server");
+
 
     const response = await fetch("https://ilhrc-intake-app.onrender.com/analyze-book", {
       method: "POST",
       body: formData,
     });
+    console.log("Received response");
 
     setAnalysisStatus("Reading AI response...");
 
@@ -827,10 +833,12 @@ onClick={() => {
   onClick={() => coverInputRef.current.click()}
 >
   Analyze Book Cover
+</button>
 
-  {isAnalyzing && analysisStatus && (
+{analysisStatus && (
   <p className="status-message">{analysisStatus}</p>
 )}
+
 </button>
 
           <input
