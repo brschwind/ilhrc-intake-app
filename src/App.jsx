@@ -1545,28 +1545,25 @@ onClick={() => {
                 value={bookData.category || ""}
                 onChange={(e) => {
                   const selected = categoryOptions.find(
-                      (item) => item.name === e.target.value                          
-                    );
+                    (item) => item.name === e.target.value
+                  );
 
-                    setBookData({
-                      ...bookData,
-                      category: selected?.name || "",
-                      suggested_price: selected?.default_price || "",
-                      final_price:
-                        bookData.final_price ||
-                        selected?.default_price ||
-                        "",
-                    });
+                  setBookData({
+                    ...bookData,
+                    category: selected?.name || "",
+                    suggested_price: selected?.default_price || "",
+                    final_price: selected?.default_price || "",
+                  });
                 }}
               >
                 <option value="">Choose a category</option>
 
-                  {categoryOptions.map((item) => (
-                    <option key={item.name} value={item.name}>
-                      {item.name}
-                    </option>
-                  ))}
-                </select>
+                {categoryOptions.map((item) => (
+                  <option key={item.name} value={item.name}>
+                    {item.name}
+                  </option>
+                ))}
+              </select>
 
                 {bookData.category && (
                   <p>
