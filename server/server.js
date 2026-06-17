@@ -162,6 +162,135 @@ app.post("/update-square-inventory", async (req, res) => {
   }
 });
 
+app.post("/update-square-item", async (req, res) => {
+  try {
+    const {
+      square_item_id,
+      square_variation_id,
+      title,
+      sku,
+      final_price,
+      quantity,
+      notes,
+    } = req.body;
+
+    if (!square_item_id || !square_variation_id) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing square_item_id or square_variation_id.",
+      });
+    }
+
+    const amount = Math.round(Number(final_price || 0) * 100);
+
+    const response = await fetch(
+      `https://connect.squareupsandbox.com/v2/catalog/object/${square_item_id}?include_related_objects=true`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const existingData = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        success: false,
+        error: existingData,
+      });
+    }
+
+    const itemObject = existingData.object;
+    const variation =
+      itemObject.item_data?.variations?.find(
+        (v) => v.id === square_variation_id
+      ) || itemObject.item_data?.variations?.[0];
+
+    itemObject.item_data.name = title || itemObject.item_data.name;
+    itemObject.item_data.description = notes || "";
+    variation.item_variation_data.name = "Regular";
+    variation.item_variation_data.sku = sku || variation.item_variation_data.sku;
+    variation.item_variation_data.pricing_type = "FIXED_PRICING";
+    variation.item_variation_data.price_money = {
+      amount,
+      currency: "USD",
+    };
+
+    const updateResponse = await fetch(
+      "https://connect.squareupsandbox.com/v2/catalog/object",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          idempotency_key: `${square_item_id}-update-${Date.now()}`,
+          object: itemObject,
+        }),
+      }
+    );
+
+    const updateData = await updateResponse.json();
+
+    if (!updateResponse.ok) {
+      return res.status(updateResponse.status).json({
+        success: false,
+        error: updateData,
+      });
+    }
+
+    if (quantity !== undefined && quantity !== null) {
+      const inventoryResponse = await fetch(
+        "https://connect.squareupsandbox.com/v2/inventory/changes/batch-create",
+        {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            idempotency_key: `${square_variation_id}-edit-inventory-${Date.now()}`,
+            changes: [
+              {
+                type: "PHYSICAL_COUNT",
+                physical_count: {
+                  catalog_object_id: square_variation_id,
+                  location_id: process.env.SQUARE_LOCATION_ID,
+                  quantity: String(quantity),
+                  state: "IN_STOCK",
+                  occurred_at: new Date().toISOString(),
+                },
+              },
+            ],
+          }),
+        }
+      );
+
+      const inventoryData = await inventoryResponse.json();
+
+      if (!inventoryResponse.ok) {
+        return res.status(inventoryResponse.status).json({
+          success: false,
+          error: inventoryData,
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      square_item_updated: true,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 app.post("/create-square-item", async (req, res) => {
   try {
     const { title, sku, final_price, notes } = req.body;
