@@ -590,6 +590,7 @@ const squareResponse = await fetch(
       title: bookData.title || "Untitled Book",
       sku: newSku,
       final_price: bookData.final_price || 0,
+      quantity: bookData.quantity || 1,
       notes: bookData.notes || "",
     }),
   }

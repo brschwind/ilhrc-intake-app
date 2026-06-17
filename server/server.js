@@ -162,13 +162,52 @@ app.post("/create-square-item", async (req, res) => {
       });
     }
 
-    const variation = data.catalog_object?.item_data?.variations?.[0];
+const variation = data.catalog_object?.item_data?.variations?.[0];
 
-    res.json({
-      success: true,
-      square_item_id: data.catalog_object?.id,
-      square_variation_id: variation?.id,
-    });
+const quantity = req.body.quantity || 1;
+
+const inventoryResponse = await fetch(
+  "https://connect.squareupsandbox.com/v2/inventory/changes/batch-create",
+  {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      idempotency_key: `${sku}-inventory-${Date.now()}`,
+      changes: [
+        {
+          type: "PHYSICAL_COUNT",
+          physical_count: {
+            catalog_object_id: variation?.id,
+            location_id: process.env.SQUARE_LOCATION_ID,
+            quantity: String(quantity),
+            state: "IN_STOCK",
+            occurred_at: new Date().toISOString(),
+          },
+        },
+      ],
+    }),
+  }
+);
+
+const inventoryData = await inventoryResponse.json();
+
+if (!inventoryResponse.ok) {
+  return res.status(inventoryResponse.status).json({
+    success: false,
+    error: inventoryData,
+  });
+}
+
+res.json({
+  success: true,
+  square_item_id: data.catalog_object?.id,
+  square_variation_id: variation?.id,
+  square_inventory_synced: true,
+});
+
   } catch (error) {
     res.status(500).json({
       success: false,
