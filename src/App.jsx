@@ -87,16 +87,16 @@ export default function App() {
     setItems(data || []);
   }
 
-  function handleCoverPhoto(event) {
-    const file = event.target.files?.[0];
-    if (!file) return;
+function handleCoverPhoto(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
 
-    setCoverPhoto(URL.createObjectURL(file));
-    setCoverFile(file);
-    setBookData(null);
-    setTimeout(() => analyzePhoto(), 100);
+  setCoverPhoto(URL.createObjectURL(file));
+  setCoverFile(file);
+  setBookData(null);
 
-  }
+  analyzePhotoWithFile(file);
+}
 
 
   function handleIsbnPhoto(event) {
@@ -302,30 +302,20 @@ await lookupBookByIsbn(scannedIsbn);
   }
 }
 
-async function analyzePhoto() {
-  console.log("STARTING ANALYSIS");
-  if (!coverFile && !isbnFile) return;
-
+async function analyzePhotoWithFile(file) {
   setIsAnalyzing(true);
   setAnalysisStatus("Preparing image...");
-  console.log("Preparing image");
-
 
   try {
     const formData = new FormData();
-
-    if (coverFile) formData.append("cover", coverFile);
-    if (isbnFile) formData.append("isbnImage", isbnFile);
+    formData.append("cover", file);
 
     setAnalysisStatus("Sending image to AI server...");
-    console.log("Sending image to AI server");
-
 
     const response = await fetch("https://ilhrc-intake-app.onrender.com/analyze-book", {
       method: "POST",
       body: formData,
     });
-    console.log("Received response");
 
     setAnalysisStatus("Reading AI response...");
 
