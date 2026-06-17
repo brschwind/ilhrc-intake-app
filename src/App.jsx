@@ -606,6 +606,8 @@ async function saveOptionIfNew(tableName, value) {
     .insert([{ name: cleanedValue }]);
 
   if (error && error.code !== "23505") {
+    alert(`Could not save option to ${tableName}: ${error.message}`);
+  }
 }
 
 function normalizeTitle(title) {
