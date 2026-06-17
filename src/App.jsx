@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { BrowserMultiFormatReader } from "@zxing/browser";
 import "./App.css";
 import { supabase } from "./supabaseClient";
 
@@ -57,6 +58,21 @@ export default function App() {
   const [pendingCategoryFilter, setPendingCategoryFilter] = useState("");
   const [pendingGradeFilter, setPendingGradeFilter] = useState("");
 
+  const [selectedCatalogItem, setSelectedCatalogItem] = useState(null);
+
+  const [sortBy, setSortBy] = useState("title");
+  const [isScanningBarcode, setIsScanningBarcode] = useState(false);
+
+  const listingPhotoInputRef = useRef(null);
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  const editPhotoInputRef = useRef(null);
+  const [editCoverFile, setEditCoverFile] = useState(null);
+  const [editCoverPreview, setEditCoverPreview] = useState(null);
+
+  const [analysisStatus, setAnalysisStatus] = useState("");
+
   async function loadItems() {
     const { data, error } = await supabase
       .from("items")
@@ -78,7 +94,10 @@ export default function App() {
     setCoverPhoto(URL.createObjectURL(file));
     setCoverFile(file);
     setBookData(null);
+    setTimeout(() => analyzePhoto(), 100);
+
   }
+
 
   function handleIsbnPhoto(event) {
     const file = event.target.files?.[0];
@@ -89,36 +108,244 @@ export default function App() {
     setBookData(null);
   }
 
-  async function analyzePhoto() {
-    if (!coverFile && !isbnFile) return;
+function handleListingPhoto(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
 
-    setIsAnalyzing(true);
+  setCoverPhoto(URL.createObjectURL(file));
+  setCoverFile(file);
+}
 
-    try {
-      const formData = new FormData();
+function handleEditCoverPhoto(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
 
-      if (coverFile) formData.append("cover", coverFile);
-      if (isbnFile) formData.append("isbnImage", isbnFile);
+  setEditCoverFile(file);
+  setEditCoverPreview(URL.createObjectURL(file));
+}
 
-      const response = await fetch("http://localhost:5001/analyze-book", {
-        method: "POST",
-        body: formData,
+function suggestPricingCategory(book) {
+  const text = `${book.title || ""} ${book.publisher || ""} ${
+    book.categories?.join(" ") || ""
+  }`.toLowerCase();
+
+  if (
+    text.includes("student activity") ||
+    text.includes("student workbook") ||
+    text.includes("workbook")
+  ) {
+    return pricingGuide.find(
+      (item) => item.item_name === "Workbook - Full year/curriculum"
+    );
+  }
+
+  if (
+    text.includes("teacher") ||
+    text.includes("answer key") ||
+    text.includes("solution") ||
+    text.includes("manual")
+  ) {
+    return pricingGuide.find((item) => item.item_name === "Answer Key");
+  }
+
+  if (
+    text.includes("science") ||
+    text.includes("history") ||
+    text.includes("math") ||
+    text.includes("grammar") ||
+    text.includes("textbook")
+  ) {
+    return pricingGuide.find((item) => item.item_name === "Textbook (Softcover)");
+  }
+
+  if (
+    text.includes("picture book") ||
+    text.includes("juvenile fiction") ||
+    text.includes("children")
+  ) {
+    return pricingGuide.find((item) => item.item_name === "Picture Book");
+  }
+
+  if (
+    text.includes("biography") ||
+    text.includes("fiction") ||
+    text.includes("literature") ||
+    text.includes("juvenile")
+  ) {
+    return pricingGuide.find((item) => item.item_name === "Reading Book");
+  }
+
+  return pricingGuide.find((item) => item.item_name === "Reading Book");
+}
+
+async function lookupBookByIsbn(isbn) {
+  try {
+    // 1. Try Google Books first
+    const googleUrl =
+  `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&key=${import.meta.env.VITE_GOOGLE_BOOKS_API_KEY}`;
+
+console.log("API Key:", import.meta.env.VITE_GOOGLE_BOOKS_API_KEY);
+
+const googleResponse = await fetch(googleUrl);
+console.log("Google Status:", googleResponse.status);
+
+const googleData = await googleResponse.json();
+console.log("Google Books response:", googleData);
+
+    if (googleData.items && googleData.items.length > 0) {
+      const book = googleData.items[0].volumeInfo;
+      const suggested = suggestPricingCategory(book);
+
+const coverUrl =
+  book.imageLinks?.thumbnail ||
+  book.imageLinks?.smallThumbnail ||
+  "";
+
+setBookData({
+  title: book.title || "",
+  curriculum: book.publisher || "",
+  subject: book.categories?.[0] || "",
+  grade_level: "",
+  edition: "",
+  isbn,
+  category: suggested?.item_name || "",
+  suggested_price: suggested?.price || "",
+  final_price: suggested?.price || "",
+  quantity: 1,
+  status: "Available",
+  notes: book.description || "",
+  confidence: "Google Books ISBN lookup",
+  public_visible: true,
+  image_url: "",});
+
+      return;
+    }
+
+    // 2. Try Open Library second
+    const openLibraryResponse = await fetch(
+      `https://openlibrary.org/isbn/${isbn}.json`
+    );
+
+    if (openLibraryResponse.ok) {
+      const openLibraryData = await openLibraryResponse.json();
+      const suggested = suggestPricingCategory({
+  title: openLibraryData.title || "",
+  publisher: openLibraryData.publishers?.[0] || "",
+  categories: [],
+});
+
+console.log("Open Library response:", openLibraryData);
+
+      setBookData({
+        title: openLibraryData.title || "",
+        curriculum: openLibraryData.publishers?.[0] || "",
+        subject: "",
+        grade_level: "",
+        edition: "",
+        isbn,
+       category: suggested?.item_name || "",
+        suggested_price: suggested?.price || "",
+        final_price: suggested?.price || "",
+        quantity: 1,
+        status: "Available",
+        notes: "",
+        confidence: "Open Library ISBN lookup",
+        public_visible: true,
       });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        alert(data.details || data.error || "Analysis failed");
-        return;
-      }
-
-      setBookData(data);
-    } catch (error) {
-      alert("Could not connect to the server: " + error.message);
-    } finally {
-      setIsAnalyzing(false);
+      return;
     }
+
+    // 3. If neither source finds it, still fill ISBN
+    setBookData({
+      title: "",
+      curriculum: "",
+      subject: "",
+      grade_level: "",
+      edition: "",
+      isbn,
+      category: "",
+      final_price: "",
+      quantity: 1,
+      status: "Available",
+      notes: "",
+      confidence: "ISBN scanned only",
+      public_visible: true,
+    });
+
+    alert("ISBN scanned, but no book data was found. You can enter the details manually.");
+  } catch (error) {
+    alert("Book lookup failed: " + error.message);
   }
+}
+
+async function scanIsbnBarcode() {
+  setIsScanningBarcode(true);
+
+  try {
+    const codeReader = new BrowserMultiFormatReader();
+
+    const result = await codeReader.decodeOnceFromVideoDevice(
+      undefined,
+      "barcode-video"
+    );
+
+const scannedIsbn = result.getText();
+
+alert(`ISBN scanned: ${scannedIsbn}`);
+
+await lookupBookByIsbn(scannedIsbn);
+  } catch (error) {
+    alert("Barcode scan failed: " + error.message);
+  } finally {
+    setIsScanningBarcode(false);
+  }
+}
+
+async function analyzePhoto() {
+  if (!coverFile && !isbnFile) return;
+
+  setIsAnalyzing(true);
+  setAnalysisStatus("Preparing image...");
+
+  try {
+    const formData = new FormData();
+
+    if (coverFile) formData.append("cover", coverFile);
+    if (isbnFile) formData.append("isbnImage", isbnFile);
+
+    setAnalysisStatus("Sending image to AI server...");
+
+    const response = await fetch("https://ilhrc-intake-app.onrender.com/analyze-book", {
+      method: "POST",
+      body: formData,
+    });
+
+    setAnalysisStatus("Reading AI response...");
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      setAnalysisStatus("");
+      alert(data.details || data.error || "Analysis failed");
+      return;
+    }
+
+    setAnalysisStatus("Filling book details...");
+    setBookData(data);
+
+    setAnalysisStatus("Analysis complete!");
+    setTimeout(() => setAnalysisStatus(""), 2500);
+  } catch (error) {
+    setAnalysisStatus("");
+    alert(
+      "Could not connect to the server. The AI server may be waking up. Try again in about 30 seconds. Details: " +
+        error.message
+    );
+  } finally {
+    setIsAnalyzing(false);
+  }
+}
 
   async function generateSku() {
   const { data, error } = await supabase
@@ -140,18 +367,23 @@ export default function App() {
   return `ILHRC-${String(nextNumber).padStart(6, "0")}`;
 }
 
-  async function saveItem() {
-    if (!bookData) return;
+async function saveItem() {
+  if (!bookData || isSaving) return;
 
+  setIsSaving(true);
+
+  try {
     let imageUrl = "";
 
     if (coverFile) {
-      const fileExt = coverFile.name.split(".").pop();
+      const fileExt = coverFile.type?.split("/")[1] || "jpg";
       const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
 
       const { error: uploadError } = await supabase.storage
         .from("book-covers")
-        .upload(fileName, coverFile);
+        .upload(fileName, coverFile, {
+          contentType: coverFile.type || "image/jpeg",
+        });
 
       if (uploadError) {
         alert("Image upload failed: " + uploadError.message);
@@ -167,78 +399,99 @@ export default function App() {
 
     const newSku = await generateSku();
 
-const itemToSave = {
-  sku: newSku,
-      title: bookData.title || "",
-      curriculum: bookData.curriculum || "",
-      subject: bookData.subject || "",
-      grade_level: bookData.grade_level || bookData.grade || "",
-      edition: bookData.edition || "",
-      isbn: bookData.isbn || "",
-      category: bookData.category || "",
-      suggested_price: bookData.suggested_price || null,
-      final_price: bookData.final_price ? Number(bookData.final_price) : null,
-      quantity: bookData.quantity ? Number(bookData.quantity) : 1,
-      status: bookData.status || "Available",
-      notes: bookData.notes || "",
-      image_url: imageUrl,
-      ai_confidence: bookData.confidence || null,
-    };
+  const itemToSave = {
+    sku: newSku,
+    title: bookData.title || "",
+    curriculum: bookData.curriculum || "",
+    subject: bookData.subject || "",
+    grade_level: bookData.grade_level || bookData.grade || "",
+    edition: bookData.edition || "",
+    isbn: bookData.isbn || "",
+    category: bookData.category || "",
+    suggested_price: bookData.suggested_price || null,
+    final_price:
+      bookData.final_price === "" ||
+      bookData.final_price === null ||
+      bookData.final_price === undefined ||
+      bookData.final_price === "null"
+        ? null
+        : Number(bookData.final_price),
+    quantity: bookData.quantity ? Number(bookData.quantity) : 1,
+    status: bookData.status || "Available",
+    notes: bookData.notes || "",
+    image_url: imageUrl || bookData.image_url || "",
+    ai_confidence:
+      typeof bookData.confidence === "number" ? bookData.confidence : null,
+    public_visible: true,
+  };
 
-    const { data: existingItems, error: searchError } = await supabase
+  let duplicateQuery = supabase
+    .from("items")
+    .select("*")
+    .eq("title", itemToSave.title)
+    .eq("curriculum", itemToSave.curriculum)
+    .eq("edition", itemToSave.edition)
+    .eq("category", itemToSave.category);
+
+  if (itemToSave.final_price === null) {
+    duplicateQuery = duplicateQuery.is("final_price", null);
+  } else {
+    duplicateQuery = duplicateQuery.eq("final_price", itemToSave.final_price);
+  }
+
+  const { data: existingItems, error: searchError } =
+    await duplicateQuery.limit(1);
+
+  if (searchError) {
+    alert("Could not check for existing item: " + searchError.message);
+    return;
+  }
+
+  if (existingItems && existingItems.length > 0) {
+    const existingItem = existingItems[0];
+
+    const newQuantity =
+      Number(existingItem.quantity || 0) + Number(itemToSave.quantity || 1);
+
+    const { error: updateError } = await supabase
       .from("items")
-      .select("*")
-      .eq("title", itemToSave.title)
-      .eq("curriculum", itemToSave.curriculum)
-      .eq("edition", itemToSave.edition)
-      .eq("category", itemToSave.category)
-      .eq("final_price", itemToSave.final_price)
-      .limit(1);
+      .update({
+        quantity: newQuantity,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", existingItem.id);
 
-    if (searchError) {
-      alert("Could not check for existing item: " + searchError.message);
+    if (updateError) {
+      alert("Quantity update failed: " + updateError.message);
       return;
     }
 
-    if (existingItems && existingItems.length > 0) {
-      const existingItem = existingItems[0];
+    alert("Existing item found. Quantity updated!");
+  } else {
+    const { error: insertError } = await supabase
+      .from("items")
+      .insert([itemToSave]);
 
-      const newQuantity =
-        Number(existingItem.quantity || 0) + Number(itemToSave.quantity || 1);
-
-      const { error: updateError } = await supabase
-        .from("items")
-        .update({
-          quantity: newQuantity,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", existingItem.id);
-
-      if (updateError) {
-        alert("Quantity update failed: " + updateError.message);
-        return;
-      }
-
-      alert("Existing item found. Quantity updated!");
-    } else {
-      const { error: insertError } = await supabase
-        .from("items")
-        .insert([itemToSave]);
-
-      if (insertError) {
-        alert("Save failed: " + insertError.message);
-        return;
-      }
-
-      alert("New item saved!");
+    if (insertError) {
+      alert("Save failed: " + insertError.message);
+      return;
     }
 
-    setBookData(null);
-    setCoverPhoto(null);
-    setCoverFile(null);
-    setIsbnPhoto(null);
-    setIsbnFile(null);
+    alert("New item saved!");
   }
+
+  setBookData(null);
+  setCoverPhoto(null);
+  setCoverFile(null);
+  setIsbnPhoto(null);
+  setIsbnFile(null);
+
+  } catch (error) {
+    alert("Save failed: " + error.message);
+  } finally {
+    setIsSaving(false);
+  }
+} 
 
   function startEditing(item) {
     setEditingItem(item);
@@ -252,6 +505,8 @@ const itemToSave = {
   function cancelEditing() {
     setEditingItem(null);
     setEditData(null);
+    setEditCoverFile(null);
+    setEditCoverPreview(null);
   }
 
 async function deleteItem() {
@@ -294,6 +549,30 @@ async function deleteItem() {
   async function updateItem() {
     if (!editingItem || !editData) return;
 
+    let updatedImageUrl = editData.image_url || "";
+
+if (editCoverFile) {
+  const fileExt = editCoverFile.type?.split("/")[1] || "jpg";
+  const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("book-covers")
+    .upload(fileName, editCoverFile, {
+      contentType: editCoverFile.type || "image/jpeg",
+    });
+
+  if (uploadError) {
+    alert("Image upload failed: " + uploadError.message);
+    return;
+  }
+
+  const { data } = supabase.storage
+    .from("book-covers")
+    .getPublicUrl(fileName);
+
+  updatedImageUrl = data.publicUrl;
+}
+
     const { error } = await supabase
       .from("items")
       .update({
@@ -313,6 +592,8 @@ async function deleteItem() {
         notes: editData.notes || "",
         sku: editData.sku || "",
         updated_at: new Date().toISOString(),
+        public_visible: editData.public_visible !== false,
+        image_url: updatedImageUrl,
       })
       .eq("id", editingItem.id);
 
@@ -342,35 +623,55 @@ const publicItems = items.filter(
     item.public_visible !== false
 );
 
-const filteredCatalogItems = publicItems.filter((item) => {
-  const matchesSearch = (item.title || "")
-    .toLowerCase()
-    .includes(searchTerm.toLowerCase());
+const filteredCatalogItems = publicItems
+  .filter((item) => {
+    const matchesSearch = (item.title || "")
+      .toLowerCase()
+      .includes(searchTerm.toLowerCase());
 
-  const matchesCurriculum =
-    !curriculumFilter ||
-    item.curriculum === curriculumFilter;
+    const matchesCurriculum =
+      !curriculumFilter || item.curriculum === curriculumFilter;
 
-  const matchesSubject =
-    !subjectFilter ||
-    item.subject === subjectFilter;
+    const matchesSubject =
+      !subjectFilter || item.subject === subjectFilter;
 
-  const matchesCategory =
-    !categoryFilter ||
-    item.category === categoryFilter;
+    const matchesCategory =
+      !categoryFilter || item.category === categoryFilter;
 
-  const matchesGrade =
-    !gradeFilter ||
-    item.grade_level === gradeFilter;
+    const matchesGrade =
+      !gradeFilter || item.grade_level === gradeFilter;
 
-  return (
-    matchesSearch &&
-    matchesCurriculum &&
-    matchesSubject &&
-    matchesCategory &&
-    matchesGrade
-  );
-});
+    return (
+      matchesSearch &&
+      matchesCurriculum &&
+      matchesSubject &&
+      matchesCategory &&
+      matchesGrade
+    );
+  })
+  .sort((a, b) => {
+    if (sortBy === "title") {
+      return (a.title || "").localeCompare(b.title || "");
+    }
+
+    if (sortBy === "curriculum") {
+      return (a.curriculum || "").localeCompare(b.curriculum || "");
+    }
+
+    if (sortBy === "priceLow") {
+      return Number(a.final_price || 0) - Number(b.final_price || 0);
+    }
+
+    if (sortBy === "priceHigh") {
+      return Number(b.final_price || 0) - Number(a.final_price || 0);
+    }
+
+    if (sortBy === "newest") {
+      return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+    }
+
+    return 0;
+  });
 
 const curriculumOptions = [
   ...new Set(
@@ -461,8 +762,8 @@ function clearCatalogFilters() {
     <main className="app">
       <h1>IL HRC Book Intake</h1>
 
-      <div className="nav-buttons">
-        <button
+{view !== "catalog" && (
+  <div className="nav-buttons">        <button
           className={view === "add" ? "primary" : "secondary"}
           onClick={() => {
             setView("add");
@@ -485,27 +786,21 @@ function clearCatalogFilters() {
 
         <button
   className={view === "catalog" ? "primary" : "secondary"}
-  onClick={() => {
-    setView("catalog");
-    cancelEditing();
-    loadItems();
-  }}
+onClick={() => {
+  setView("catalog");
+  cancelEditing();
+  setSelectedCatalogItem(null);
+  loadItems();
+}}
 >
   Public Catalog
 </button>
 
       </div>
-
+)}
       {view === "add" && (
         <>
           <p>Use the cover photo and ISBN/barcode when available.</p>
-
-          <button
-            className="primary"
-            onClick={() => coverInputRef.current.click()}
-          >
-            Take / Upload Cover Photo
-          </button>
 
           <input
             ref={coverInputRef}
@@ -516,12 +811,27 @@ function clearCatalogFilters() {
             hidden
           />
 
-          <button
-            className="secondary"
-            onClick={() => isbnInputRef.current.click()}
-          >
-            Take / Upload ISBN or Barcode Photo
-          </button>
+
+          <button className="secondary" onClick={scanIsbnBarcode}>
+  {isScanningBarcode ? "Scanning..." : "Scan ISBN Barcode"}
+</button>
+
+<video
+  id="barcode-video"
+  className="barcode-video"
+  hidden={!isScanningBarcode}
+/>
+
+<button
+  className="secondary"
+  onClick={() => coverInputRef.current.click()}
+>
+  Analyze Book Cover
+
+  {isAnalyzing && analysisStatus && (
+  <p className="status-message">{analysisStatus}</p>
+)}
+</button>
 
           <input
             ref={isbnInputRef}
@@ -546,21 +856,42 @@ function clearCatalogFilters() {
             </section>
           )}
 
-          {(coverPhoto || isbnPhoto) && (
-            <button
-              className="primary"
-              onClick={analyzePhoto}
-              disabled={isAnalyzing}
-            >
-              {isAnalyzing ? "Analyzing..." : "Analyze Book"}
-            </button>
-          )}
 
           {bookData && (
             <section className="card">
-              <h2>Review & Edit Details</h2>
+  <h2>Review & Edit Details</h2>
 
-              <label>Title</label>
+<button
+  className="secondary"
+  onClick={() => listingPhotoInputRef.current.click()}
+>
+  Add Actual Cover Photo to Listing
+</button>
+
+<input
+  ref={listingPhotoInputRef}
+  type="file"
+  accept="image/*"
+  capture="environment"
+  onChange={handleListingPhoto}
+  hidden
+/>
+
+{coverPhoto && (
+  <section className="preview">
+    <h2>Listing Photo</h2>
+    <img src={coverPhoto} alt="Book cover" />
+  </section>
+)}
+
+  {coverPhoto && (
+    <section className="preview">
+      <h2>Selected Cover Photo</h2>
+      <img src={coverPhoto} alt="Book cover" />
+    </section>
+  )}
+
+  <label>Title</label>
               <input
                 value={bookData.title || ""}
                 onChange={(e) =>
@@ -665,6 +996,8 @@ function clearCatalogFilters() {
                 <option>Removed</option>
               </select>
 
+              
+
               <label>Notes</label>
               <textarea
                 value={bookData.notes || ""}
@@ -677,9 +1010,9 @@ function clearCatalogFilters() {
                 <strong>AI Confidence:</strong> {bookData.confidence}
               </p>
 
-              <button className="primary" onClick={saveItem}>
-                Save Item
-              </button>
+              <button className="primary" onClick={saveItem} disabled={isSaving}>
+  {isSaving ? "Saving..." : "Save Item"}
+</button>
             </section>
           )}
         </>
@@ -724,6 +1057,33 @@ function clearCatalogFilters() {
             <section className="card">
               <h2>Edit Item</h2>
 
+              <label>Cover Photo</label>
+
+            {(editCoverPreview || editData.image_url) && (
+              <section className="preview">
+                <img
+                  src={editCoverPreview || editData.image_url}
+                  alt="Book cover"
+                />
+              </section>
+            )}
+
+            <button
+              className="secondary"
+              onClick={() => editPhotoInputRef.current.click()}
+            >
+              Add / Replace Cover Photo
+            </button>
+
+            <input
+              ref={editPhotoInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleEditCoverPhoto}
+              hidden
+            />
+              
               <label>SKU</label>
               <input
                 value={editData.sku || ""}
@@ -835,10 +1195,24 @@ function clearCatalogFilters() {
                 <option>Sold</option>
                 <option>Hold</option>
                 <option>Removed</option>
-              </select>
+</select>
 
-              <label>Notes</label>
-              <textarea
+<label className="checkbox-label">
+  <input
+    type="checkbox"
+    checked={editData.public_visible !== false}
+    onChange={(e) =>
+      setEditData({
+        ...editData,
+        public_visible: e.target.checked,
+      })
+    }
+  />
+  Show in Public Catalog
+</label>
+
+<label>Notes</label>
+<textarea
                 value={editData.notes || ""}
                 onChange={(e) =>
                   setEditData({ ...editData, notes: e.target.value })
@@ -875,7 +1249,9 @@ function clearCatalogFilters() {
                   ${item.final_price} • Qty: {item.quantity}
                 </p>
                 <p>Status: {item.status}</p>
-
+                  <p>
+                    Public: {item.public_visible !== false ? "Yes" : "No"}
+                  </p>
                 <button
                   className="secondary"
                   onClick={() => startEditing(item)}
@@ -893,6 +1269,41 @@ function clearCatalogFilters() {
     <p>
       These are the items families would see in the public searchable catalog.
     </p>
+
+{selectedCatalogItem && (
+  <section className="catalog-detail">
+    <button
+      className="secondary"
+      onClick={() => setSelectedCatalogItem(null)}
+    >
+      ← Back to Catalog
+    </button>
+
+    {selectedCatalogItem.image_url && (
+      <img
+        src={selectedCatalogItem.image_url}
+        alt={selectedCatalogItem.title}
+        className="catalog-detail-image"
+      />
+    )}
+
+    <h2>{selectedCatalogItem.title}</h2>
+
+    <p><strong>Curriculum:</strong> {selectedCatalogItem.curriculum || "N/A"}</p>
+    <p><strong>Subject:</strong> {selectedCatalogItem.subject || "N/A"}</p>
+    <p><strong>Grade Level:</strong> {selectedCatalogItem.grade_level || "N/A"}</p>
+    <p><strong>Category:</strong> {selectedCatalogItem.category || "N/A"}</p>
+    <p><strong>Edition:</strong> {selectedCatalogItem.edition || "N/A"}</p>
+    <p><strong>ISBN:</strong> {selectedCatalogItem.isbn || "N/A"}</p>
+    <p><strong>Price:</strong> ${selectedCatalogItem.final_price}</p>
+    <p><strong>Available:</strong> {selectedCatalogItem.quantity || 1}</p>
+
+    <p className="catalog-note">Available in store</p>
+  </section>
+)}
+
+{!selectedCatalogItem && (
+  <>
 
     <input
       placeholder="Search title, curriculum, subject, grade..."
@@ -940,7 +1351,7 @@ function clearCatalogFilters() {
 
   <select
     value={pendingGradeFilter}
-    onChange={(e) => setGradeFilter(e.target.value)}
+    onChange={(e) => setPendingGradeFilter(e.target.value)}
   >
     <option value="">All Grades</option>
     {gradeOptions.map((item) => (
@@ -951,6 +1362,15 @@ function clearCatalogFilters() {
   </select>
 
 </div>
+
+<label>Sort By</label>
+<select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+  <option value="title">Title A-Z</option>
+  <option value="curriculum">Curriculum</option>
+  <option value="priceLow">Price Low-High</option>
+  <option value="priceHigh">Price High-Low</option>
+  <option value="newest">Newest Added</option>
+</select>
 
 <button className="primary" onClick={applyCatalogFilters}>
   Apply Filters
@@ -978,11 +1398,19 @@ function clearCatalogFilters() {
             </p>
 
             <p className="catalog-note">Available in store</p>
+            <button
+            className="secondary"
+            onClick={() => setSelectedCatalogItem(item)}
+          >
+            View Details
+          </button>
           </div>
         </div>
       ))}
 
     {filteredCatalogItems.length === 0 && <p>No matching catalog items found.</p>}
+    </>
+)}
   </section>
 )}
     </main>
