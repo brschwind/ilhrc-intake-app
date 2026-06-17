@@ -120,27 +120,72 @@ function toggleSelectedItem(id) {
 async function bulkDeleteSelected() {
   if (selectedItemIds.length === 0) return;
 
-  const confirmed = confirm(
-    `Delete ${selectedItemIds.length} selected item(s)? This cannot be undone.`
+  const confirmed = window.confirm(
+    `Delete ${selectedItemIds.length} selected item(s)? This will also archive them in Square.`
   );
 
   if (!confirmed) return;
 
-  const { error } = await supabase
-    .from("items")
-    .delete()
-    .in("id", selectedItemIds);
+  try {
+    const selectedItems = items.filter((item) =>
+      selectedItemIds.includes(item.id)
+    );
 
-  if (error) {
-    alert("Bulk delete failed: " + error.message);
-    return;
+    console.log("Bulk delete selected items:", selectedItems);
+
+    for (const item of selectedItems) {
+      const squareItemId = item.square_item_id;
+
+      console.log("Archiving Square item:", item.title, squareItemId);
+
+      if (squareItemId) {
+        const archiveRes = await fetch(
+          "https://ilhrc-intake-app.onrender.com/archive-square-item",
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              square_item_id: squareItemId,
+            }),
+          }
+        );
+
+        const archiveData = await archiveRes.json();
+
+        console.log("Square archive response:", archiveData);
+
+        if (!archiveRes.ok || !archiveData.success) {
+          throw new Error(
+            archiveData?.error ||
+              `Failed to archive Square item: ${item.title}`
+          );
+        }
+      }
+    }
+
+    const { error } = await supabase
+      .from("items")
+      .delete()
+      .in("id", selectedItemIds);
+
+    if (error) throw error;
+
+    setItems((prev) =>
+      prev.filter((item) => !selectedItemIds.includes(item.id))
+    );
+
+    setSelectedItemIds([]);
+
+    alert("Selected items archived in Square and deleted.");
+  } catch (err) {
+    console.error("Bulk delete failed:", err);
+    alert(`Bulk delete failed: ${err.message}`);
   }
-
-  alert(`Deleted ${selectedItemIds.length} item(s).`);
-
-  setSelectedItemIds([]);
-  loadItems();
 }
+
+
 
 async function applyBulkEdit() {
   const updates = {};
@@ -158,27 +203,102 @@ async function applyBulkEdit() {
     return;
   }
 
-  const { error } = await supabase
-    .from("items")
-    .update(updates)
-    .in("id", selectedItemIds);
+  try {
+    const shouldArchiveInSquare =
+      bulkStatus === "Sold" || bulkStatus === "Removed";
 
-  if (error) {
-    alert(error.message);
-    return;
+    if (shouldArchiveInSquare) {
+      const selectedItems = items.filter((item) =>
+        selectedItemIds.includes(item.id)
+      );
+
+      const shouldUnarchiveInSquare = bulkStatus === "Available";
+
+if (shouldUnarchiveInSquare) {
+  const selectedItems = items.filter((item) =>
+    selectedItemIds.includes(item.id)
+  );
+
+  for (const item of selectedItems) {
+    if (item.square_item_id && item.status !== "Available") {
+      const unarchiveResponse = await fetch(
+        "https://ilhrc-intake-app.onrender.com/unarchive-square-item",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            square_item_id: item.square_item_id,
+          }),
+        }
+      );
+
+      const unarchiveData = await unarchiveResponse.json();
+
+      if (!unarchiveResponse.ok || !unarchiveData.success) {
+        throw new Error(
+          "Square unarchive failed for " +
+            item.title +
+            ": " +
+            JSON.stringify(unarchiveData.error)
+        );
+      }
+    }
   }
+}
 
-  alert(`Updated ${selectedItemIds.length} items.`);
+      for (const item of selectedItems) {
+        if (item.square_item_id) {
+          const archiveResponse = await fetch(
+            "https://ilhrc-intake-app.onrender.com/archive-square-item",
+            {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                square_item_id: item.square_item_id,
+              }),
+            }
+          );
 
-  setSelectedItemIds([]);
-  setBulkCurriculum("");
-  setBulkSubject("");
-  setBulkGrade("");
-  setBulkStatus("");
-  setBulkCategory("");
-  setBulkPublicVisible("");
+          const archiveData = await archiveResponse.json();
 
-  loadItems();
+          if (!archiveResponse.ok || !archiveData.success) {
+            throw new Error(
+              "Square archive failed for " +
+                item.title +
+                ": " +
+                JSON.stringify(archiveData.error)
+            );
+          }
+        }
+      }
+    }
+
+    const { error } = await supabase
+      .from("items")
+      .update(updates)
+      .in("id", selectedItemIds);
+
+    if (error) throw error;
+
+    alert(`Updated ${selectedItemIds.length} items.`);
+
+    setSelectedItemIds([]);
+    setBulkCurriculum("");
+    setBulkSubject("");
+    setBulkGrade("");
+    setBulkStatus("");
+    setBulkCategory("");
+    setBulkPublicVisible("");
+
+    loadItems();
+  } catch (error) {
+    console.error("Bulk edit failed:", error);
+    alert("Bulk edit failed: " + error.message);
+  }
 }
 
 function handleCoverPhoto(event) {
@@ -853,6 +973,8 @@ async function deleteItem() {
 }
 
   async function updateItem() {
+
+    console.log("Attempting unarchive:", editingItem.square_item_id);
     if (!editingItem || !editData) return;
     await saveOptionIfNew("curriculum_options", editData.curriculum);
     await saveOptionIfNew("subject_options", editData.subject);
@@ -904,6 +1026,35 @@ if (editingItem.square_item_id && editingItem.square_variation_id) {
       }),
     }
   );
+
+  if (
+  editData.status === "Available" &&
+  editingItem.status !== "Available" &&
+  editingItem.square_item_id
+) {
+  const unarchiveResponse = await fetch(
+    "https://ilhrc-intake-app.onrender.com/unarchive-square-item",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        square_item_id: editingItem.square_item_id,
+      }),
+    }
+  );
+
+  const unarchiveData = await unarchiveResponse.json();
+
+  if (!unarchiveResponse.ok || !unarchiveData.success) {
+    alert(
+      "Square unarchive failed. Supabase was not updated. " +
+        JSON.stringify(unarchiveData.error)
+    );
+    return;
+  }
+}
 
   const squareUpdateData = await squareUpdateResponse.json();
 
@@ -2054,13 +2205,17 @@ onClick={() => {
     Apply to Selected
   </button>
 
-  <button
-    type="button"
-    className="bulk-delete-btn"
-    onClick={bulkDeleteSelected}
-  >
-    Delete
-  </button>
+<button
+  type="button"
+  className="bulk-delete-btn"
+  onClick={(e) => {
+    e.preventDefault();
+    console.log("Bulk delete button clicked");
+    bulkDeleteSelected();
+  }}
+>
+  Delete
+</button>
 </div>
   </div>
 )}

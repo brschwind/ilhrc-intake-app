@@ -361,6 +361,50 @@ app.post("/archive-square-item", async (req, res) => {
   }
 });
 
+app.post("/unarchive-square-item", async (req, res) => {
+  console.log("UNARCHIVE ROUTE HIT");
+  console.log(req.body);
+  try {
+    const { square_item_id } = req.body;
+
+    if (!square_item_id) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing square_item_id",
+      });
+    }
+
+    const response = await squareClient.catalogApi.upsertCatalogObject({
+      idempotencyKey: crypto.randomUUID(),
+      object: {
+        type: "ITEM",
+        id: square_item_id,
+        presentAtAllLocations: true,
+        itemData: {},
+      },
+    });
+
+    res.json({
+      success: true,
+      result: response.result,
+    });
+  } catch (error) {
+    console.error("Square unarchive failed:", error);
+
+    res.status(500).json({
+      success: false,
+      error: error.message || error,
+    });
+  }
+});
+
+app.get("/test-unarchive", (req, res) => {
+  res.json({
+    success: true,
+    route: "unarchive route exists",
+  });
+});
+
 app.post("/create-square-item", async (req, res) => {
   try {
     const { title, sku, final_price, notes } = req.body;
