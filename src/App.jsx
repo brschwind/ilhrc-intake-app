@@ -704,12 +704,40 @@ if (editCoverFile) {
   }
 
 const filteredItems = items.filter((item) => {
-  const text = `${item.title || ""} ${item.curriculum || ""} ${
-    item.subject || ""
-  } ${item.grade_level || ""}`.toLowerCase();
+  const text = `
+    ${item.title || ""}
+    ${item.curriculum || ""}
+    ${item.subject || ""}
+    ${item.grade_level || ""}
+    ${item.isbn || ""}
+    ${item.sku || ""}
+    ${item.category || ""}
+  `.toLowerCase();
 
-  return text.includes(searchTerm.toLowerCase());
+  const matchesSearch = text.includes(searchTerm.toLowerCase());
+
+  const matchesCurriculum =
+    !curriculumFilter || item.curriculum === curriculumFilter;
+
+  const matchesSubject =
+    !subjectFilter || item.subject === subjectFilter;
+
+  const matchesCategory =
+    !categoryFilter || item.category === categoryFilter;
+
+  const matchesGrade =
+    !gradeFilter || item.grade_level === gradeFilter;
+
+  return (
+    matchesSearch &&
+    matchesCurriculum &&
+    matchesSubject &&
+    matchesCategory &&
+    matchesGrade
+  );
 });
+
+
 
 const publicItems = items.filter(
   (item) =>
@@ -1216,11 +1244,63 @@ onClick={() => {
     <span>{soldCopies}</span>
   </div>
 </div>
-          <input
-          placeholder="Search title..."
-          value={pendingSearchTerm}
-          onChange={(e) => setPendingSearchTerm(e.target.value)}
-        />
+
+
+<input
+  placeholder="Search title, curriculum, subject, grade, ISBN, SKU..."
+  value={searchTerm}
+  onChange={(e) => setSearchTerm(e.target.value)}
+/>
+
+<div className="catalog-filters">
+  <select
+    value={curriculumFilter}
+    onChange={(e) => setCurriculumFilter(e.target.value)}
+  >
+    <option value="">All Curricula</option>
+    {catalogCurriculumOptions.map((item) => (
+      <option key={item} value={item}>
+        {item}
+      </option>
+    ))}
+  </select>
+
+  <select
+    value={subjectFilter}
+    onChange={(e) => setSubjectFilter(e.target.value)}
+  >
+    <option value="">All Subjects</option>
+    {catalogSubjectOptions.map((item) => (
+      <option key={item} value={item}>
+        {item}
+      </option>
+    ))}
+  </select>
+
+  <select
+    value={categoryFilter}
+    onChange={(e) => setCategoryFilter(e.target.value)}
+  >
+    <option value="">All Categories</option>
+    {categoryOptions.map((item) => (
+      <option key={item} value={item}>
+        {item}
+      </option>
+    ))}
+  </select>
+
+  <select
+    value={gradeFilter}
+    onChange={(e) => setGradeFilter(e.target.value)}
+  >
+    <option value="">All Grades</option>
+    {catalogGradeOptions.map((item) => (
+      <option key={item} value={item}>
+        {item}
+      </option>
+    ))}
+  </select>
+</div>
        
           {editData && (
             <section className="card">
@@ -1476,10 +1556,78 @@ onClick={() => {
             </section>
           )}
 
+              {(searchTerm ||
+                curriculumFilter ||
+                subjectFilter ||
+                categoryFilter ||
+                gradeFilter) && (
+                <button
+                  type="button"
+                  className="filter-reset"
+                  onClick={() => {
+                    setSearchTerm("");
+                    setCurriculumFilter("");
+                    setSubjectFilter("");
+                    setCategoryFilter("");
+                    setGradeFilter("");
+                  }}
+                >
+                  Reset Filters
+                </button>
+              )}
+
+              <div className="selection-toolbar">
+              <span>
+                <strong>{selectedItemIds.length}</strong> selected
+              </span>
+
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setSelectedItemIds(filteredItems.map((item) => item.id))}
+              >
+                Select visible
+              </button>
+
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setSelectedItemIds(items.map((item) => item.id))}
+              >
+                Select all
+              </button>
+
+              <button
+                type="button"
+                className="text-button"
+                onClick={() => setSelectedItemIds([])}
+              >
+                Clear
+              </button>
+            </div>
+
+            {(searchTerm ||
+            curriculumFilter ||
+            subjectFilter ||
+            categoryFilter ||
+            gradeFilter) && (
+            <button
+              type="button"
+              className="filter-reset"
+              onClick={() => {
+                setSearchTerm("");
+                setCurriculumFilter("");
+                setSubjectFilter("");
+                setCategoryFilter("");
+                setGradeFilter("");
+              }}
+            >
+              Reset Filters
+            </button>
+          )}
+
 {selectedItemIds.length > 0 && (
  <div className="bulk-edit-bar">
-  <strong>{selectedItemIds.length} selected</strong>
-
     <div className="bulk-edit-field">
   <label>Curriculum</label>
   <select

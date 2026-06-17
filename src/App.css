@@ -23,8 +23,10 @@ body {
 
 .app {
   max-width: 980px;
+  width: 100%;
   margin: 0 auto;
   padding: 42px 24px;
+  box-sizing: border-box;
 }
 
 h1 {
@@ -111,6 +113,8 @@ button {
 }
 
 .card {
+  width: 100%;
+  box-sizing: border-box;
   margin-top: 24px;
   padding: 28px;
   background: var(--surface);
@@ -240,11 +244,6 @@ button {
 
 .catalog-filters {
   display: grid;
-
-}
-
-.catalog-filters {
-  display: grid;
   grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
   gap: 10px;
   margin: 15px 0;
@@ -278,11 +277,6 @@ button {
   width: 100%;
   margin-top: 15px;
   border: 1px solid var(--border);
-}
-
-.status-message {
-  margin-top: 0.75rem;
-  font-weight: 600;
 }
 
 @media (max-width: 650px) {
@@ -335,7 +329,7 @@ button {
   border: 1px solid var(--border);
   background: var(--cream);
   display: grid;
-  grid-template-columns: auto repeat(4, minmax(120px, 1fr)) auto;
+  grid-template-columns: repeat(4, 1fr) auto;
   gap: 10px;
   align-items: end;
 }
@@ -368,4 +362,51 @@ button {
   .bulk-edit-bar {
     grid-template-columns: 1fr;
   }
+}
+.selection-actions {
+  display: flex;
+  gap: 10px;
+  margin: 16px 0;
+  flex-wrap: wrap;
+}
+
+.filter-reset {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.85rem;
+  padding: 0;
+  margin: 4px 0 12px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.filter-reset:hover {
+  color: var(--sage-dark);
+}
+
+.selection-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 12px 0 18px;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  color: var(--muted);
+}
+
+.text-button {
+  background: none;
+  border: none;
+  color: var(--sage-dark);
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  font-weight: bold;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.text-button:hover {
+  color: var(--brown);
 }
