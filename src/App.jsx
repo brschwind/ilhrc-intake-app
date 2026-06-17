@@ -802,6 +802,31 @@ async function deleteItem() {
 
   if (!confirmed) return;
 
+  if (editingItem.square_item_id) {
+  const squareResponse = await fetch(
+    "https://ilhrc-intake-app.onrender.com/archive-square-item",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        square_item_id: editingItem.square_item_id,
+      }),
+    }
+  );
+
+  const squareData = await squareResponse.json();
+
+  if (!squareResponse.ok || !squareData.success) {
+    alert(
+      "Square archive failed. Item was NOT deleted. " +
+        JSON.stringify(squareData.error)
+    );
+    return;
+  }
+}
+
   const { data, error } = await supabase
     .from("items")
     .delete()
@@ -858,6 +883,44 @@ if (editCoverFile) {
     .getPublicUrl(fileName);
 
   updatedImageUrl = data.publicUrl;
+}
+
+if (editingItem.square_item_id && editingItem.square_variation_id) {
+  const squareUpdateData = await squareUpdateResponse.json();
+
+if (!squareUpdateResponse.ok || !squareUpdateData.success) {
+  alert(
+    "Square update failed. Supabase was not updated. " +
+    JSON.stringify(squareUpdateData.error)
+  );
+  return;
+}
+
+if (Number(editData.quantity || 0) <= 0) {
+  const archiveResponse = await fetch(
+    "https://ilhrc-intake-app.onrender.com/archive-square-item",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        square_item_id: editingItem.square_item_id,
+      }),
+    }
+  );
+
+  const archiveData = await archiveResponse.json();
+
+  if (!archiveResponse.ok || !archiveData.success) {
+    alert(
+      "Square item updated, but archive failed. " +
+      JSON.stringify(archiveData.error)
+    );
+    return;
+  }
+
+  editData.status = "Sold";
 }
 
     const { error } = await supabase
