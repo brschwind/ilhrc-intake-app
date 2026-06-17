@@ -544,6 +544,24 @@ async function saveOptionIfNew(tableName, value) {
   }
 }
 
+function normalizeTitle(title) {
+  return (title || "")
+    .toLowerCase()
+    .replace(/\bfirst grade\b/g, "1")
+    .replace(/\bsecond grade\b/g, "2")
+    .replace(/\bthird grade\b/g, "3")
+    .replace(/\bfourth grade\b/g, "4")
+    .replace(/\bfifth grade\b/g, "5")
+    .replace(/\bsixth grade\b/g, "6")
+    .replace(/\bseventh grade\b/g, "7")
+    .replace(/\beighth grade\b/g, "8")
+    .replace(/\bgrade\b/g, "")
+    .replace(/\bstudent workbook\b/g, "workbook")
+    .replace(/\bstudent text\b/g, "textbook")
+    .replace(/[^a-z0-9]/g, "")
+    .trim();
+}
+
 async function saveItem() {
   if (!bookData || isSaving) return;
 
@@ -576,35 +594,8 @@ async function saveItem() {
 
     const newSku = await generateSku();
 
-let squareItemId = "";
-let squareVariationId = "";
-
-const squareResponse = await fetch(
-  "https://ilhrc-intake-app.onrender.com/create-square-item",
-  {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      title: bookData.title || "Untitled Book",
-      sku: newSku,
-      final_price: bookData.final_price || 0,
-      quantity: bookData.quantity || 1,
-      notes: bookData.notes || "",
-    }),
-  }
-);
-
-const squareData = await squareResponse.json();
-
-if (!squareResponse.ok || !squareData.success) {
-  alert("Square item creation failed. Book was not saved. " + JSON.stringify(squareData.error));
-  return;
-}
-
-squareItemId = squareData.square_item_id;
-squareVariationId = squareData.square_variation_id;
+    let squareItemId = "";
+    let squareVariationId = "";
 
     await saveOptionIfNew("curriculum_options", bookData.curriculum);
     await saveOptionIfNew("subject_options", bookData.subject);
@@ -637,31 +628,37 @@ squareVariationId = squareData.square_variation_id;
     ai_confidence:
       typeof bookData.confidence === "number" ? bookData.confidence : null,
     public_visible: true,
-    square_item_id: squareItemId,
-    square_variation_id: squareVariationId,
   };
 
-  let duplicateQuery = supabase
-    .from("items")
-    .select("*")
-    .eq("title", itemToSave.title)
-    .eq("curriculum", itemToSave.curriculum)
-    .eq("edition", itemToSave.edition)
-    .eq("category", itemToSave.category);
+const { data: possibleMatches, error: searchError } = await supabase
+  .from("items")
+  .select("*")
+  .eq("curriculum", itemToSave.curriculum)
+  .eq("category", itemToSave.category);
 
-  if (itemToSave.final_price === null) {
-    duplicateQuery = duplicateQuery.is("final_price", null);
-  } else {
-    duplicateQuery = duplicateQuery.eq("final_price", itemToSave.final_price);
-  }
+if (searchError) {
+  alert("Could not check for existing item: " + searchError.message);
+  return;
+}
 
-  const { data: existingItems, error: searchError } =
-    await duplicateQuery.limit(1);
+const existingItems = (possibleMatches || []).filter((item) => {
+  const sameTitle =
+    normalizeTitle(item.title) === normalizeTitle(itemToSave.title);
 
-  if (searchError) {
-    alert("Could not check for existing item: " + searchError.message);
-    return;
-  }
+ const sameEdition =
+  String(item.edition || "").trim().toLowerCase() ===
+  String(itemToSave.edition || "").trim().toLowerCase();
+
+  const samePrice =
+    Number(item.final_price || 0) === Number(itemToSave.final_price || 0);
+
+const sameGrade =
+  String(item.grade_level || "").trim().toLowerCase() ===
+  String(itemToSave.grade_level || "").trim().toLowerCase();
+
+  return sameTitle && sameEdition && samePrice && sameGrade;
+});
+
 
   if (existingItems && existingItems.length > 0) {
     const existingItem = existingItems[0];
@@ -682,19 +679,78 @@ squareVariationId = squareData.square_variation_id;
       return;
     }
 
-    alert("Existing item found. Quantity updated!");
-  } else {
-    const { error: insertError } = await supabase
-      .from("items")
-      .insert([itemToSave]);
-
-    if (insertError) {
-      alert("Save failed: " + insertError.message);
-      return;
+if (existingItem.square_variation_id) {
+  const squareInventoryResponse = await fetch(
+    "https://ilhrc-intake-app.onrender.com/update-square-inventory",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        square_variation_id: existingItem.square_variation_id,
+        quantity: newQuantity,
+      }),
     }
+  );
 
-    alert("New item saved!");
+  const squareInventoryData = await squareInventoryResponse.json();
+
+  if (!squareInventoryResponse.ok || !squareInventoryData.success) {
+    alert(
+      "Supabase quantity updated, but Square inventory did not sync. " +
+        JSON.stringify(squareInventoryData.error)
+    );
+    return;
   }
+}
+
+    alert("Existing item found. Quantity updated!");
+} else {
+  const squareResponse = await fetch(
+    "https://ilhrc-intake-app.onrender.com/create-square-item",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        title: itemToSave.title || "Untitled Book",
+        sku: itemToSave.sku,
+        final_price: itemToSave.final_price || 0,
+        quantity: itemToSave.quantity || 1,
+        notes: itemToSave.notes || "",
+      }),
+    }
+  );
+
+  const squareData = await squareResponse.json();
+
+  if (!squareResponse.ok || !squareData.success) {
+    alert(
+      "Square item creation failed. Book was not saved. " +
+        JSON.stringify(squareData.error)
+    );
+    return;
+  }
+
+  const itemWithSquareIds = {
+    ...itemToSave,
+    square_item_id: squareData.square_item_id,
+    square_variation_id: squareData.square_variation_id,
+  };
+
+  const { error: insertError } = await supabase
+    .from("items")
+    .insert([itemWithSquareIds]);
+
+  if (insertError) {
+    alert("Save failed: " + insertError.message);
+    return;
+  }
+
+  alert("New item saved!");
+}
 
   setBookData(null);
   setCoverPhoto(null);
