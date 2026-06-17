@@ -694,8 +694,17 @@ if (existingItem.square_variation_id) {
     }
   );
 
-  const squareInventoryData = await squareInventoryResponse.json();
+const squareInventoryText = await squareInventoryResponse.text();
 
+let squareInventoryData;
+try {
+  squareInventoryData = JSON.parse(squareInventoryText);
+} catch {
+  alert(
+    "Square inventory sync returned a non-JSON response. The backend route may not be deployed yet."
+  );
+  return;
+}
   if (!squareInventoryResponse.ok || !squareInventoryData.success) {
     alert(
       "Supabase quantity updated, but Square inventory did not sync. " +
