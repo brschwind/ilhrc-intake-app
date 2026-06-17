@@ -4,6 +4,16 @@ const multer = require("multer");
 const OpenAI = require("openai");
 require("dotenv").config();
 
+const { Client, Environment } = require("square");
+
+const squareClient = new Client({
+  accessToken: process.env.SQUARE_ACCESS_TOKEN,
+  environment:
+    process.env.SQUARE_ENVIRONMENT === "production"
+      ? Environment.Production
+      : Environment.Sandbox,
+});
+
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -37,6 +47,47 @@ app.get("/test-square", async (req, res) => {
       locations: data.locations,
     });
   } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+app.get("/test-square-item", async (req, res) => {
+  try {
+    const result = await squareClient.catalogApi.upsertCatalogObject({
+      idempotencyKey: Date.now().toString(),
+      object: {
+        type: "ITEM",
+        id: "#TEMP_ITEM",
+        itemData: {
+          name: "IL HRC Test Book",
+          description: "Created from IL HRC Inventory App",
+          variations: [
+            {
+              type: "ITEM_VARIATION",
+              id: "#TEMP_VARIATION",
+              itemVariationData: {
+                sku: "ILHRC-TEST-001",
+                pricingType: "FIXED_PRICING",
+                priceMoney: {
+                  amount: 100,
+                  currency: "USD",
+                },
+              },
+            },
+          ],
+        },
+      },
+    });
+
+    res.json({
+      success: true,
+      squareItemId: result.result.catalogObject.id,
+    });
+  } catch (error) {
+    console.error(error);
     res.status(500).json({
       success: false,
       error: error.message,
