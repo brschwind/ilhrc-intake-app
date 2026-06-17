@@ -82,6 +82,13 @@ export default function App() {
   const [subjectOptions, setSubjectOptions] = useState([]);
   const [gradeOptions, setGradeOptions] = useState([]);
 
+  const [selectedItemIds, setSelectedItemIds] = useState([]);
+
+  const [bulkCurriculum, setBulkCurriculum] = useState("");
+  const [bulkSubject, setBulkSubject] = useState("");
+  const [bulkGrade, setBulkGrade] = useState("");
+  const [bulkStatus, setBulkStatus] = useState("");
+
   async function loadItems() {
     const { data, error } = await supabase
       .from("items")
@@ -115,6 +122,48 @@ async function loadOptionLists() {
   setCurriculumOptions(curricula?.map((x) => x.name) || []);
   setSubjectOptions(subjects?.map((x) => x.name) || []);
   setGradeOptions(grades?.map((x) => x.name) || []);
+}
+
+function toggleSelectedItem(id) {
+  setSelectedItemIds((current) =>
+    current.includes(id)
+      ? current.filter((itemId) => itemId !== id)
+      : [...current, id]
+  );
+}
+
+async function applyBulkEdit() {
+  const updates = {};
+
+  if (bulkCurriculum) updates.curriculum = bulkCurriculum;
+  if (bulkSubject) updates.subject = bulkSubject;
+  if (bulkGrade) updates.grade_level = bulkGrade;
+  if (bulkStatus) updates.status = bulkStatus;
+
+  if (Object.keys(updates).length === 0) {
+    alert("Choose at least one field to update.");
+    return;
+  }
+
+  const { error } = await supabase
+    .from("items")
+    .update(updates)
+    .in("id", selectedItemIds);
+
+  if (error) {
+    alert(error.message);
+    return;
+  }
+
+  alert(`Updated ${selectedItemIds.length} items.`);
+
+  setSelectedItemIds([]);
+  setBulkCurriculum("");
+  setBulkSubject("");
+  setBulkGrade("");
+  setBulkStatus("");
+
+  loadItems();
 }
 
 function handleCoverPhoto(event) {
@@ -393,6 +442,20 @@ async function analyzePhotoWithFile(file) {
   return `ILHRC-${String(nextNumber).padStart(6, "0")}`;
 }
 
+async function saveOptionIfNew(tableName, value) {
+  const cleanedValue = (value || "").trim();
+
+  if (!cleanedValue || cleanedValue === "Other") return;
+
+  const { error } = await supabase
+    .from(tableName)
+    .insert([{ name: cleanedValue }]);
+
+  if (error && error.code !== "23505") {
+    console.error(`Could not save option to ${tableName}:`, error.message);
+  }
+}
+
 async function saveItem() {
   if (!bookData || isSaving) return;
 
@@ -424,6 +487,11 @@ async function saveItem() {
     }
 
     const newSku = await generateSku();
+    await saveOptionIfNew("curriculum_options", bookData.curriculum);
+    await saveOptionIfNew("subject_options", bookData.subject);
+    await saveOptionIfNew("grade_options", bookData.grade_level || bookData.grade);
+
+    await loadOptionLists();
 
   const itemToSave = {
     sku: newSku,
@@ -1201,29 +1269,103 @@ onClick={() => {
                 }
               />
 
-              <label>Curriculum</label>
-              <input
-                value={editData.curriculum || ""}
-                onChange={(e) =>
-                  setEditData({ ...editData, curriculum: e.target.value })
-                }
-              />
+<label>Curriculum</label>
+<select
+  value={
+    curriculumOptions.includes(editData.curriculum)
+      ? editData.curriculum
+      : "Other"
+  }
+  onChange={(e) =>
+    setEditData({
+      ...editData,
+      curriculum: e.target.value === "Other" ? "" : e.target.value,
+    })
+  }
+>
+  <option value="">Choose curriculum</option>
+  {curriculumOptions.map((option) => (
+    <option key={option} value={option}>
+      {option}
+    </option>
+  ))}
+</select>
 
-              <label>Subject</label>
-              <input
-                value={editData.subject || ""}
-                onChange={(e) =>
-                  setEditData({ ...editData, subject: e.target.value })
-                }
-              />
+{(!curriculumOptions.includes(editData.curriculum) ||
+  editData.curriculum === "") && (
+  <input
+    placeholder="Enter curriculum"
+    value={editData.curriculum || ""}
+    onChange={(e) =>
+      setEditData({ ...editData, curriculum: e.target.value })
+    }
+  />
+)}
 
-              <label>Grade Level</label>
+<label>Subject</label>
+<select
+  value={
+    subjectOptions.includes(editData.subject)
+      ? editData.subject
+      : "Other"
+  }
+  onChange={(e) =>
+    setEditData({
+      ...editData,
+      subject: e.target.value === "Other" ? "" : e.target.value,
+    })
+  }
+>
+  <option value="">Choose subject</option>
+  {subjectOptions.map((option) => (
+    <option key={option} value={option}>
+      {option}
+    </option>
+  ))}
+</select>
+
+{(!subjectOptions.includes(editData.subject) || editData.subject === "") && (
+  <input
+    placeholder="Enter subject"
+    value={editData.subject || ""}
+    onChange={(e) =>
+      setEditData({ ...editData, subject: e.target.value })
+    }
+  />
+)}
+
+<label>Grade Level</label>
+<select
+  value={
+    gradeOptions.includes(editData.grade_level)
+      ? editData.grade_level
+      : "Other"
+  }
+  onChange={(e) =>
+    setEditData({
+      ...editData,
+      grade_level: e.target.value === "Other" ? "" : e.target.value,
+    })
+  }
+>
+  <option value="">Choose grade level</option>
+  {gradeOptions.map((option) => (
+    <option key={option} value={option}>
+      {option}
+    </option>
+  ))}
+</select>
+
+            {(!gradeOptions.includes(editData.grade_level) ||
+              editData.grade_level === "") && (
               <input
+                placeholder="Enter grade level"
                 value={editData.grade_level || ""}
                 onChange={(e) =>
                   setEditData({ ...editData, grade_level: e.target.value })
                 }
               />
+            )}
 
               <label>Edition</label>
               <input
@@ -1334,10 +1476,79 @@ onClick={() => {
             </section>
           )}
 
+{selectedItemIds.length > 0 && (
+  <div className="card">
+    <h3>Bulk Edit ({selectedItemIds.length} selected)</h3>
+
+    <label>Curriculum</label>
+    <select
+      value={bulkCurriculum}
+      onChange={(e) => setBulkCurriculum(e.target.value)}
+    >
+      <option value="">No Change</option>
+      {curriculumOptions.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+
+    <label>Subject</label>
+    <select
+      value={bulkSubject}
+      onChange={(e) => setBulkSubject(e.target.value)}
+    >
+      <option value="">No Change</option>
+      {subjectOptions.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+
+    <label>Grade Level</label>
+    <select
+      value={bulkGrade}
+      onChange={(e) => setBulkGrade(e.target.value)}
+    >
+      <option value="">No Change</option>
+      {gradeOptions.map((option) => (
+        <option key={option} value={option}>
+          {option}
+        </option>
+      ))}
+    </select>
+
+    <label>Status</label>
+    <select
+      value={bulkStatus}
+      onChange={(e) => setBulkStatus(e.target.value)}
+    >
+      <option value="">No Change</option>
+      <option value="Available">Available</option>
+      <option value="Sold">Sold</option>
+      <option value="Hold">Hold</option>
+      <option value="Removed">Removed</option>
+    </select>
+
+    <button
+      className="primary"
+      onClick={applyBulkEdit}
+    >
+      Apply to Selected
+    </button>
+  </div>
+)}
+
           {filteredItems.length === 0 && <p>No matching items found.</p>}
 
           {filteredItems.map((item) => (
             <div className="inventory-item" key={item.id}>
+              <input
+                type="checkbox"
+                checked={selectedItemIds.includes(item.id)}
+                onChange={() => toggleSelectedItem(item.id)}
+              />
               {item.image_url && <img src={item.image_url} alt={item.title} />}
 
               <div>

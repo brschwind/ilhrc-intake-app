@@ -314,3 +314,17 @@ button {
   margin-top: 0.75rem;
   font-weight: 600;
 }
+
+.inventory-item input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  margin-top: 8px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.inventory-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
