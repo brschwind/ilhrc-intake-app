@@ -64,6 +64,8 @@ export default function App() {
   const [bulkStatus, setBulkStatus] = useState("");
   const [bulkCategory, setBulkCategory] = useState("");
 
+  const [bulkPublicVisible, setBulkPublicVisible] = useState("");
+
 
   async function loadItems() {
     const { data, error } = await supabase
@@ -115,6 +117,31 @@ function toggleSelectedItem(id) {
   );
 }
 
+async function bulkDeleteSelected() {
+  if (selectedItemIds.length === 0) return;
+
+  const confirmed = confirm(
+    `Delete ${selectedItemIds.length} selected item(s)? This cannot be undone.`
+  );
+
+  if (!confirmed) return;
+
+  const { error } = await supabase
+    .from("items")
+    .delete()
+    .in("id", selectedItemIds);
+
+  if (error) {
+    alert("Bulk delete failed: " + error.message);
+    return;
+  }
+
+  alert(`Deleted ${selectedItemIds.length} item(s).`);
+
+  setSelectedItemIds([]);
+  loadItems();
+}
+
 async function applyBulkEdit() {
   const updates = {};
 
@@ -123,6 +150,8 @@ async function applyBulkEdit() {
   if (bulkGrade) updates.grade_level = bulkGrade;
   if (bulkStatus) updates.status = bulkStatus;
   if (bulkCategory) updates.category = bulkCategory;
+  if (bulkPublicVisible === "show") updates.public_visible = true;
+  if (bulkPublicVisible === "hide") updates.public_visible = false;
 
   if (Object.keys(updates).length === 0) {
     alert("Choose at least one field to update.");
@@ -147,6 +176,7 @@ async function applyBulkEdit() {
   setBulkGrade("");
   setBulkStatus("");
   setBulkCategory("");
+  setBulkPublicVisible("");
 
   loadItems();
 }
@@ -1761,12 +1791,35 @@ onClick={() => {
   </select>
 </div>
 
-    <button
-      className="primary"
-      onClick={applyBulkEdit}
-    >
-      Apply to Selected
-    </button>
+<div className="bulk-edit-field">
+  <label>Public Catalog</label>
+  <select
+    value={bulkPublicVisible}
+    onChange={(e) => setBulkPublicVisible(e.target.value)}
+  >
+    <option value="">No Change</option>
+    <option value="show">Show</option>
+    <option value="hide">Hide</option>
+  </select>
+</div>
+
+    <div className="bulk-actions">
+  <button
+    type="button"
+    className="primary"
+    onClick={applyBulkEdit}
+  >
+    Apply to Selected
+  </button>
+
+  <button
+    type="button"
+    className="bulk-delete-btn"
+    onClick={bulkDeleteSelected}
+  >
+    Delete
+  </button>
+</div>
   </div>
 )}
 

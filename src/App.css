@@ -329,8 +329,8 @@ button {
   border: 1px solid var(--border);
   background: var(--cream);
   display: grid;
-  grid-template-columns: repeat(5, 1fr) auto;
-  gap: 10px;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
   align-items: end;
 }
 
@@ -417,4 +417,26 @@ button {
   font-size: 0.85rem;
   color: var(--muted);
   font-style: italic;
+}
+
+.bulk-actions {
+  grid-column: span 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.bulk-delete-btn {
+  background: transparent;
+  border: none;
+  color: var(--danger);
+  font-size: 0.9rem;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 0;
+}
+
+.bulk-delete-btn:hover {
+  text-decoration: underline;
 }
