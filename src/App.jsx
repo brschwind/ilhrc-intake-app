@@ -67,6 +67,10 @@ export default function App() {
 
   const [isSaving, setIsSaving] = useState(false);
 
+  const editPhotoInputRef = useRef(null);
+  const [editCoverFile, setEditCoverFile] = useState(null);
+  const [editCoverPreview, setEditCoverPreview] = useState(null);
+
   async function loadItems() {
     const { data, error } = await supabase
       .from("items")
@@ -107,6 +111,14 @@ function handleListingPhoto(event) {
 
   setCoverPhoto(URL.createObjectURL(file));
   setCoverFile(file);
+}
+
+function handleEditCoverPhoto(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+
+  setEditCoverFile(file);
+  setEditCoverPreview(URL.createObjectURL(file));
 }
 
 function suggestPricingCategory(book) {
@@ -476,6 +488,8 @@ async function saveItem() {
   function cancelEditing() {
     setEditingItem(null);
     setEditData(null);
+    setEditCoverFile(null);
+    setEditCoverPreview(null);
   }
 
 async function deleteItem() {
@@ -518,6 +532,30 @@ async function deleteItem() {
   async function updateItem() {
     if (!editingItem || !editData) return;
 
+    let updatedImageUrl = editData.image_url || "";
+
+if (editCoverFile) {
+  const fileExt = editCoverFile.type?.split("/")[1] || "jpg";
+  const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+
+  const { error: uploadError } = await supabase.storage
+    .from("book-covers")
+    .upload(fileName, editCoverFile, {
+      contentType: editCoverFile.type || "image/jpeg",
+    });
+
+  if (uploadError) {
+    alert("Image upload failed: " + uploadError.message);
+    return;
+  }
+
+  const { data } = supabase.storage
+    .from("book-covers")
+    .getPublicUrl(fileName);
+
+  updatedImageUrl = data.publicUrl;
+}
+
     const { error } = await supabase
       .from("items")
       .update({
@@ -538,6 +576,7 @@ async function deleteItem() {
         sku: editData.sku || "",
         updated_at: new Date().toISOString(),
         public_visible: editData.public_visible !== false,
+        image_url: updatedImageUrl,
       })
       .eq("id", editingItem.id);
 
@@ -997,6 +1036,33 @@ onClick={() => {
             <section className="card">
               <h2>Edit Item</h2>
 
+              <label>Cover Photo</label>
+
+            {(editCoverPreview || editData.image_url) && (
+              <section className="preview">
+                <img
+                  src={editCoverPreview || editData.image_url}
+                  alt="Book cover"
+                />
+              </section>
+            )}
+
+            <button
+              className="secondary"
+              onClick={() => editPhotoInputRef.current.click()}
+            >
+              Add / Replace Cover Photo
+            </button>
+
+            <input
+              ref={editPhotoInputRef}
+              type="file"
+              accept="image/*"
+              capture="environment"
+              onChange={handleEditCoverPhoto}
+              hidden
+            />
+              
               <label>SKU</label>
               <input
                 value={editData.sku || ""}
