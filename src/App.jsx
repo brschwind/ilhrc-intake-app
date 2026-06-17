@@ -839,7 +839,14 @@ onClick={() => {
   <p className="status-message">{analysisStatus}</p>
 )}
 
-</button>
+<input
+  ref={isbnInputRef}
+  type="file"
+  accept="image/*"
+  capture="environment"
+  onChange={handleIsbnPhoto}
+  hidden
+/>
 
           <input
             ref={isbnInputRef}
