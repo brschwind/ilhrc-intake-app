@@ -8,6 +8,7 @@ const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
 app.use(cors());
+app.use(express.json());
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
@@ -95,6 +96,80 @@ app.get("/test-square-item", async (req, res) => {
     });
   } catch (error) {
     console.error(error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
+app.post("/create-square-item", async (req, res) => {
+  try {
+    const { title, sku, final_price, notes } = req.body;
+
+    if (!title || !sku || final_price === undefined || final_price === null) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing title, sku, or final_price.",
+      });
+    }
+
+    const amount = Math.round(Number(final_price) * 100);
+
+    const response = await fetch(
+      "https://connect.squareupsandbox.com/v2/catalog/object",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          idempotency_key: `${sku}-${Date.now()}`,
+          object: {
+            type: "ITEM",
+            id: "#ITEM",
+            item_data: {
+              name: title,
+              description: notes || "",
+              variations: [
+                {
+                  type: "ITEM_VARIATION",
+                  id: "#VARIATION",
+                  item_variation_data: {
+                    name: "Regular",
+                    sku,
+                    pricing_type: "FIXED_PRICING",
+                    price_money: {
+                      amount,
+                      currency: "USD",
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        }),
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        success: false,
+        error: data,
+      });
+    }
+
+    const variation = data.catalog_object?.item_data?.variations?.[0];
+
+    res.json({
+      success: true,
+      square_item_id: data.catalog_object?.id,
+      square_variation_id: variation?.id,
+    });
+  } catch (error) {
     res.status(500).json({
       success: false,
       error: error.message,

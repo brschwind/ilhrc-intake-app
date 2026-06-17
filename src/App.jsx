@@ -424,6 +424,40 @@ await lookupBookByIsbn(scannedIsbn);
   }
 }
 
+function improveDetectedBookData(data) {
+  const text = `${data.title || ""} ${data.curriculum || ""} ${
+    data.notes || ""
+  }`.toLowerCase();
+
+  let curriculum = data.curriculum || "";
+  let grade_level = data.grade_level || data.grade || "";
+
+  if (text.includes("teaching textbook")) curriculum = "Teaching Textbooks";
+  if (text.includes("notgrass")) curriculum = "Notgrass";
+  if (text.includes("apologia")) curriculum = "Apologia";
+  if (text.includes("abeka") || text.includes("a beka")) curriculum = "Abeka";
+  if (text.includes("bju") || text.includes("bob jones")) curriculum = "BJU Press";
+  if (text.includes("master books")) curriculum = "Master Books";
+  if (text.includes("saxon")) curriculum = "Saxon Math";
+  if (text.includes("math-u-see")) curriculum = "Math-U-See";
+  if (text.includes("good and beautiful")) curriculum = "The Good and the Beautiful";
+
+  const gradeMatch =
+    text.match(/\bgrade\s*(\d{1,2})\b/) ||
+    text.match(/\bmath\s*(\d{1,2})\b/) ||
+    text.match(/\blevel\s*(\d{1,2}|k)\b/);
+
+  if (!grade_level && gradeMatch) {
+    grade_level = gradeMatch[1].toUpperCase();
+  }
+
+  return {
+    ...data,
+    curriculum,
+    grade_level,
+  };
+}
+
 async function analyzePhotoWithFile(file) {
   setIsAnalyzing(true);
   setAnalysisStatus("Preparing image...");
@@ -541,6 +575,36 @@ async function saveItem() {
     }
 
     const newSku = await generateSku();
+
+let squareItemId = "";
+let squareVariationId = "";
+
+const squareResponse = await fetch(
+  "https://ilhrc-intake-app.onrender.com/create-square-item",
+  {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      title: bookData.title || "Untitled Book",
+      sku: newSku,
+      final_price: bookData.final_price || 0,
+      notes: bookData.notes || "",
+    }),
+  }
+);
+
+const squareData = await squareResponse.json();
+
+if (!squareResponse.ok || !squareData.success) {
+  alert("Square item creation failed. Book was not saved. " + JSON.stringify(squareData.error));
+  return;
+}
+
+squareItemId = squareData.square_item_id;
+squareVariationId = squareData.square_variation_id;
+
     await saveOptionIfNew("curriculum_options", bookData.curriculum);
     await saveOptionIfNew("subject_options", bookData.subject);
     await saveOptionIfNew("grade_options", bookData.grade_level || bookData.grade);
@@ -572,6 +636,8 @@ async function saveItem() {
     ai_confidence:
       typeof bookData.confidence === "number" ? bookData.confidence : null,
     public_visible: true,
+    square_item_id: squareItemId,
+    square_variation_id: squareVariationId,
   };
 
   let duplicateQuery = supabase
