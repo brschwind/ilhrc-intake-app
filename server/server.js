@@ -405,6 +405,10 @@ app.get("/test-unarchive", (req, res) => {
   });
 });
 
+app.post("/unarchive-square-item", async (req, res) => {
+  // unarchive code here
+});
+
 app.post("/create-square-item", async (req, res) => {
   try {
     const { title, sku, final_price, notes } = req.body;
