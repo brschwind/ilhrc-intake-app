@@ -986,7 +986,7 @@ onClick={() => {
     </section>
   )}
 
-  <label>Title</label>
+              <label>Title</label>
               <input
                 value={bookData.title || ""}
                 onChange={(e) =>
@@ -1477,59 +1477,67 @@ onClick={() => {
           )}
 
 {selectedItemIds.length > 0 && (
-  <div className="card">
-    <h3>Bulk Edit ({selectedItemIds.length} selected)</h3>
+ <div className="bulk-edit-bar">
+  <strong>{selectedItemIds.length} selected</strong>
 
-    <label>Curriculum</label>
-    <select
-      value={bulkCurriculum}
-      onChange={(e) => setBulkCurriculum(e.target.value)}
-    >
-      <option value="">No Change</option>
-      {curriculumOptions.map((option) => (
-        <option key={option} value={option}>
-          {option}
-        </option>
-      ))}
-    </select>
+    <div className="bulk-edit-field">
+  <label>Curriculum</label>
+  <select
+    value={bulkCurriculum}
+    onChange={(e) => setBulkCurriculum(e.target.value)}
+  >
+    <option value="">No Change</option>
+    {curriculumOptions.map((option) => (
+      <option key={option} value={option}>
+        {option}
+      </option>
+    ))}
+  </select>
+</div>
 
-    <label>Subject</label>
-    <select
-      value={bulkSubject}
-      onChange={(e) => setBulkSubject(e.target.value)}
-    >
-      <option value="">No Change</option>
-      {subjectOptions.map((option) => (
-        <option key={option} value={option}>
-          {option}
-        </option>
-      ))}
-    </select>
+    <div className="bulk-edit-field">
+  <label>Subject</label>
+  <select
+    value={bulkSubject}
+    onChange={(e) => setBulkSubject(e.target.value)}
+  >
+    <option value="">No Change</option>
+    {subjectOptions.map((option) => (
+      <option key={option} value={option}>
+        {option}
+      </option>
+    ))}
+  </select>
+</div>
 
-    <label>Grade Level</label>
-    <select
-      value={bulkGrade}
-      onChange={(e) => setBulkGrade(e.target.value)}
-    >
-      <option value="">No Change</option>
-      {gradeOptions.map((option) => (
-        <option key={option} value={option}>
-          {option}
-        </option>
-      ))}
-    </select>
+   <div className="bulk-edit-field">
+  <label>Grade Level</label>
+  <select
+    value={bulkGrade}
+    onChange={(e) => setBulkGrade(e.target.value)}
+  >
+    <option value="">No Change</option>
+    {gradeOptions.map((option) => (
+      <option key={option} value={option}>
+        {option}
+      </option>
+    ))}
+  </select>
+</div>
 
-    <label>Status</label>
-    <select
-      value={bulkStatus}
-      onChange={(e) => setBulkStatus(e.target.value)}
-    >
-      <option value="">No Change</option>
-      <option value="Available">Available</option>
-      <option value="Sold">Sold</option>
-      <option value="Hold">Hold</option>
-      <option value="Removed">Removed</option>
-    </select>
+    <div className="bulk-edit-field">
+  <label>Status</label>
+  <select
+    value={bulkStatus}
+    onChange={(e) => setBulkStatus(e.target.value)}
+  >
+    <option value="">No Change</option>
+    <option value="Available">Available</option>
+    <option value="Sold">Sold</option>
+    <option value="Hold">Hold</option>
+    <option value="Removed">Removed</option>
+  </select>
+</div>
 
     <button
       className="primary"

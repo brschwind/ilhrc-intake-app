@@ -328,3 +328,44 @@ button {
   align-items: flex-start;
   gap: 16px;
 }
+
+.bulk-edit-bar {
+  margin: 16px 0;
+  padding: 14px;
+  border: 1px solid var(--border);
+  background: var(--cream);
+  display: grid;
+  grid-template-columns: auto repeat(4, minmax(120px, 1fr)) auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.bulk-edit-bar label {
+  font-size: 0.8rem;
+  margin: 0 0 4px;
+  color: var(--muted);
+}
+
+.bulk-edit-bar select {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--border);
+  background: white;
+  font-family: inherit;
+}
+
+.bulk-edit-bar .primary {
+  margin-top: 0;
+  white-space: nowrap;
+}
+
+.bulk-edit-field {
+  display: flex;
+  flex-direction: column;
+}
+
+@media (max-width: 850px) {
+  .bulk-edit-bar {
+    grid-template-columns: 1fr;
+  }
+}
