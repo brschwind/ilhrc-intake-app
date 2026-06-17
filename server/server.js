@@ -398,17 +398,6 @@ app.post("/unarchive-square-item", async (req, res) => {
   }
 });
 
-app.get("/test-unarchive", (req, res) => {
-  res.json({
-    success: true,
-    route: "unarchive route exists",
-  });
-});
-
-app.post("/unarchive-square-item", async (req, res) => {
-  // unarchive code here
-});
-
 app.post("/create-square-item", async (req, res) => {
   try {
     const { title, sku, final_price, notes } = req.body;

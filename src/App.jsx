@@ -131,12 +131,8 @@ async function bulkDeleteSelected() {
       selectedItemIds.includes(item.id)
     );
 
-    console.log("Bulk delete selected items:", selectedItems);
-
     for (const item of selectedItems) {
       const squareItemId = item.square_item_id;
-
-      console.log("Archiving Square item:", item.title, squareItemId);
 
       if (squareItemId) {
         const archiveRes = await fetch(
@@ -153,8 +149,6 @@ async function bulkDeleteSelected() {
         );
 
         const archiveData = await archiveRes.json();
-
-        console.log("Square archive response:", archiveData);
 
         if (!archiveRes.ok || !archiveData.success) {
           throw new Error(
@@ -180,11 +174,9 @@ async function bulkDeleteSelected() {
 
     alert("Selected items archived in Square and deleted.");
   } catch (err) {
-    console.error("Bulk delete failed:", err);
     alert(`Bulk delete failed: ${err.message}`);
   }
 }
-
 
 
 async function applyBulkEdit() {
@@ -212,51 +204,13 @@ async function applyBulkEdit() {
         selectedItemIds.includes(item.id)
       );
 
-      const shouldUnarchiveInSquare = bulkStatus === "Available";
-
-if (shouldUnarchiveInSquare) {
-  const selectedItems = items.filter((item) =>
-    selectedItemIds.includes(item.id)
-  );
-
-  for (const item of selectedItems) {
-    if (item.square_item_id && item.status !== "Available") {
-      const unarchiveResponse = await fetch(
-        "https://ilhrc-intake-app.onrender.com/unarchive-square-item",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            square_item_id: item.square_item_id,
-          }),
-        }
-      );
-
-      const unarchiveData = await unarchiveResponse.json();
-
-      if (!unarchiveResponse.ok || !unarchiveData.success) {
-        throw new Error(
-          "Square unarchive failed for " +
-            item.title +
-            ": " +
-            JSON.stringify(unarchiveData.error)
-        );
-      }
-    }
-  }
-}
-
       for (const item of selectedItems) {
         if (item.square_item_id) {
           const archiveResponse = await fetch(
             "https://ilhrc-intake-app.onrender.com/archive-square-item",
             {
               method: "POST",
-              headers: {
-                "Content-Type": "application/json",
-              },
+              headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
                 square_item_id: item.square_item_id,
               }),
@@ -296,10 +250,10 @@ if (shouldUnarchiveInSquare) {
 
     loadItems();
   } catch (error) {
-    console.error("Bulk edit failed:", error);
     alert("Bulk edit failed: " + error.message);
   }
 }
+
 
 function handleCoverPhoto(event) {
   const file = event.target.files?.[0];
@@ -425,14 +379,8 @@ async function lookupBookByIsbn(isbn) {
     // 1. Try Google Books first
     const googleUrl =
   `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&key=${import.meta.env.VITE_GOOGLE_BOOKS_API_KEY}`;
-
-console.log("API Key:", import.meta.env.VITE_GOOGLE_BOOKS_API_KEY);
-
 const googleResponse = await fetch(googleUrl);
-console.log("Google Status:", googleResponse.status);
-
 const googleData = await googleResponse.json();
-console.log("Google Books response:", googleData);
 
     if (googleData.items && googleData.items.length > 0) {
       const book = googleData.items[0].volumeInfo;
@@ -475,8 +423,6 @@ setBookData({
   publisher: openLibraryData.publishers?.[0] || "",
   categories: [],
 });
-
-console.log("Open Library response:", openLibraryData);
 
       setBookData({
         title: openLibraryData.title || "",
@@ -660,8 +606,6 @@ async function saveOptionIfNew(tableName, value) {
     .insert([{ name: cleanedValue }]);
 
   if (error && error.code !== "23505") {
-    console.error(`Could not save option to ${tableName}:`, error.message);
-  }
 }
 
 function normalizeTitle(title) {
@@ -972,101 +916,123 @@ async function deleteItem() {
   loadItems();
 }
 
-  async function updateItem() {
+async function updateItem() {
+  if (!editingItem || !editData) return;
 
-    console.log("Attempting unarchive:", editingItem.square_item_id);
-    if (!editingItem || !editData) return;
-    await saveOptionIfNew("curriculum_options", editData.curriculum);
-    await saveOptionIfNew("subject_options", editData.subject);
-    await saveOptionIfNew("grade_options", editData.grade_level);
-    await saveOptionIfNew("category_options", editData.category);
+  await saveOptionIfNew("curriculum_options", editData.curriculum);
+  await saveOptionIfNew("subject_options", editData.subject);
+  await saveOptionIfNew("grade_options", editData.grade_level);
+  await saveOptionIfNew("category_options", editData.category);
 
-await loadOptionLists();
+  await loadOptionLists();
 
-    let updatedImageUrl = editData.image_url || "";
+  let updatedImageUrl = editData.image_url || "";
 
-if (editCoverFile) {
-  const fileExt = editCoverFile.type?.split("/")[1] || "jpg";
-  const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+  if (editCoverFile) {
+    const fileExt = editCoverFile.type?.split("/")[1] || "jpg";
+    const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
 
-  const { error: uploadError } = await supabase.storage
-    .from("book-covers")
-    .upload(fileName, editCoverFile, {
-      contentType: editCoverFile.type || "image/jpeg",
-    });
+    const { error: uploadError } = await supabase.storage
+      .from("book-covers")
+      .upload(fileName, editCoverFile, {
+        contentType: editCoverFile.type || "image/jpeg",
+      });
 
-  if (uploadError) {
-    alert("Image upload failed: " + uploadError.message);
-    return;
+    if (uploadError) {
+      alert("Image upload failed: " + uploadError.message);
+      return;
+    }
+
+    const { data } = supabase.storage
+      .from("book-covers")
+      .getPublicUrl(fileName);
+
+    updatedImageUrl = data.publicUrl;
   }
 
-  const { data } = supabase.storage
-    .from("book-covers")
-    .getPublicUrl(fileName);
+  let squareItemId = editingItem.square_item_id || "";
+  let squareVariationId = editingItem.square_variation_id || "";
 
-  updatedImageUrl = data.publicUrl;
-}
+  const isRestoringToAvailable =
+    editData.status === "Available" &&
+    editingItem.status !== "Available";
 
-if (editingItem.square_item_id && editingItem.square_variation_id) {
-  const squareUpdateResponse = await fetch(
-    "https://ilhrc-intake-app.onrender.com/update-square-item",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        square_item_id: editingItem.square_item_id,
-        square_variation_id: editingItem.square_variation_id,
-        title: editData.title || "",
-        sku: editData.sku || "",
-        final_price: editData.final_price || 0,
-        quantity: editData.quantity || 0,
-        notes: editData.notes || "",
-      }),
+  const shouldArchive =
+    editData.status === "Sold" ||
+    editData.status === "Removed" ||
+    Number(editData.quantity || 0) <= 0;
+
+  // If restoring, create a NEW Square item instead of unarchiving
+  if (isRestoringToAvailable) {
+    const squareResponse = await fetch(
+      "https://ilhrc-intake-app.onrender.com/create-square-item",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          title: editData.title || "Untitled Book",
+          sku: editData.sku || "",
+          final_price: editData.final_price || 0,
+          quantity: editData.quantity || 1,
+          notes: editData.notes || "",
+        }),
+      }
+    );
+
+    const squareData = await squareResponse.json();
+
+    if (!squareResponse.ok || !squareData.success) {
+      alert(
+        "Could not recreate item in Square. Supabase was not updated. " +
+          JSON.stringify(squareData.error)
+      );
+      return;
     }
-  );
 
+    squareItemId = squareData.square_item_id;
+    squareVariationId = squareData.square_variation_id;
+  }
+
+  // Normal Square update, but skip this when restoring because we just created a fresh item
   if (
-  editData.status === "Available" &&
-  editingItem.status !== "Available" &&
-  editingItem.square_item_id
-) {
-  const unarchiveResponse = await fetch(
-    "https://ilhrc-intake-app.onrender.com/unarchive-square-item",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        square_item_id: editingItem.square_item_id,
-      }),
+    !isRestoringToAvailable &&
+    squareItemId &&
+    squareVariationId
+  ) {
+    const squareUpdateResponse = await fetch(
+      "https://ilhrc-intake-app.onrender.com/update-square-item",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          square_item_id: squareItemId,
+          square_variation_id: squareVariationId,
+          title: editData.title || "",
+          sku: editData.sku || "",
+          final_price: editData.final_price || 0,
+          quantity: editData.quantity || 0,
+          notes: editData.notes || "",
+        }),
+      }
+    );
+
+    const squareUpdateData = await squareUpdateResponse.json();
+
+    if (!squareUpdateResponse.ok || !squareUpdateData.success) {
+      alert(
+        "Square update failed. Supabase was not updated. " +
+          JSON.stringify(squareUpdateData.error)
+      );
+      return;
     }
-  );
-
-  const unarchiveData = await unarchiveResponse.json();
-
-  if (!unarchiveResponse.ok || !unarchiveData.success) {
-    alert(
-      "Square unarchive failed. Supabase was not updated. " +
-        JSON.stringify(unarchiveData.error)
-    );
-    return;
-  }
-}
-
-  const squareUpdateData = await squareUpdateResponse.json();
-
-  if (!squareUpdateResponse.ok || !squareUpdateData.success) {
-    alert(
-      "Square update failed. Supabase was not updated. " +
-        JSON.stringify(squareUpdateData.error)
-    );
-    return;
   }
 
-  if (Number(editData.quantity || 0) <= 0) {
+  // Archive if marked Sold/Removed or quantity is 0
+  if (shouldArchive && squareItemId) {
     const archiveResponse = await fetch(
       "https://ilhrc-intake-app.onrender.com/archive-square-item",
       {
@@ -1075,7 +1041,7 @@ if (editingItem.square_item_id && editingItem.square_variation_id) {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          square_item_id: editingItem.square_item_id,
+          square_item_id: squareItemId,
         }),
       }
     );
@@ -1084,78 +1050,54 @@ if (editingItem.square_item_id && editingItem.square_variation_id) {
 
     if (!archiveResponse.ok || !archiveData.success) {
       alert(
-        "Square item updated, but archive failed. " +
+        "Square archive failed. Supabase was not updated. " +
           JSON.stringify(archiveData.error)
       );
       return;
     }
 
-    editData.status = "Sold";
-  }
-}
-
-if (Number(editData.quantity || 0) <= 0) {
-  const archiveResponse = await fetch(
-    "https://ilhrc-intake-app.onrender.com/archive-square-item",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        square_item_id: editingItem.square_item_id,
-      }),
+    if (Number(editData.quantity || 0) <= 0) {
+      editData.status = "Sold";
     }
-  );
+  }
 
-  const archiveData = await archiveResponse.json();
+  const { error } = await supabase
+    .from("items")
+    .update({
+      title: editData.title || "",
+      curriculum: editData.curriculum || "",
+      subject: editData.subject || "",
+      grade_level: editData.grade_level || "",
+      edition: editData.edition || "",
+      isbn: editData.isbn || "",
+      category: editData.category || "",
+      final_price:
+        editData.final_price === "" || editData.final_price === null
+          ? null
+          : Number(editData.final_price),
+      quantity: Number(editData.quantity || 0),
+      status: editData.status || "Available",
+      notes: editData.notes || "",
+      sku: editData.sku || "",
+      updated_at: new Date().toISOString(),
+      public_visible: editData.public_visible !== false,
+      image_url: updatedImageUrl,
+      square_item_id: squareItemId,
+      square_variation_id: squareVariationId,
+    })
+    .eq("id", editingItem.id);
 
-  if (!archiveResponse.ok || !archiveData.success) {
-    alert(
-      "Square item updated, but archive failed. " +
-      JSON.stringify(archiveData.error)
-    );
+  if (error) {
+    alert("Update failed: " + error.message);
     return;
   }
 
-  editData.status = "Sold";
+  alert("Item updated!");
+
+  setEditingItem(null);
+  setEditData(null);
+  loadItems();
 }
-
-    const { error } = await supabase
-      .from("items")
-      .update({
-        title: editData.title || "",
-        curriculum: editData.curriculum || "",
-        subject: editData.subject || "",
-        grade_level: editData.grade_level || "",
-        edition: editData.edition || "",
-        isbn: editData.isbn || "",
-        category: editData.category || "",
-        final_price:
-          editData.final_price === "" || editData.final_price === null
-            ? null
-            : Number(editData.final_price),
-       quantity: Number(editData.quantity || 0),
-        status: editData.status || "Available",
-        notes: editData.notes || "",
-        sku: editData.sku || "",
-        updated_at: new Date().toISOString(),
-        public_visible: editData.public_visible !== false,
-        image_url: updatedImageUrl,
-      })
-      .eq("id", editingItem.id);
-
-    if (error) {
-      alert("Update failed: " + error.message);
-      return;
-    }
-
-    alert("Item updated!");
-
-    setEditingItem(null);
-    setEditData(null);
-    loadItems();
-  }
 
 const filteredItems = items.filter((item) => {
   const text = `
@@ -2210,7 +2152,6 @@ onClick={() => {
   className="bulk-delete-btn"
   onClick={(e) => {
     e.preventDefault();
-    console.log("Bulk delete button clicked");
     bulkDeleteSelected();
   }}
 >
