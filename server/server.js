@@ -291,6 +291,76 @@ app.post("/update-square-item", async (req, res) => {
   }
 });
 
+app.post("/archive-square-item", async (req, res) => {
+  try {
+    const { square_item_id } = req.body;
+
+    if (!square_item_id) {
+      return res.status(400).json({
+        success: false,
+        error: "Missing square_item_id",
+      });
+    }
+
+    const response = await fetch(
+      `https://connect.squareupsandbox.com/v2/catalog/object/${square_item_id}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const existingData = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        success: false,
+        error: existingData,
+      });
+    }
+
+    const itemObject = existingData.object;
+
+    itemObject.is_deleted = false;
+    itemObject.item_data.is_archived = true;
+
+    const updateResponse = await fetch(
+      "https://connect.squareupsandbox.com/v2/catalog/object",
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          idempotency_key: `archive-${square_item_id}-${Date.now()}`,
+          object: itemObject,
+        }),
+      }
+    );
+
+    const updateData = await updateResponse.json();
+
+    if (!updateResponse.ok) {
+      return res.status(updateResponse.status).json({
+        success: false,
+        error: updateData,
+      });
+    }
+
+    res.json({
+      success: true,
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message,
+    });
+  }
+});
+
 app.post("/create-square-item", async (req, res) => {
   try {
     const { title, sku, final_price, notes } = req.body;
