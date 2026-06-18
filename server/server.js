@@ -4,6 +4,11 @@ const multer = require("multer");
 const OpenAI = require("openai");
 require("dotenv").config();
 
+const SQUARE_BASE_URL =
+  process.env.SQUARE_ENVIRONMENT === "production"
+    ? "https://connect.squareup.com"
+    : "https://connect.squareupsandbox.com";
+
 const app = express();
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -20,7 +25,7 @@ app.get("/", (req, res) => {
 
 app.get("/test-square", async (req, res) => {
   try {
-    const response = await fetch("https://connect.squareupsandbox.com/v2/locations", {
+    const response = await fetch(`${SQUARE_BASE_URL}/v2/locations`, {
       headers: {
         Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
         "Content-Type": "application/json",
@@ -48,7 +53,7 @@ app.get("/test-square", async (req, res) => {
 app.get("/test-square-item", async (req, res) => {
   try {
     const response = await fetch(
-      "https://connect.squareupsandbox.com/v2/catalog/object",
+      `${SQUARE_BASE_URL}/v2/catalog/object`,
       {
         method: "POST",
         headers: {
@@ -115,7 +120,7 @@ app.post("/update-square-inventory", async (req, res) => {
     }
 
     const inventoryResponse = await fetch(
-      "https://connect.squareupsandbox.com/v2/inventory/changes/batch-create",
+      `${SQUARE_BASE_URL}/v2/inventory/changes/batch-create`,
       {
         method: "POST",
         headers: {
@@ -184,7 +189,7 @@ app.post("/update-square-item", async (req, res) => {
     const amount = Math.round(Number(final_price || 0) * 100);
 
     const response = await fetch(
-      `https://connect.squareupsandbox.com/v2/catalog/object/${square_item_id}?include_related_objects=true`,
+      `${SQUARE_BASE_URL}/v2/catalog/object/${square_item_id}`,
       {
         headers: {
           Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
@@ -219,7 +224,7 @@ app.post("/update-square-item", async (req, res) => {
     };
 
     const updateResponse = await fetch(
-      "https://connect.squareupsandbox.com/v2/catalog/object",
+      `${SQUARE_BASE_URL}/v2/catalog/object`,
       {
         method: "POST",
         headers: {
@@ -244,7 +249,7 @@ app.post("/update-square-item", async (req, res) => {
 
     if (quantity !== undefined && quantity !== null) {
       const inventoryResponse = await fetch(
-        "https://connect.squareupsandbox.com/v2/inventory/changes/batch-create",
+        `${SQUARE_BASE_URL}/v2/inventory/changes/batch-create`,
         {
           method: "POST",
           headers: {
@@ -303,7 +308,7 @@ app.post("/archive-square-item", async (req, res) => {
     }
 
     const response = await fetch(
-      `https://connect.squareupsandbox.com/v2/catalog/object/${square_item_id}`,
+      `${SQUARE_BASE_URL}/v2/catalog/object/${square_item_id}`,
       {
         headers: {
           Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
@@ -327,7 +332,7 @@ app.post("/archive-square-item", async (req, res) => {
     itemObject.item_data.is_archived = true;
 
     const updateResponse = await fetch(
-      "https://connect.squareupsandbox.com/v2/catalog/object",
+      `${SQUARE_BASE_URL}/v2/catalog/object`,
       {
         method: "POST",
         headers: {
@@ -412,7 +417,7 @@ app.post("/create-square-item", async (req, res) => {
     const amount = Math.round(Number(final_price) * 100);
 
     const response = await fetch(
-      "https://connect.squareupsandbox.com/v2/catalog/object",
+      `${SQUARE_BASE_URL}/v2/catalog/object`,
       {
         method: "POST",
         headers: {
@@ -464,7 +469,7 @@ const variation = data.catalog_object?.item_data?.variations?.[0];
 const quantity = req.body.quantity || 1;
 
 const inventoryResponse = await fetch(
-  "https://connect.squareupsandbox.com/v2/inventory/changes/batch-create",
+  `${SQUARE_BASE_URL}/v2/inventory/changes/batch-create`,
   {
     method: "POST",
     headers: {
