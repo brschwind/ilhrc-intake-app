@@ -393,7 +393,8 @@ const coverUrl =
 
 setBookData({
   title: book.title || "",
-  curriculum: book.publisher || "",
+  curriculum: "",
+  publisher: book.publisher || "",
   subject: book.categories?.[0] || "",
   grade_level: "",
   edition: "",
@@ -507,6 +508,9 @@ function improveDetectedBookData(data) {
   if (text.includes("saxon")) curriculum = "Saxon Math";
   if (text.includes("math-u-see")) curriculum = "Math-U-See";
   if (text.includes("good and beautiful")) curriculum = "The Good and the Beautiful";
+  if (grade_level === "Kindergarten") grade_level = "K";
+  if (grade_level === "PK") grade_level = "Pre-K";
+  if (grade_level === "Preschool") grade_level = "Pre-K";
 
   const gradeMatch =
     text.match(/\bgrade\s*(\d{1,2})\b/) ||
@@ -663,9 +667,6 @@ async function saveItem() {
     let squareItemId = "";
     let squareVariationId = "";
 
-    await saveOptionIfNew("curriculum_options", bookData.curriculum);
-    await saveOptionIfNew("subject_options", bookData.subject);
-    await saveOptionIfNew("grade_options", bookData.grade_level || bookData.grade);
     await saveOptionIfNew("category_options", bookData.category);
 
     await loadOptionLists();
@@ -921,9 +922,6 @@ async function deleteItem() {
 async function updateItem() {
   if (!editingItem || !editData) return;
 
-  await saveOptionIfNew("curriculum_options", editData.curriculum);
-  await saveOptionIfNew("subject_options", editData.subject);
-  await saveOptionIfNew("grade_options", editData.grade_level);
   await saveOptionIfNew("category_options", editData.category);
 
   await loadOptionLists();
@@ -1461,17 +1459,13 @@ onClick={() => {
 
               <label>Subject</label>
               <select
-              value={
-                subjectOptions.includes(bookData.subject)
-                  ? bookData.subject
-                  : "Other"
-              }
+              value={bookData.subject || ""}
               onChange={(e) =>
-                setBookData({
-                  ...bookData,
-                  subject: e.target.value === "Other" ? "" : e.target.value,
-                })
-              }
+                  setBookData({
+                    ...bookData,
+                    subject: e.target.value,
+                  })
+                }
             >
               <option value="">Choose subject</option>
               {subjectOptions.map((option) => (
@@ -1481,16 +1475,7 @@ onClick={() => {
               ))}
             </select>
 
-            {(!subjectOptions.includes(bookData.subject) || bookData.subject === "") && (
-              <input
-                placeholder="Enter subject"
-                value={bookData.subject || ""}
-                onChange={(e) =>
-                  setBookData({ ...bookData, subject: e.target.value })
-                }
-              />
-            )}
-
+           
               <label>Grade Level</label>
               <select
               value={
@@ -1513,17 +1498,7 @@ onClick={() => {
               ))}
             </select>
 
-            {(!gradeOptions.includes(bookData.grade_level || bookData.grade) ||
-              (bookData.grade_level || bookData.grade) === "") && (
-              <input
-                placeholder="Enter grade level"
-                value={bookData.grade_level || bookData.grade || ""}
-                onChange={(e) =>
-                  setBookData({ ...bookData, grade_level: e.target.value })
-                }
-              />
-            )}
-
+          
               <label>Edition</label>
               <input
                 value={bookData.edition || ""}
@@ -1548,16 +1523,16 @@ onClick={() => {
                     (item) => item.name === e.target.value
                   );
 
-                  setBookData({
-                    ...bookData,
-                    category: selected?.name || "",
-                    suggested_price: selected?.default_price || "",
-                    final_price: selected?.default_price || "",
-                  });
+                 setBookData({
+                ...bookData,
+                category: selected?.name || "",
+                suggested_price: selected?.default_price || "",
+                final_price: selected?.default_price || "",
+              });
                 }}
               >
                 <option value="">Choose a category</option>
-
+ 
                 {categoryOptions.map((item) => (
                   <option key={item.name} value={item.name}>
                     {item.name}
@@ -1800,17 +1775,13 @@ onClick={() => {
 
 <label>Subject</label>
 <select
-  value={
-    subjectOptions.includes(editData.subject)
-      ? editData.subject
-      : "Other"
-  }
+  value={editData.subject || ""}
   onChange={(e) =>
-    setEditData({
-      ...editData,
-      subject: e.target.value === "Other" ? "" : e.target.value,
-    })
-  }
+  setEditData({
+    ...editData,
+    subject: e.target.value,
+  })
+}
 >
   <option value="">Choose subject</option>
   {subjectOptions.map((option) => (
@@ -1819,16 +1790,6 @@ onClick={() => {
     </option>
   ))}
 </select>
-
-{(!subjectOptions.includes(editData.subject) || editData.subject === "") && (
-  <input
-    placeholder="Enter subject"
-    value={editData.subject || ""}
-    onChange={(e) =>
-      setEditData({ ...editData, subject: e.target.value })
-    }
-  />
-)}
 
 <label>Grade Level</label>
 <select
@@ -1851,17 +1812,6 @@ onClick={() => {
     </option>
   ))}
 </select>
-
-            {(!gradeOptions.includes(editData.grade_level) ||
-              editData.grade_level === "") && (
-              <input
-                placeholder="Enter grade level"
-                value={editData.grade_level || ""}
-                onChange={(e) =>
-                  setEditData({ ...editData, grade_level: e.target.value })
-                }
-              />
-            )}
 
               <label>Edition</label>
               <input
