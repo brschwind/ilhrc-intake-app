@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import "./App.css";
 import { supabase } from "./supabaseClient";
+import jsPDF from "jspdf";
+import JsBarcode from "jsbarcode";
 
 const pricingGuide = [
   { item_name: "DVD (Education/Movies)", category: "Media", price: 5 },
@@ -592,6 +594,100 @@ if (editCoverFile) {
     loadItems();
   }
 
+async function markLabelsPrinted() {
+  if (labelItems.length === 0) {
+    alert("No labels to mark printed.");
+    return;
+  }
+
+  const confirmed = confirm(
+    `Mark ${labelItems.length} titles as printed?`
+  );
+
+  if (!confirmed) return;
+
+  const ids = labelItems.map((item) => item.id);
+
+  const { error } = await supabase
+    .from("items")
+    .update({
+      label_printed: true,
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", ids);
+
+  if (error) {
+    alert("Could not mark labels printed: " + error.message);
+    return;
+  }
+
+  alert("Labels marked as printed!");
+  loadItems();
+}
+
+function generateLabels(itemsToPrint) {
+  const pdf = new jsPDF({
+    orientation: "landscape",
+    unit: "in",
+    format: [2, 1],
+  });
+
+  let firstLabel = true;
+
+  itemsToPrint.forEach((item) => {
+    const quantity = Number(item.quantity || 1);
+
+    for (let i = 0; i < quantity; i++) {
+      if (!firstLabel) {
+        pdf.addPage([2, 1], "landscape");
+      }
+
+      firstLabel = false;
+
+      const title = item.title || "Untitled";
+      const price =
+        item.final_price !== null && item.final_price !== undefined
+          ? `$${Number(item.final_price).toFixed(2)}`
+          : "";
+
+      const sku = item.sku || "";
+
+      const barcodeCanvas = document.createElement("canvas");
+
+      JsBarcode(barcodeCanvas, sku, {
+        format: "CODE128",
+        displayValue: false,
+        margin: 0,
+        width: 1.4,
+        height: 28,
+      });
+
+      const barcodeImage = barcodeCanvas.toDataURL("image/png");
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(8);
+      pdf.text(title.substring(0, 32), 0.08, 0.16);
+
+      pdf.setFontSize(11);
+      pdf.text(price, 0.08, 0.36);
+
+      pdf.addImage(barcodeImage, "PNG", 0.08, 0.43, 1.84, 0.32);
+
+      pdf.setFont("helvetica", "normal");
+      pdf.setFontSize(7);
+      pdf.text(sku, 0.62, 0.88);
+    }
+  });
+
+  pdf.save("ILHRC-labels.pdf");
+}
+
+const labelItems = items.filter(
+  item =>
+    item.label_printed !== true &&
+    Number(item.quantity || 0) > 0
+);
+
 const filteredItems = items.filter((item) => {
   const text = `${item.title || ""} ${item.curriculum || ""} ${
     item.subject || ""
@@ -766,6 +862,17 @@ function clearCatalogFilters() {
         >
           Inventory
         </button>
+
+        <button
+  className={view === "labels" ? "primary" : "secondary"}
+  onClick={() => {
+    setView("labels");
+    cancelEditing();
+    loadItems();
+  }}
+>
+  Print Labels
+</button>
 
         <button
   className={view === "catalog" ? "primary" : "secondary"}
@@ -1242,6 +1349,59 @@ onClick={() => {
           ))}
         </section>
       )}
+
+      {view === "labels" && (
+        <section className="card">
+          <h2>Print Labels</h2>
+
+          <p>
+            These are items that have not been marked as label printed yet.
+          </p>
+
+          <button
+  className="primary"
+  onClick={() => {
+    generateLabels(labelItems);
+  }}
+>
+  Generate Labels
+</button>
+
+<button
+  className="secondary"
+  onClick={markLabelsPrinted}
+>
+  Mark Labels Printed
+</button>
+
+          <p>
+  {labelItems.length} titles waiting for labels
+</p>
+
+
+
+          {labelItems.length === 0 && (
+            <p>No labels waiting to print.</p>
+          )}
+
+          {labelItems.map((item) => (
+            <div className="inventory-item" key={item.id}>
+              {item.image_url && (
+                <img src={item.image_url} alt={item.title} />
+              )}
+
+              <div>
+                <h3>{item.title}</h3>
+                <p><strong>SKU:</strong> {item.sku}</p>
+                <p><strong>Price:</strong> ${item.final_price}</p>
+                <p><strong>Quantity:</strong> {item.quantity}</p>
+                <p><strong>Category:</strong> {item.category}</p>
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
+
       {view === "catalog" && (
   <section className="card">
     <h2>Public Catalog Preview</h2>
