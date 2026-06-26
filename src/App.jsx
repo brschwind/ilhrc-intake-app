@@ -94,6 +94,9 @@ export default function App() {
 
   const [bulkPublicVisible, setBulkPublicVisible] = useState("");
 
+  const [currentLocation, setCurrentLocation] = useState("");
+  const [labelLocationFilter, setLabelLocationFilter] = useState("");
+
 
   async function loadItems() {
     const { data, error } = await supabase
@@ -722,6 +725,7 @@ async function saveItem() {
     edition: bookData.edition || "",
     isbn: bookData.isbn || "",
     category: bookData.category || "",
+    location: currentLocation || "",
     suggested_price: bookData.suggested_price || null,
     final_price:
       bookData.final_price === "" ||
@@ -1230,10 +1234,21 @@ function generateLabels(itemsToPrint) {
   pdf.save("ILHRC-labels.pdf");
 }
 
+const labelLocationOptions = [
+  ...new Set(
+    items
+      .map((item) => item.location)
+      .filter(Boolean)
+      .sort()
+  ),
+];
+
 const labelItems = items.filter(
-  item =>
+  (item) =>
     item.label_printed !== true &&
-    Number(item.quantity || 0) > 0
+    Number(item.quantity || 0) > 0 &&
+    (!labelLocationFilter ||
+      item.location === labelLocationFilter)
 );
 
 const filteredItems = items.filter((item) => {
@@ -1467,6 +1482,17 @@ onClick={() => {
       {view === "add" && (
         <>
           <p>Use the cover photo and ISBN/barcode when available.</p>
+
+            <label>Current Box / Location</label>
+            <input
+              placeholder="Example: Box 1, Tub A, Cart 2"
+              value={currentLocation}
+              onChange={(e) => setCurrentLocation(e.target.value)}
+            />
+
+            <p className="helper-text">
+              This location will be saved with each book until you change it.
+            </p>
 
           <input
             ref={coverInputRef}
@@ -2301,6 +2327,7 @@ onClick={() => {
                   ${item.final_price} • Qty: {item.quantity}
                 </p>
                 <p>Status: {item.status}</p>
+                  <p><strong>Location:</strong> {item.location || "Not set"}</p>
                   <p>
                     Public: {item.public_visible !== false ? "Yes" : "No"}
                   </p>
@@ -2323,6 +2350,21 @@ onClick={() => {
           <p>
             These are items that have not been marked as label printed yet.
           </p>
+
+<label>Storage Location</label>
+
+<select
+  value={labelLocationFilter}
+  onChange={(e) => setLabelLocationFilter(e.target.value)}
+>
+  <option value="">All Locations</option>
+
+  {labelLocationOptions.map((location) => (
+    <option key={location} value={location}>
+      {location}
+    </option>
+  ))}
+</select>
 
           <button
   className="primary"
