@@ -712,6 +712,7 @@ async function saveItem() {
     let squareItemId = "";
     let squareVariationId = "";
 
+    await saveOptionIfNew("curriculum_options", bookData.curriculum);
     await saveOptionIfNew("category_options", bookData.category);
 
     await loadOptionLists();
