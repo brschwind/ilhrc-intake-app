@@ -720,6 +720,7 @@ async function saveItem() {
     sku: newSku,
     title: bookData.title || "",
     curriculum: bookData.curriculum || "",
+    publisher: bookData.publisher || "",
     subject: bookData.subject || "",
     grade_level: bookData.grade_level || bookData.grade || "",
     edition: bookData.edition || "",
@@ -1113,6 +1114,7 @@ async function updateItem() {
       title: editData.title || "",
       curriculum: editData.curriculum || "",
       subject: editData.subject || "",
+      publisher: editData.publisher || "",
       grade_level: editData.grade_level || "",
       edition: editData.edition || "",
       isbn: editData.isbn || "",
@@ -1479,29 +1481,21 @@ onClick={() => {
 
       </div>
 )}
-      {view === "add" && (
-        <>
-          <p>Use the cover photo and ISBN/barcode when available.</p>
+   {view === "add" && (
+  <>
+    <p>Use the cover photo and ISBN/barcode when available.</p>
 
-            <label>Current Box / Location</label>
-            <input
-              placeholder="Example: Box 1, Tub A, Cart 2"
-              value={currentLocation}
-              onChange={(e) => setCurrentLocation(e.target.value)}
-            />
-
-            <p className="helper-text">
-              This location will be saved with each book until you change it.
-            </p>
-
-          <input
-            ref={coverInputRef}
-            type="file"
-            accept="image/*"
-            capture="environment"
-            onChange={handleCoverPhoto}
-            hidden
-          />
+    <div className="location-box">
+      <label>Current Location</label>
+      <input
+        placeholder="Example: Box 1, Tub A, Cart 2"
+        value={currentLocation}
+        onChange={(e) => setCurrentLocation(e.target.value)}
+      />
+      <p className="helper-text">
+        This location will be saved with each book until you change it.
+      </p>
+    </div>
 
 
           <button className="secondary" onClick={scanIsbnBarcode}>
@@ -1630,6 +1624,18 @@ onClick={() => {
                 </p>
               </>
             )}
+
+<label>Publisher</label>
+<input
+  value={bookData.publisher || ""}
+  onChange={(e) =>
+    setBookData({
+      ...bookData,
+      publisher: e.target.value,
+    })
+  }
+/>
+
 
               <label>Subject</label>
               <select
@@ -2320,9 +2326,12 @@ onClick={() => {
               <div>
                 <h3>{item.title}</h3>
                 <p><strong>SKU:</strong> {item.sku}</p>
-                <p>
-                  {item.curriculum} • {item.subject} • {item.grade_level}
-                </p>
+
+<p><strong>Publisher:</strong> {item.publisher || "Unknown"}</p>
+
+<p>
+  {item.curriculum} • {item.subject} • {item.grade_level}
+</p>
                 <p>
                   ${item.final_price} • Qty: {item.quantity}
                 </p>

@@ -440,3 +440,23 @@ button {
 .bulk-delete-btn:hover {
   text-decoration: underline;
 }
+
+.location-box {
+  max-width: 520px;
+  margin: 1.5rem auto;
+  padding: 1rem;
+  border: 1px solid #d8cfc4;
+  background: #f4eee7;
+  text-align: left;
+}
+
+.location-box label {
+  display: block;
+  font-weight: 700;
+  margin-bottom: 0.4rem;
+}
+
+.location-box input {
+  width: 100%;
+  box-sizing: border-box;
+}
