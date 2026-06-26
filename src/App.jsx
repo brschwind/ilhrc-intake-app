@@ -2,6 +2,8 @@ import { useRef, useState, useEffect } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import "./App.css";
 import { supabase } from "./supabaseClient";
+import jsPDF from "jspdf";
+import JsBarcode from "jsbarcode";
 
 const pricingGuide = [
   { item_name: "DVD (Education/Movies)", category: "Media", price: 5 },
@@ -200,9 +202,23 @@ async function bulkDeleteSelected() {
 
     alert("Selected items archived in Square and deleted.");
   } catch (err) {
-    alert(`Bulk delete failed: ${err.message}`);
+  console.error("Bulk delete failed full error:", err);
+
+  let message = "Unknown error";
+
+  try {
+    message =
+      err?.message ||
+      err?.error?.message ||
+      err?.errors?.[0]?.detail ||
+      err?.errors?.[0]?.message ||
+      JSON.stringify(err);
+  } catch {
+    message = String(err);
   }
-}
+
+  alert("Bulk delete failed: " + message);
+}}
 
 
 async function applyBulkEdit() {
@@ -1124,6 +1140,7 @@ async function updateItem() {
   setEditData(null);
   loadItems();
 }
+
 
 async function markLabelsPrinted() {
   if (labelItems.length === 0) {
@@ -2226,6 +2243,28 @@ onClick={() => {
   >
     Apply to Selected
   </button>
+
+ <button
+  type="button"
+  className="secondary"
+  disabled={selectedItemIds.length === 0}
+  onClick={(e) => {
+    e.preventDefault();
+
+    const itemsToPrint = items.filter((item) =>
+      selectedItemIds.includes(item.id)
+    );
+
+    if (itemsToPrint.length === 0) {
+      alert("No selected items to print.");
+      return;
+    }
+
+    generateLabels(itemsToPrint);
+  }}
+>
+  Print Labels
+</button>
 
 <button
   type="button"
