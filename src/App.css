@@ -460,3 +460,14 @@ button {
   width: 100%;
   box-sizing: border-box;
 }
+
+.visually-hidden-file {
+  position: absolute;
+  left: -9999px;
+}
+
+.file-upload-button {
+  display: inline-block;
+  cursor: pointer;
+  text-align: center;
+}

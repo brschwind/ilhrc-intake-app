@@ -1508,12 +1508,19 @@ onClick={() => {
   hidden={!isScanningBarcode}
 />
 
-<button
-  className="secondary"
-  onClick={() => coverInputRef.current.click()}
->
+<input
+  id="cover-upload"
+  ref={coverInputRef}
+  type="file"
+  accept="image/*"
+  capture="environment"
+  onChange={handleCoverPhoto}
+  className="visually-hidden-file"
+/>
+
+<label htmlFor="cover-upload" className="secondary file-upload-button">
   Analyze Book Cover
-</button>
+</label>
 
 {analysisStatus && (
   <p className="status-message">{analysisStatus}</p>
