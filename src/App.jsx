@@ -1572,19 +1572,6 @@ onClick={() => {
   hidden
 />
 
-{coverPhoto && (
-  <section className="preview">
-    <h2>Listing Photo</h2>
-    <img src={coverPhoto} alt="Book cover" />
-  </section>
-)}
-
-  {coverPhoto && (
-    <section className="preview">
-      <h2>Selected Cover Photo</h2>
-      <img src={coverPhoto} alt="Book cover" />
-    </section>
-  )}
 
               <label>Title</label>
               <input
