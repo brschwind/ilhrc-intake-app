@@ -1206,31 +1206,41 @@ function generateLabels(itemsToPrint) {
           : "";
 
       const sku = item.sku || "";
+      const barcodeValue = sku.replace("ILHRC-", "").padStart(6, "0");
 
       const barcodeCanvas = document.createElement("canvas");
 
-      JsBarcode(barcodeCanvas, sku, {
+      JsBarcode(barcodeCanvas, barcodeValue, {
         format: "CODE128",
         displayValue: false,
-        margin: 0,
-        width: 1.4,
-        height: 28,
+        margin: 10,
+        width: 2.2,
+        height: 42,
       });
 
       const barcodeImage = barcodeCanvas.toDataURL("image/png");
 
+      // Tiny label branding
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(8);
-      pdf.text(title.substring(0, 32), 0.08, 0.16);
+      pdf.setFontSize(5.5);
+      pdf.text("Illinois Homeschool Resource Center", 0.08, 0.10);
 
+      // Title
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(7.5);
+      pdf.text(title.substring(0, 34), 0.08, 0.24);
+
+      // Price
       pdf.setFontSize(11);
-      pdf.text(price, 0.08, 0.36);
+      pdf.text(price, 0.08, 0.39);
 
-      pdf.addImage(barcodeImage, "PNG", 0.08, 0.43, 1.84, 0.32);
+      // Optimized barcode
+      pdf.addImage(barcodeImage, "PNG", 0.08, 0.45, 1.84, 0.36);
 
+      // Human-readable barcode number
       pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(7);
-      pdf.text(sku, 0.62, 0.88);
+      pdf.setFontSize(8);
+      pdf.text(barcodeValue, 1.0, 0.91, { align: "center" });
     }
   });
 
