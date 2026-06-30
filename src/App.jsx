@@ -1206,22 +1206,21 @@ function generateLabels(itemsToPrint) {
           : "";
 
       const sku = item.sku || "";
-      const barcodeValue = sku.replace("ILHRC-", "").padStart(6, "0");
-
+      const barcodeValue = sku;
       const barcodeCanvas = document.createElement("canvas");
 
       JsBarcode(barcodeCanvas, barcodeValue, {
         format: "CODE128",
         displayValue: false,
         margin: 10,
-        width: 2.2,
+        width: 2,
         height: 42,
       });
 
       const barcodeImage = barcodeCanvas.toDataURL("image/png");
 
       // Tiny label branding
-      pdf.setFont("helvetica", "bold");
+      pdf.setFont("helvetica", "normal");
       pdf.setFontSize(5.5);
       pdf.text("Illinois Homeschool Resource Center", 0.08, 0.10);
 
