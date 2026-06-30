@@ -97,6 +97,7 @@ export default function App() {
   const [currentLocation, setCurrentLocation] = useState("");
   const [labelLocationFilter, setLabelLocationFilter] = useState("");
 
+  const [locationFilter, setLocationFilter] = useState("");
 
   async function loadItems() {
     const { data, error } = await supabase
@@ -1222,31 +1223,39 @@ function generateLabels(itemsToPrint) {
       // Tiny label branding
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(5.5);
-      pdf.text("Illinois Homeschool Resource Center", 0.08, 0.10);
+      pdf.text("Illinois Homeschool Resource Center", 0.08, 0.14);
 
       // Title
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(7.5);
-      pdf.text(title.substring(0, 34), 0.08, 0.24);
+      pdf.text(title.substring(0, 30), 0.08, 0.28);
 
       // Price
       pdf.setFontSize(11);
-      pdf.text(price, 0.08, 0.39);
+      pdf.text(price, 0.08, 0.43);
 
-      // Optimized barcode
-      pdf.addImage(barcodeImage, "PNG", 0.08, 0.45, 1.84, 0.36);
+      // Optimized barcode      
+      pdf.addImage(barcodeImage, "PNG", 0.08, 0.49, 1.84, 0.34);
 
       // Human-readable barcode number
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(8);
-      pdf.text(barcodeValue, 1.0, 0.91, { align: "center" });
-    }
+      pdf.text(barcodeValue, 1.0, 0.93, { align: "center" });    }
   });
 
   pdf.save("ILHRC-labels.pdf");
 }
 
 const labelLocationOptions = [
+  ...new Set(
+    items
+      .map((item) => item.location)
+      .filter(Boolean)
+      .sort()
+  ),
+];
+
+const inventoryLocationOptions = [
   ...new Set(
     items
       .map((item) => item.location)
@@ -1288,13 +1297,17 @@ const filteredItems = items.filter((item) => {
   const matchesGrade =
     !gradeFilter || item.grade_level === gradeFilter;
 
-  return (
-    matchesSearch &&
-    matchesCurriculum &&
-    matchesSubject &&
-    matchesCategory &&
-    matchesGrade
-  );
+    const matchesLocation =
+  !locationFilter || item.location === locationFilter;
+
+ return (
+  matchesSearch &&
+  matchesCurriculum &&
+  matchesSubject &&
+  matchesCategory &&
+  matchesGrade &&
+  matchesLocation
+);
 });
 
 
@@ -1438,6 +1451,7 @@ function clearCatalogFilters() {
   setSubjectFilter("");
   setCategoryFilter("");
   setGradeFilter("");
+  setLocationFilter("");
 }
 
   return (
@@ -1875,6 +1889,19 @@ onClick={() => {
       </option>
     ))}
   </select>
+
+  <select
+    value={locationFilter}
+    onChange={(e) => setLocationFilter(e.target.value)}
+  >
+    <option value="">All Locations</option>
+    {inventoryLocationOptions.map((location) => (
+      <option key={location} value={location}>
+        {location}
+      </option>
+    ))}
+  </select>
+
 </div>
        
           {editData && (
@@ -2127,6 +2154,7 @@ onClick={() => {
                     setSubjectFilter("");
                     setCategoryFilter("");
                     setGradeFilter("");
+                    setLocationFilter("");
                   }}
                 >
                   Reset Filters
@@ -2177,6 +2205,7 @@ onClick={() => {
                 setSubjectFilter("");
                 setCategoryFilter("");
                 setGradeFilter("");
+                setLocationFilter("");
               }}
             >
               Reset Filters
