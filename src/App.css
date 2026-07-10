@@ -224,6 +224,19 @@ button:disabled {
   border: 1px solid var(--border);
 }
 
+.intake-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 12px 0 6px;
+}
+
+.intake-actions button,
+.intake-actions .file-upload-button {
+  margin-top: 0;
+}
+
 .stats-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));

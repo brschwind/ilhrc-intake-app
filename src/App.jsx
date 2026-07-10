@@ -1054,6 +1054,29 @@ async function handleCoverPhoto(event) {
   analyzePhotoWithFile(optimizedFile);
 }
 
+function startManualEntry() {
+  setBookData({
+    title: "",
+    curriculum: "",
+    publisher: "",
+    subject: "",
+    grade_level: "",
+    edition: "",
+    isbn: "",
+    category: "",
+    suggested_price: "",
+    final_price: "",
+    quantity: 1,
+    weight_ounces: "",
+    status: "Available",
+    notes: "",
+    confidence: "",
+    public_visible: true,
+  });
+  setAnalysisStatus("");
+  setIsbnPhoto(null);
+}
+
 
   function handleIsbnPhoto(event) {
     const file = event.target.files?.[0];
@@ -2622,15 +2645,25 @@ onClick={() => {
     </div>
 
 
-          <button className="secondary" onClick={scanIsbnBarcode}>
-  {isScanningBarcode ? "Scanning..." : "Scan ISBN Barcode"}
-</button>
+    <div className="intake-actions">
+      <button className="secondary" onClick={scanIsbnBarcode}>
+        {isScanningBarcode ? "Scanning..." : "Scan ISBN Barcode"}
+      </button>
 
-<video
-  id="barcode-video"
-  className="barcode-video"
-  hidden={!isScanningBarcode}
-/>
+      <label htmlFor="cover-upload" className="secondary file-upload-button">
+        Analyze Book Cover
+      </label>
+
+      <button className="secondary" onClick={startManualEntry}>
+        Manual Entry
+      </button>
+    </div>
+
+    <video
+      id="barcode-video"
+      className="barcode-video"
+      hidden={!isScanningBarcode}
+    />
 
 <input
   id="cover-upload"
@@ -2641,10 +2674,6 @@ onClick={() => {
   onChange={handleCoverPhoto}
   className="visually-hidden-file"
 />
-
-<label htmlFor="cover-upload" className="secondary file-upload-button">
-  Analyze Book Cover
-</label>
 
 {analysisStatus && (
   <p className="status-message">{analysisStatus}</p>
@@ -2934,9 +2963,11 @@ onClick={() => {
                 }
               />
 
-              <p>
-                <strong>AI Confidence:</strong> {bookData.confidence}
-              </p>
+              {bookData.confidence && (
+                <p>
+                  <strong>AI Confidence:</strong> {bookData.confidence}
+                </p>
+              )}
 
               <button className="primary" onClick={saveItem} disabled={isSaving}>
   {isSaving ? "Saving..." : "Save Item"}
