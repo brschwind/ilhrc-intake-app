@@ -5,31 +5,43 @@ import { supabase } from "./supabaseClient";
 import jsPDF from "jspdf";
 import JsBarcode from "jsbarcode";
 
-const pricingGuide = [
-  { item_name: "DVD (Education/Movies)", category: "Media", price: 5 },
-  { item_name: "Dollar", category: "Reading", price: 1 },
-  { item_name: "Picture Book", category: "Reading", price: 2 },
-  { item_name: "Readers (Early)", category: "Reading", price: 0.5 },
-  { item_name: "Reading Book", category: "Reading", price: 4 },
-  { item_name: "Reading Book (Premium)", category: "Reading", price: 6 },
-  { item_name: "Flashcards", category: "Supplements", price: 0.5 },
-  { item_name: "Games", category: "Supplements", price: 5 },
-  { item_name: "Kit (Science)", category: "Supplements", price: 25 },
-  { item_name: "Kit (Premium)", category: "Supplements", price: 50 },
-  { item_name: "Manipulatives (Large)", category: "Supplements", price: 10 },
-  { item_name: "Manipulatives (Small)", category: "Supplements", price: 5 },
-  { item_name: "Reference/Skill Books (Premium)", category: "Supplements", price: 6 },
-  { item_name: "Reference/Skill Books", category: "Supplements", price: 3 },
-  { item_name: "Answer Key", category: "Textbooks & Teacher", price: 1 },
-  { item_name: "Textbook (Hardcover)", category: "Textbooks & Teacher", price: 10 },
-  { item_name: "Textbook (Premium)", category: "Textbooks & Teacher", price: 15 },
-  { item_name: "Textbook (Softcover)", category: "Textbooks & Teacher", price: 5 },
-  { item_name: "Box Set", category: "Workbooks (Consumable)", price: 25 },
-  { item_name: "Box Set (Premium)", category: "Workbooks (Consumable)", price: 40 },
-  { item_name: "Workbook - Full year/curriculum", category: "Workbooks (Consumable)", price: 8 },
-  { item_name: "Workbook - Premium", category: "Workbooks (Consumable)", price: 12 },
-  { item_name: "Workbook - Small", category: "Workbooks (Consumable)", price: 2 },
-];
+async function shrinkImageFile(file, maxSize = 1400, quality = 0.82) {
+  if (!file?.type?.startsWith("image/")) return file;
+
+  const imageUrl = URL.createObjectURL(file);
+  const image = new Image();
+
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = imageUrl;
+    });
+
+    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
+    if (scale >= 1 && file.size < 900_000) return file;
+
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(image.width * scale);
+    canvas.height = Math.round(image.height * scale);
+
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", quality)
+    );
+
+    if (!blob) return file;
+
+    const cleanName = file.name.replace(/\.[^.]+$/, "") || "book-cover";
+    return new File([blob], `${cleanName}.jpg`, { type: "image/jpeg" });
+  } catch {
+    return file;
+  } finally {
+    URL.revokeObjectURL(imageUrl);
+  }
+}
 
 export default function App() {
   const [view, setView] = useState("add");
@@ -42,9 +54,7 @@ export default function App() {
   const [coverPhoto, setCoverPhoto] = useState(null);
   const [coverFile, setCoverFile] = useState(null);
   const [isbnPhoto, setIsbnPhoto] = useState(null);
-  const [isbnFile, setIsbnFile] = useState(null);
   const [bookData, setBookData] = useState(null);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
 
   const [editingItem, setEditingItem] = useState(null);
   const [editData, setEditData] = useState(null);
@@ -62,7 +72,7 @@ export default function App() {
 
   const [selectedCatalogItem, setSelectedCatalogItem] = useState(null);
 
-  const [sortBy, setSortBy] = useState("title");
+  const [sortBy, setSortBy] = useState("newest");
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
 
   const listingPhotoInputRef = useRef(null);
@@ -83,8 +93,10 @@ export default function App() {
   const [subjectOptions, setSubjectOptions] = useState([]);
   const [gradeOptions, setGradeOptions] = useState([]);
   const [categoryOptions, setCategoryOptions] = useState([]);
+  const [locationOptions, setLocationOptions] = useState([]);
 
   const [selectedItemIds, setSelectedItemIds] = useState([]);
+  const [isSelectionMode, setIsSelectionMode] = useState(false);
 
   const [bulkCurriculum, setBulkCurriculum] = useState("");
   const [bulkSubject, setBulkSubject] = useState("");
@@ -96,8 +108,46 @@ export default function App() {
 
   const [currentLocation, setCurrentLocation] = useState("");
   const [labelLocationFilter, setLabelLocationFilter] = useState("");
+  const [labelDateFrom, setLabelDateFrom] = useState("");
+  const [labelDateTo, setLabelDateTo] = useState("");
 
   const [locationFilter, setLocationFilter] = useState("");
+  const [inventoryDateFrom, setInventoryDateFrom] = useState("");
+  const [inventoryDateTo, setInventoryDateTo] = useState("");
+  const [newLocationName, setNewLocationName] = useState("");
+  const [newLocationTemporary, setNewLocationTemporary] = useState(false);
+  const [renameLocationId, setRenameLocationId] = useState("");
+  const [renameLocationName, setRenameLocationName] = useState("");
+  const [deactivateLocationId, setDeactivateLocationId] = useState("");
+  const [mergeFromLocationId, setMergeFromLocationId] = useState("");
+  const [mergeToLocationId, setMergeToLocationId] = useState("");
+  const [locationListFilter, setLocationListFilter] = useState("all");
+  const [optionAddNames, setOptionAddNames] = useState({
+    curriculum: "",
+    subject: "",
+    grade: "",
+  });
+  const [optionRenameSelections, setOptionRenameSelections] = useState({
+    curriculum: "",
+    subject: "",
+    grade: "",
+  });
+  const [optionRenameNames, setOptionRenameNames] = useState({
+    curriculum: "",
+    subject: "",
+    grade: "",
+  });
+  const [optionDeleteSelections, setOptionDeleteSelections] = useState({
+    curriculum: "",
+    subject: "",
+    grade: "",
+  });
+  const [newCategoryName, setNewCategoryName] = useState("");
+  const [newCategoryPrice, setNewCategoryPrice] = useState("");
+  const [editCategoryName, setEditCategoryName] = useState("");
+  const [editCategoryNewName, setEditCategoryNewName] = useState("");
+  const [editCategoryPrice, setEditCategoryPrice] = useState("");
+  const [deleteCategoryName, setDeleteCategoryName] = useState("");
 
   async function loadItems() {
     const { data, error } = await supabase
@@ -135,10 +185,699 @@ async function loadOptionLists() {
       .select("*")
       .order("name");
 
+    const { data: locations, error: locationsError } = await supabase
+      .from("location_options")
+      .select("*")
+      .order("name");
+
+    if (locationsError) {
+      console.warn("Could not load location options:", locationsError.message);
+    }
+
   setCurriculumOptions(curricula?.map((x) => x.name) || []);
   setSubjectOptions(subjects?.map((x) => x.name) || []);
   setGradeOptions(grades?.map((x) => x.name) || []);
   setCategoryOptions(categories || []);
+  setLocationOptions(locations || []);
+}
+
+function normalizeLocationName(value) {
+  return (value || "").trim().toLowerCase();
+}
+
+function cleanLocationName(value) {
+  return (value || "").trim().replace(/\s+/g, " ");
+}
+
+function getLocationOptionById(id) {
+  return locationOptions.find((location) => location.id === id);
+}
+
+function getLocationOptionByName(name) {
+  const normalizedName = normalizeLocationName(name);
+  return locationOptions.find(
+    (location) => normalizeLocationName(location.name) === normalizedName
+  );
+}
+
+function isTemporaryLocationName(name) {
+  return getLocationOptionByName(name)?.temporary === true;
+}
+
+function buildLocationList(values) {
+  const byNormalizedName = new Map();
+
+  values.forEach((value) => {
+    const name = cleanLocationName(value);
+    const normalizedName = normalizeLocationName(name);
+
+    if (!normalizedName || byNormalizedName.has(normalizedName)) return;
+
+    byNormalizedName.set(normalizedName, name);
+  });
+
+  return [...byNormalizedName.values()].sort((a, b) =>
+    a.localeCompare(b, undefined, { sensitivity: "base" })
+  );
+}
+
+function getActiveLocationNames(extraValues = []) {
+  return buildLocationList([
+    ...locationOptions
+      .filter((location) => location.active !== false)
+      .map((location) => location.name),
+    ...extraValues,
+  ]);
+}
+
+function locationMatches(value, selectedValue) {
+  if (!selectedValue) return true;
+  return normalizeLocationName(value) === normalizeLocationName(selectedValue);
+}
+
+function optionNameMatches(value, selectedValue) {
+  return normalizeLocationName(value) === normalizeLocationName(selectedValue);
+}
+
+function getDateOnly(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+
+  return date.toISOString().slice(0, 10);
+}
+
+function formatDateAdded(value) {
+  if (!value) return "Unknown";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+
+  return date.toLocaleDateString();
+}
+
+function dateAddedMatches(item, fromDate, toDate) {
+  const itemDate = getDateOnly(item.created_at);
+
+  if (!itemDate && (fromDate || toDate)) return false;
+  if (fromDate && itemDate < fromDate) return false;
+  if (toDate && itemDate > toDate) return false;
+
+  return true;
+}
+
+function getManagedOptionConfig(optionType) {
+  const configs = {
+    curriculum: {
+      tableName: "curriculum_options",
+      itemColumn: "curriculum",
+      options: curriculumOptions,
+      label: "Curriculum",
+    },
+    subject: {
+      tableName: "subject_options",
+      itemColumn: "subject",
+      options: subjectOptions,
+      label: "Subject",
+    },
+    grade: {
+      tableName: "grade_options",
+      itemColumn: "grade_level",
+      options: gradeOptions,
+      label: "Grade Level",
+    },
+  };
+
+  return configs[optionType];
+}
+
+function getItemIdsByOptionValue(itemColumn, oldValue) {
+  const normalizedValue = normalizeLocationName(oldValue);
+
+  return items
+    .filter((item) => normalizeLocationName(item[itemColumn]) === normalizedValue)
+    .map((item) => item.id);
+}
+
+async function updateItemsOptionValue(itemColumn, oldValue, newValue) {
+  const ids = getItemIdsByOptionValue(itemColumn, oldValue);
+
+  if (ids.length === 0) return;
+
+  const { error } = await supabase
+    .from("items")
+    .update({
+      [itemColumn]: cleanLocationName(newValue),
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", ids);
+
+  if (error) throw error;
+}
+
+function optionExists(options, name) {
+  return options.some((option) => optionNameMatches(option, name));
+}
+
+async function addManagedTextOption(optionType) {
+  const config = getManagedOptionConfig(optionType);
+  const cleanedName = cleanLocationName(optionAddNames[optionType]);
+
+  if (!cleanedName) {
+    alert(`Enter a ${config.label.toLowerCase()} name.`);
+    return;
+  }
+
+  if (optionExists(config.options, cleanedName)) {
+    alert(`${config.label} already exists.`);
+    return;
+  }
+
+  const { error } = await supabase
+    .from(config.tableName)
+    .insert([{ name: cleanedName }]);
+
+  if (error) {
+    alert(`Could not add ${config.label.toLowerCase()}: ` + error.message);
+    return;
+  }
+
+  setOptionAddNames((current) => ({ ...current, [optionType]: "" }));
+  await loadOptionLists();
+}
+
+async function renameManagedTextOption(optionType) {
+  const config = getManagedOptionConfig(optionType);
+  const oldName = optionRenameSelections[optionType];
+  const newName = cleanLocationName(optionRenameNames[optionType]);
+
+  if (!oldName || !newName) {
+    alert(`Choose a ${config.label.toLowerCase()} and enter the new name.`);
+    return;
+  }
+
+  const duplicate = config.options.some(
+    (option) => !optionNameMatches(option, oldName) && optionNameMatches(option, newName)
+  );
+
+  if (duplicate) {
+    alert(`${config.label} already exists. Choose a different name.`);
+    return;
+  }
+
+  try {
+    const { error } = await supabase
+      .from(config.tableName)
+      .update({ name: newName })
+      .eq("name", oldName);
+
+    if (error) throw error;
+
+    await updateItemsOptionValue(config.itemColumn, oldName, newName);
+
+    setOptionRenameSelections((current) => ({ ...current, [optionType]: "" }));
+    setOptionRenameNames((current) => ({ ...current, [optionType]: "" }));
+    await loadItems();
+    await loadOptionLists();
+    alert(`${config.label} renamed.`);
+  } catch (error) {
+    alert(`Could not rename ${config.label.toLowerCase()}: ` + error.message);
+  }
+}
+
+async function deleteManagedTextOption(optionType) {
+  const config = getManagedOptionConfig(optionType);
+  const name = optionDeleteSelections[optionType];
+
+  if (!name) {
+    alert(`Choose a ${config.label.toLowerCase()} to remove.`);
+    return;
+  }
+
+  const confirmed = confirm(
+    `Remove "${name}" from future ${config.label.toLowerCase()} dropdowns? Existing inventory will keep this value.`
+  );
+
+  if (!confirmed) return;
+
+  const { error } = await supabase
+    .from(config.tableName)
+    .delete()
+    .eq("name", name);
+
+  if (error) {
+    alert(`Could not remove ${config.label.toLowerCase()}: ` + error.message);
+    return;
+  }
+
+  setOptionDeleteSelections((current) => ({ ...current, [optionType]: "" }));
+  await loadOptionLists();
+}
+
+async function addCategoryOption() {
+  const cleanedName = cleanLocationName(newCategoryName);
+
+  if (!cleanedName) {
+    alert("Enter a category name.");
+    return;
+  }
+
+  const duplicate = categoryOptions.some((category) =>
+    optionNameMatches(category.name, cleanedName)
+  );
+
+  if (duplicate) {
+    alert("Category already exists.");
+    return;
+  }
+
+  const price =
+    newCategoryPrice === "" || newCategoryPrice === null
+      ? null
+      : Number(newCategoryPrice);
+
+  const { error } = await supabase.from("category_options").insert([
+    {
+      name: cleanedName,
+      default_price: Number.isNaN(price) ? null : price,
+    },
+  ]);
+
+  if (error) {
+    alert("Could not add category: " + error.message);
+    return;
+  }
+
+  setNewCategoryName("");
+  setNewCategoryPrice("");
+  await loadOptionLists();
+}
+
+async function updateCategoryOption() {
+  const oldName = editCategoryName;
+  const newName = cleanLocationName(editCategoryNewName);
+
+  if (!oldName || !newName) {
+    alert("Choose a category and enter its name.");
+    return;
+  }
+
+  const duplicate = categoryOptions.some(
+    (category) =>
+      !optionNameMatches(category.name, oldName) &&
+      optionNameMatches(category.name, newName)
+  );
+
+  if (duplicate) {
+    alert("Another category already uses that name.");
+    return;
+  }
+
+  const price =
+    editCategoryPrice === "" || editCategoryPrice === null
+      ? null
+      : Number(editCategoryPrice);
+
+  try {
+    const { error } = await supabase
+      .from("category_options")
+      .update({
+        name: newName,
+        default_price: Number.isNaN(price) ? null : price,
+      })
+      .eq("name", oldName);
+
+    if (error) throw error;
+
+    await updateItemsOptionValue("category", oldName, newName);
+
+    setEditCategoryName("");
+    setEditCategoryNewName("");
+    setEditCategoryPrice("");
+    await loadItems();
+    await loadOptionLists();
+    alert("Category updated.");
+  } catch (error) {
+    alert("Could not update category: " + error.message);
+  }
+}
+
+async function deleteCategoryOption() {
+  if (!deleteCategoryName) {
+    alert("Choose a category to remove.");
+    return;
+  }
+
+  const confirmed = confirm(
+    `Remove "${deleteCategoryName}" from future category dropdowns? Existing inventory will keep this category.`
+  );
+
+  if (!confirmed) return;
+
+  const { error } = await supabase
+    .from("category_options")
+    .delete()
+    .eq("name", deleteCategoryName);
+
+  if (error) {
+    alert("Could not remove category: " + error.message);
+    return;
+  }
+
+  setDeleteCategoryName("");
+  await loadOptionLists();
+}
+
+function getItemIdsByLocation(locationName) {
+  const normalizedName = normalizeLocationName(locationName);
+
+  return items
+    .filter((item) => normalizeLocationName(item.location) === normalizedName)
+    .map((item) => item.id);
+}
+
+async function updateItemsLocationByName(oldLocationName, newLocationName) {
+  const ids = getItemIdsByLocation(oldLocationName);
+
+  if (ids.length === 0) return;
+
+  const { error } = await supabase
+    .from("items")
+    .update({
+      location: cleanLocationName(newLocationName),
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", ids);
+
+  if (error) throw error;
+}
+
+async function addLocationOption(name, temporary = false) {
+  const cleanedName = cleanLocationName(name);
+  const normalizedName = normalizeLocationName(cleanedName);
+
+  if (!normalizedName) {
+    alert("Enter a location name.");
+    return false;
+  }
+
+  const existing = locationOptions.find(
+    (location) => normalizeLocationName(location.name) === normalizedName
+  );
+
+  if (existing) {
+    alert("That location already exists.");
+    return false;
+  }
+
+  const { error } = await supabase.from("location_options").insert([
+    {
+      name: cleanedName,
+      normalized_name: normalizedName,
+      active: true,
+      temporary,
+    },
+  ]);
+
+  if (error) {
+    alert("Could not add location: " + error.message);
+    return false;
+  }
+
+  return true;
+}
+
+async function handleAddLocation() {
+  const added = await addLocationOption(newLocationName, newLocationTemporary);
+
+  if (!added) return;
+
+  setNewLocationName("");
+  setNewLocationTemporary(false);
+  await loadOptionLists();
+}
+
+async function seedTemporaryLocations() {
+  const defaults = ["Box 1", "Box 2", "Box 3", "Box 4"];
+
+  for (const locationName of defaults) {
+    const normalizedName = normalizeLocationName(locationName);
+    const exists = locationOptions.some(
+      (location) => normalizeLocationName(location.name) === normalizedName
+    );
+
+    if (!exists) {
+      const { error } = await supabase.from("location_options").insert([
+        {
+          name: locationName,
+          normalized_name: normalizedName,
+          active: true,
+          temporary: true,
+        },
+      ]);
+
+      if (error && error.code !== "23505") {
+        alert("Could not seed temporary locations: " + error.message);
+        return;
+      }
+    }
+  }
+
+  await loadOptionLists();
+  alert("Temporary locations are ready.");
+}
+
+async function renameLocation() {
+  const location = getLocationOptionById(renameLocationId);
+  const cleanedName = cleanLocationName(renameLocationName);
+  const normalizedName = normalizeLocationName(cleanedName);
+
+  if (!location || !normalizedName) {
+    alert("Choose a location and enter the new name.");
+    return;
+  }
+
+  const duplicate = locationOptions.find(
+    (option) =>
+      option.id !== location.id &&
+      normalizeLocationName(option.name) === normalizedName
+  );
+
+  if (duplicate) {
+    alert("Another location already uses that name. Use merge instead.");
+    return;
+  }
+
+  try {
+    const { error } = await supabase
+      .from("location_options")
+      .update({
+        name: cleanedName,
+        normalized_name: normalizedName,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", location.id);
+
+    if (error) throw error;
+
+    await updateItemsLocationByName(location.name, cleanedName);
+
+    setRenameLocationId("");
+    setRenameLocationName("");
+    await loadItems();
+    await loadOptionLists();
+    alert("Location renamed.");
+  } catch (error) {
+    alert("Could not rename location: " + error.message);
+  }
+}
+
+async function deactivateLocation() {
+  const location = getLocationOptionById(deactivateLocationId);
+
+  if (!location) {
+    alert("Choose a location to deactivate.");
+    return;
+  }
+
+  const confirmed = confirm(
+    `Deactivate "${location.name}"? Existing inventory will keep this location, but it will be removed from future dropdowns.`
+  );
+
+  if (!confirmed) return;
+
+  const { error } = await supabase
+    .from("location_options")
+    .update({
+      active: false,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", location.id);
+
+  if (error) {
+    alert("Could not deactivate location: " + error.message);
+    return;
+  }
+
+  if (locationMatches(currentLocation, location.name)) {
+    setCurrentLocation("");
+  }
+
+  setDeactivateLocationId("");
+  await loadOptionLists();
+  alert("Location deactivated.");
+}
+
+async function mergeLocations() {
+  const source = getLocationOptionById(mergeFromLocationId);
+  const target = getLocationOptionById(mergeToLocationId);
+
+  if (!source || !target) {
+    alert("Choose both locations to merge.");
+    return;
+  }
+
+  if (source.id === target.id) {
+    alert("Choose two different locations.");
+    return;
+  }
+
+  const confirmed = confirm(
+    `Move all items from "${source.name}" to "${target.name}", then deactivate "${source.name}"?`
+  );
+
+  if (!confirmed) return;
+
+  try {
+    await updateItemsLocationByName(source.name, target.name);
+
+    const { error } = await supabase
+      .from("location_options")
+      .update({
+        active: false,
+        merged_into_id: target.id,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", source.id);
+
+    if (error) throw error;
+
+    if (locationMatches(currentLocation, source.name)) {
+      setCurrentLocation(target.name);
+    }
+
+    if (locationMatches(locationFilter, source.name)) {
+      setLocationFilter(target.name);
+    }
+
+    if (locationMatches(labelLocationFilter, source.name)) {
+      setLabelLocationFilter(target.name);
+    }
+
+    setMergeFromLocationId("");
+    setMergeToLocationId("");
+    await loadItems();
+    await loadOptionLists();
+    alert("Locations merged.");
+  } catch (error) {
+    alert("Could not merge locations: " + error.message);
+  }
+}
+
+async function toggleLocationTemporary(location) {
+  const { error } = await supabase
+    .from("location_options")
+    .update({
+      temporary: !location.temporary,
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", location.id);
+
+  if (error) {
+    alert("Could not update location: " + error.message);
+    return;
+  }
+
+  await loadOptionLists();
+}
+
+async function deactivateEmptyTemporaryLocations() {
+  const emptyTemporaryLocations = locationOptions.filter(
+    (location) =>
+      location.temporary === true &&
+      location.active !== false &&
+      !locationUsageCounts[normalizeLocationName(location.name)]
+  );
+
+  if (emptyTemporaryLocations.length === 0) {
+    alert("No empty temporary locations to deactivate.");
+    return;
+  }
+
+  const confirmed = confirm(
+    `Deactivate ${emptyTemporaryLocations.length} empty temporary location(s)?`
+  );
+
+  if (!confirmed) return;
+
+  const { error } = await supabase
+    .from("location_options")
+    .update({
+      active: false,
+      updated_at: new Date().toISOString(),
+    })
+    .in(
+      "id",
+      emptyTemporaryLocations.map((location) => location.id)
+    );
+
+  if (error) {
+    alert("Could not deactivate empty temporary locations: " + error.message);
+    return;
+  }
+
+  await loadOptionLists();
+  alert("Empty temporary locations deactivated.");
+}
+
+async function clearTemporaryLocationsFromSelected() {
+  const selectedItemsWithTemporaryLocations = items.filter(
+    (item) =>
+      selectedItemIds.includes(item.id) &&
+      item.location &&
+      isTemporaryLocationName(item.location)
+  );
+
+  if (selectedItemsWithTemporaryLocations.length === 0) {
+    alert("None of the selected items are in temporary locations.");
+    return;
+  }
+
+  const confirmed = confirm(
+    `Clear temporary locations from ${selectedItemsWithTemporaryLocations.length} selected item(s)?`
+  );
+
+  if (!confirmed) return;
+
+  const { error } = await supabase
+    .from("items")
+    .update({
+      location: "",
+      updated_at: new Date().toISOString(),
+    })
+    .in(
+      "id",
+      selectedItemsWithTemporaryLocations.map((item) => item.id)
+    );
+
+  if (error) {
+    alert("Could not clear temporary locations: " + error.message);
+    return;
+  }
+
+  await loadItems();
+  alert("Temporary locations cleared from selected items.");
 }
 
 function toggleSelectedItem(id) {
@@ -208,18 +947,19 @@ async function bulkDeleteSelected() {
   } catch (err) {
   console.error("Bulk delete failed full error:", err);
 
-  let message = "Unknown error";
-
-  try {
-    message =
+  const message = (() => {
+    try {
+      return (
       err?.message ||
       err?.error?.message ||
       err?.errors?.[0]?.detail ||
       err?.errors?.[0]?.message ||
-      JSON.stringify(err);
-  } catch {
-    message = String(err);
-  }
+      JSON.stringify(err)
+      );
+    } catch {
+      return String(err);
+    }
+  })();
 
   alert("Bulk delete failed: " + message);
 }}
@@ -301,15 +1041,17 @@ async function applyBulkEdit() {
 }
 
 
-function handleCoverPhoto(event) {
+async function handleCoverPhoto(event) {
   const file = event.target.files?.[0];
   if (!file) return;
 
   setCoverPhoto(URL.createObjectURL(file));
-  setCoverFile(file);
   setBookData(null);
 
-  analyzePhotoWithFile(file);
+  const optimizedFile = await shrinkImageFile(file);
+  setCoverFile(optimizedFile);
+
+  analyzePhotoWithFile(optimizedFile);
 }
 
 
@@ -318,16 +1060,15 @@ function handleCoverPhoto(event) {
     if (!file) return;
 
     setIsbnPhoto(URL.createObjectURL(file));
-    setIsbnFile(file);
     setBookData(null);
   }
 
-function handleListingPhoto(event) {
+async function handleListingPhoto(event) {
   const file = event.target.files?.[0];
   if (!file) return;
 
   setCoverPhoto(URL.createObjectURL(file));
-  setCoverFile(file);
+  setCoverFile(await shrinkImageFile(file));
 }
 
 function handleEditCoverPhoto(event) {
@@ -421,16 +1162,35 @@ function suggestPricingCategory(book) {
 }
 
 async function lookupBookByIsbn(isbn) {
-  try {
-    // 1. Try Google Books first
-    const googleUrl =
-  `https://www.googleapis.com/books/v1/volumes?q=isbn:${isbn}&key=${import.meta.env.VITE_GOOGLE_BOOKS_API_KEY}`;
-const googleResponse = await fetch(googleUrl);
-const googleData = await googleResponse.json();
+  const cleanIsbn = String(isbn || "").replace(/[^0-9Xx]/g, "");
+  if (!cleanIsbn) return;
 
-    if (googleData.items && googleData.items.length > 0) {
+  setAnalysisStatus("Looking up ISBN...");
+
+  try {
+    const googleUrl =
+  `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}&key=${import.meta.env.VITE_GOOGLE_BOOKS_API_KEY}`;
+
+    const [googleResult, openLibraryResult] = await Promise.allSettled([
+      fetch(googleUrl).then((response) => response.json()),
+      fetch(`https://openlibrary.org/isbn/${cleanIsbn}.json`).then(
+        async (response) => (response.ok ? response.json() : null)
+      ),
+    ]);
+
+    const googleData =
+      googleResult.status === "fulfilled" ? googleResult.value : null;
+
+    if (googleData?.items && googleData.items.length > 0) {
       const book = googleData.items[0].volumeInfo;
       const suggested = suggestPricingCategory(book);
+      const weightEstimate = estimateWeightFromMetadata({
+        title: book.title || "",
+        category: suggested?.name || "",
+        categories: book.categories || [],
+        pageCount: book.pageCount,
+        format: book.printType || "",
+      });
 
 const coverUrl =
   book.imageLinks?.thumbnail ||
@@ -444,32 +1204,42 @@ setBookData({
   subject: book.categories?.[0] || "",
   grade_level: "",
   edition: "",
-  isbn,
+  isbn: cleanIsbn,
   category: suggested?.name || "",
   suggested_price: suggested?.default_price || "",
   final_price: suggested?.default_price || "",
   quantity: 1,
+  weight_ounces: weightEstimate.weight_ounces,
+  weight_note: weightEstimate.note,
   status: "Available",
   notes: book.description || "",
   confidence: "Google Books ISBN lookup",
   public_visible: true,
-  image_url: "",});
+  image_url: coverUrl,});
 
+      setAnalysisStatus("ISBN lookup complete!");
+      setTimeout(() => setAnalysisStatus(""), 1800);
       return;
     }
 
-    // 2. Try Open Library second
-    const openLibraryResponse = await fetch(
-      `https://openlibrary.org/isbn/${isbn}.json`
-    );
+    const openLibraryData =
+      openLibraryResult.status === "fulfilled" ? openLibraryResult.value : null;
 
-    if (openLibraryResponse.ok) {
-      const openLibraryData = await openLibraryResponse.json();
+    if (openLibraryData) {
       const suggested = suggestPricingCategory({
   title: openLibraryData.title || "",
   publisher: openLibraryData.publishers?.[0] || "",
   categories: [],
 });
+      const weightEstimate = estimateWeightFromMetadata({
+        title: openLibraryData.title || "",
+        category: suggested?.name || suggested?.item_name || "",
+        pageCount: openLibraryData.number_of_pages,
+        pagination: openLibraryData.pagination,
+        weight: openLibraryData.weight,
+        physical_weight: openLibraryData.physical_weight,
+        physical_format: openLibraryData.physical_format,
+      });
 
       setBookData({
         title: openLibraryData.title || "",
@@ -477,17 +1247,21 @@ setBookData({
         subject: "",
         grade_level: "",
         edition: "",
-        isbn,
+        isbn: cleanIsbn,
        category: suggested?.item_name || "",
         suggested_price: suggested?.price || "",
         final_price: suggested?.price || "",
         quantity: 1,
+        weight_ounces: weightEstimate.weight_ounces,
+        weight_note: weightEstimate.note,
         status: "Available",
         notes: "",
         confidence: "Open Library ISBN lookup",
         public_visible: true,
       });
 
+      setAnalysisStatus("ISBN lookup complete!");
+      setTimeout(() => setAnalysisStatus(""), 1800);
       return;
     }
 
@@ -498,18 +1272,21 @@ setBookData({
       subject: "",
       grade_level: "",
       edition: "",
-      isbn,
+      isbn: cleanIsbn,
       category: "",
       final_price: "",
       quantity: 1,
+      weight_ounces: "",
       status: "Available",
       notes: "",
       confidence: "ISBN scanned only",
       public_visible: true,
     });
 
+    setAnalysisStatus("");
     alert("ISBN scanned, but no book data was found. You can enter the details manually.");
   } catch (error) {
+    setAnalysisStatus("");
     alert("Book lookup failed: " + error.message);
   }
 }
@@ -526,8 +1303,6 @@ async function scanIsbnBarcode() {
     );
 
 const scannedIsbn = result.getText();
-
-alert(`ISBN scanned: ${scannedIsbn}`);
 
 await lookupBookByIsbn(scannedIsbn);
   } catch (error) {
@@ -575,7 +1350,6 @@ function improveDetectedBookData(data) {
 }
 
 async function analyzePhotoWithFile(file) {
-  setIsAnalyzing(true);
   setAnalysisStatus("Preparing image...");
 
   try {
@@ -606,6 +1380,11 @@ async function analyzePhotoWithFile(file) {
 setBookData({
   ...improvedData,
   category: improvedData.category || suggested?.name || "",
+  weight_ounces: getWeightFromBookData(improvedData) ?? "",
+  weight_note:
+    getWeightFromBookData(improvedData) !== null
+      ? "Estimated by AI. Please adjust if needed."
+      : "",
   suggested_price:
     improvedData.suggested_price || suggested?.default_price || "",
   final_price:
@@ -621,8 +1400,6 @@ setBookData({
       "Could not connect to the server. The AI server may be waking up. Try again in about 30 seconds. Details: " +
         error.message
     );
-  } finally {
-    setIsAnalyzing(false);
   }
 }
 
@@ -678,48 +1455,181 @@ function normalizeTitle(title) {
     .trim();
 }
 
+function cleanWeightOunces(value) {
+  if (value === "" || value === null || value === undefined) return null;
+
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.ceil(number) : null;
+}
+
+function getWeightPounds(totalOunces) {
+  const ounces = cleanWeightOunces(totalOunces);
+  if (ounces === null) return "";
+
+  const pounds = Math.floor(ounces / 16);
+  return pounds === 0 ? "" : pounds;
+}
+
+function getWeightRemainingOunces(totalOunces) {
+  const ounces = cleanWeightOunces(totalOunces);
+  if (ounces === null) return "";
+
+  return ounces % 16;
+}
+
+function combineWeightPoundsOunces(pounds, ounces) {
+  const cleanPounds = pounds === "" ? 0 : Number(pounds);
+  const cleanOunces = ounces === "" ? 0 : Number(ounces);
+
+  if (
+    !Number.isFinite(cleanPounds) ||
+    !Number.isFinite(cleanOunces) ||
+    cleanPounds < 0 ||
+    cleanOunces < 0
+  ) {
+    return "";
+  }
+
+  const totalOunces = cleanPounds * 16 + cleanOunces;
+  return totalOunces === 0 ? "" : Math.ceil(totalOunces);
+}
+
+function formatWeight(totalOunces) {
+  const ounces = cleanWeightOunces(totalOunces);
+  if (ounces === null) return "";
+
+  const pounds = Math.floor(ounces / 16);
+  const remainingOunces = ounces % 16;
+
+  if (pounds > 0 && remainingOunces > 0) {
+    return `${pounds} lb ${remainingOunces} oz`;
+  }
+
+  if (pounds > 0) {
+    return `${pounds} lb`;
+  }
+
+  return `${remainingOunces} oz`;
+}
+
+function parseWeightToOunces(value) {
+  if (value === "" || value === null || value === undefined) return null;
+
+  if (typeof value === "number") {
+    return cleanWeightOunces(value);
+  }
+
+  const text = String(value).toLowerCase().trim();
+  const number = Number(text.match(/[\d.]+/)?.[0]);
+
+  if (!Number.isFinite(number)) return null;
+
+  if (text.includes("kg") || text.includes("kilogram")) {
+    return Math.ceil(number * 35.274);
+  }
+
+  if (text.includes("gram") || /\bg\b/.test(text)) {
+    return Math.ceil(number * 0.035274);
+  }
+
+  if (
+    text.includes("lb") ||
+    text.includes("pound") ||
+    text.includes("lbs")
+  ) {
+    return Math.ceil(number * 16);
+  }
+
+  if (text.includes("oz") || text.includes("ounce")) {
+    return Math.ceil(number);
+  }
+
+  return null;
+}
+
+function getPageCountFromText(value) {
+  const match = String(value || "").match(/\d+/);
+  return match ? Number(match[0]) : null;
+}
+
+function estimateWeightFromMetadata(metadata) {
+  const listedWeight = parseWeightToOunces(
+    metadata?.weight ||
+      metadata?.physical_weight ||
+      metadata?.shipping_weight ||
+      metadata?.weight_ounces
+  );
+
+  if (listedWeight !== null) {
+    return {
+      weight_ounces: listedWeight,
+      note: "Weight came from ISBN metadata.",
+    };
+  }
+
+  const pageCount =
+    Number(metadata?.pageCount || metadata?.number_of_pages) ||
+    getPageCountFromText(metadata?.pagination);
+
+  if (!pageCount) {
+    return {
+      weight_ounces: "",
+      note: "",
+    };
+  }
+
+  const text = `${metadata?.title || ""} ${metadata?.category || ""} ${
+    metadata?.format || ""
+  } ${metadata?.physical_format || ""} ${
+    metadata?.categories?.join(" ") || ""
+  }`.toLowerCase();
+
+  let baseOunces = 4;
+  let ouncesPerPage = 0.025;
+
+  if (text.includes("hardcover") || text.includes("hardback")) {
+    baseOunces = 8;
+    ouncesPerPage = 0.03;
+  } else if (
+    text.includes("workbook") ||
+    text.includes("textbook") ||
+    text.includes("curriculum")
+  ) {
+    baseOunces = 5;
+    ouncesPerPage = 0.035;
+  } else if (text.includes("picture book")) {
+    baseOunces = 7;
+    ouncesPerPage = 0.025;
+  }
+
+  const estimatedWeight = Math.min(
+    80,
+    Math.max(4, baseOunces + pageCount * ouncesPerPage)
+  );
+
+  return {
+    weight_ounces: Math.ceil(estimatedWeight),
+    note: `Estimated from ${pageCount} pages. Please adjust if needed.`,
+  };
+}
+
+function getWeightFromBookData(data) {
+  return cleanWeightOunces(
+    data?.weight_ounces ??
+      data?.weightOunces ??
+      data?.weight ??
+      data?.shipping_weight_ounces
+  );
+}
+
 async function saveItem() {
   if (!bookData || isSaving) return;
 
   setIsSaving(true);
+  setAnalysisStatus("Checking inventory...");
 
   try {
-    let imageUrl = "";
-
-    if (coverFile) {
-      const fileExt = coverFile.type?.split("/")[1] || "jpg";
-      const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
-
-      const { error: uploadError } = await supabase.storage
-        .from("book-covers")
-        .upload(fileName, coverFile, {
-          contentType: coverFile.type || "image/jpeg",
-        });
-
-      if (uploadError) {
-        alert("Image upload failed: " + uploadError.message);
-        return;
-      }
-
-      const { data } = supabase.storage
-        .from("book-covers")
-        .getPublicUrl(fileName);
-
-      imageUrl = data.publicUrl;
-    }
-
-    const newSku = await generateSku();
-
-    let squareItemId = "";
-    let squareVariationId = "";
-
-    await saveOptionIfNew("curriculum_options", bookData.curriculum);
-    await saveOptionIfNew("category_options", bookData.category);
-
-    await loadOptionLists();
-
-  const itemToSave = {
-    sku: newSku,
+  const itemDraft = {
     title: bookData.title || "",
     curriculum: bookData.curriculum || "",
     publisher: bookData.publisher || "",
@@ -728,7 +1638,7 @@ async function saveItem() {
     edition: bookData.edition || "",
     isbn: bookData.isbn || "",
     category: bookData.category || "",
-    location: currentLocation || "",
+    location: cleanLocationName(currentLocation),
     suggested_price: bookData.suggested_price || null,
     final_price:
       bookData.final_price === "" ||
@@ -738,9 +1648,9 @@ async function saveItem() {
         ? null
         : Number(bookData.final_price),
     quantity: bookData.quantity ? Number(bookData.quantity) : 1,
+    weight_ounces: cleanWeightOunces(bookData.weight_ounces),
     status: bookData.status || "Available",
     notes: bookData.notes || "",
-    image_url: imageUrl || bookData.image_url || "",
     ai_confidence:
       typeof bookData.confidence === "number" ? bookData.confidence : null,
     public_visible: true,
@@ -749,8 +1659,8 @@ async function saveItem() {
 const { data: possibleMatches, error: searchError } = await supabase
   .from("items")
   .select("*")
-  .eq("curriculum", itemToSave.curriculum)
-  .eq("category", itemToSave.category);
+  .eq("curriculum", itemDraft.curriculum)
+  .eq("category", itemDraft.category);
 
 if (searchError) {
   alert("Could not check for existing item: " + searchError.message);
@@ -759,18 +1669,18 @@ if (searchError) {
 
 const existingItems = (possibleMatches || []).filter((item) => {
   const sameTitle =
-    normalizeTitle(item.title) === normalizeTitle(itemToSave.title);
+    normalizeTitle(item.title) === normalizeTitle(itemDraft.title);
 
  const sameEdition =
   String(item.edition || "").trim().toLowerCase() ===
-  String(itemToSave.edition || "").trim().toLowerCase();
+  String(itemDraft.edition || "").trim().toLowerCase();
 
   const samePrice =
-    Number(item.final_price || 0) === Number(itemToSave.final_price || 0);
+    Number(item.final_price || 0) === Number(itemDraft.final_price || 0);
 
 const sameGrade =
   String(item.grade_level || "").trim().toLowerCase() ===
-  String(itemToSave.grade_level || "").trim().toLowerCase();
+  String(itemDraft.grade_level || "").trim().toLowerCase();
 
   return sameTitle && sameEdition && samePrice && sameGrade;
 });
@@ -780,14 +1690,26 @@ const sameGrade =
     const existingItem = existingItems[0];
 
     const newQuantity =
-      Number(existingItem.quantity || 0) + Number(itemToSave.quantity || 1);
+      Number(existingItem.quantity || 0) + Number(itemDraft.quantity || 1);
+
+    const duplicateUpdates = {
+      quantity: newQuantity,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (
+      (existingItem.weight_ounces === null ||
+        existingItem.weight_ounces === undefined) &&
+      itemDraft.weight_ounces !== null
+    ) {
+      duplicateUpdates.weight_ounces = itemDraft.weight_ounces;
+    }
+
+    setAnalysisStatus("Updating quantity...");
 
     const { error: updateError } = await supabase
       .from("items")
-      .update({
-        quantity: newQuantity,
-        updated_at: new Date().toISOString(),
-      })
+      .update(duplicateUpdates)
       .eq("id", existingItem.id);
 
     if (updateError) {
@@ -832,6 +1754,50 @@ try {
 
     alert("Existing item found. Quantity updated!");
 } else {
+  setAnalysisStatus("Saving new item...");
+
+  const optionRefreshPromise = Promise.all([
+    saveOptionIfNew("curriculum_options", bookData.curriculum),
+    saveOptionIfNew("category_options", bookData.category),
+  ])
+    .then(() => loadOptionLists())
+    .catch((error) => {
+      console.error("Option refresh failed:", error);
+    });
+
+  const uploadCover = async () => {
+    if (!coverFile) return "";
+
+    const fileExt = coverFile.type?.split("/")[1] || "jpg";
+    const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+
+    const { error: uploadError } = await supabase.storage
+      .from("book-covers")
+      .upload(fileName, coverFile, {
+        contentType: coverFile.type || "image/jpeg",
+      });
+
+    if (uploadError) {
+      throw new Error("Image upload failed: " + uploadError.message);
+    }
+
+    const { data } = supabase.storage
+      .from("book-covers")
+      .getPublicUrl(fileName);
+
+    return data.publicUrl;
+  };
+
+  const [newSku, imageUrl] = await Promise.all([generateSku(), uploadCover()]);
+
+  void optionRefreshPromise;
+
+  const itemToSave = {
+    ...itemDraft,
+    sku: newSku,
+    image_url: imageUrl || bookData.image_url || "",
+  };
+
   const squareResponse = await fetch(
     "https://ilhrc-intake-app.onrender.com/create-square-item",
     {
@@ -881,11 +1847,11 @@ try {
   setCoverPhoto(null);
   setCoverFile(null);
   setIsbnPhoto(null);
-  setIsbnFile(null);
 
   } catch (error) {
     alert("Save failed: " + error.message);
   } finally {
+    setAnalysisStatus("");
     setIsSaving(false);
   }
 } 
@@ -1121,11 +2087,13 @@ async function updateItem() {
       edition: editData.edition || "",
       isbn: editData.isbn || "",
       category: editData.category || "",
+      location: cleanLocationName(editData.location),
       final_price:
         editData.final_price === "" || editData.final_price === null
           ? null
           : Number(editData.final_price),
       quantity: Number(editData.quantity || 0),
+      weight_ounces: cleanWeightOunces(editData.weight_ounces),
       status: editData.status || "Available",
       notes: editData.notes || "",
       sku: editData.sku || "",
@@ -1246,30 +2214,56 @@ function generateLabels(itemsToPrint) {
   pdf.save("ILHRC-labels.pdf");
 }
 
-const labelLocationOptions = [
-  ...new Set(
-    items
-      .map((item) => item.location)
-      .filter(Boolean)
-      .sort()
-  ),
-];
+const activeLocationNames = getActiveLocationNames();
+const labelLocationOptions = buildLocationList([
+  ...items.map((item) => item.location),
+  ...locationOptions.map((location) => location.name),
+]);
 
-const inventoryLocationOptions = [
-  ...new Set(
-    items
-      .map((item) => item.location)
-      .filter(Boolean)
-      .sort()
-  ),
-];
+const inventoryLocationOptions = labelLocationOptions;
+const locationUsageCounts = items.reduce((counts, item) => {
+  const normalizedName = normalizeLocationName(item.location);
+
+  if (!normalizedName) return counts;
+
+  counts[normalizedName] = (counts[normalizedName] || 0) + Number(item.quantity || 0);
+  return counts;
+}, {});
+const temporaryLocations = locationOptions.filter(
+  (location) => location.temporary === true
+);
+const permanentLocations = locationOptions.filter(
+  (location) => location.temporary !== true
+);
+const filteredManagedLocations = locationOptions.filter((location) => {
+  if (locationListFilter === "temporary") return location.temporary === true;
+  if (locationListFilter === "permanent") return location.temporary !== true;
+  if (locationListFilter === "active") return location.active !== false;
+  if (locationListFilter === "inactive") return location.active === false;
+  return true;
+});
+const selectedTemporaryLocationItemCount = items.filter(
+  (item) =>
+    selectedItemIds.includes(item.id) &&
+    item.location &&
+    isTemporaryLocationName(item.location)
+).length;
+const staleTemporaryItems = items.filter((item) => {
+  if (!item.location || !isTemporaryLocationName(item.location)) return false;
+
+  const timestamp = item.updated_at || item.created_at;
+  if (!timestamp) return false;
+
+  const ageMs = Date.now() - new Date(timestamp).getTime();
+  return ageMs > 14 * 24 * 60 * 60 * 1000;
+});
 
 const labelItems = items.filter(
   (item) =>
     item.label_printed !== true &&
     Number(item.quantity || 0) > 0 &&
-    (!labelLocationFilter ||
-      item.location === labelLocationFilter)
+    locationMatches(item.location, labelLocationFilter) &&
+    dateAddedMatches(item, labelDateFrom, labelDateTo)
 );
 
 const filteredItems = items.filter((item) => {
@@ -1297,8 +2291,12 @@ const filteredItems = items.filter((item) => {
   const matchesGrade =
     !gradeFilter || item.grade_level === gradeFilter;
 
-    const matchesLocation =
-  !locationFilter || item.location === locationFilter;
+    const matchesLocation = locationMatches(item.location, locationFilter);
+    const matchesDateAdded = dateAddedMatches(
+      item,
+      inventoryDateFrom,
+      inventoryDateTo
+    );
 
  return (
   matchesSearch &&
@@ -1306,7 +2304,8 @@ const filteredItems = items.filter((item) => {
   matchesSubject &&
   matchesCategory &&
   matchesGrade &&
-  matchesLocation
+  matchesLocation &&
+  matchesDateAdded
 );
 });
 
@@ -1454,6 +2453,89 @@ function clearCatalogFilters() {
   setLocationFilter("");
 }
 
+function renderManagedTextOptionPanel(optionType) {
+  const config = getManagedOptionConfig(optionType);
+
+  return (
+    <section className="option-panel" key={optionType}>
+      <h3>{config.label}</h3>
+
+      <label>Add {config.label}</label>
+      <input
+        value={optionAddNames[optionType]}
+        onChange={(e) =>
+          setOptionAddNames((current) => ({
+            ...current,
+            [optionType]: e.target.value,
+          }))
+        }
+      />
+
+      <button className="primary" onClick={() => addManagedTextOption(optionType)}>
+        Add
+      </button>
+
+      <label>Rename {config.label}</label>
+      <select
+        value={optionRenameSelections[optionType]}
+        onChange={(e) => {
+          setOptionRenameSelections((current) => ({
+            ...current,
+            [optionType]: e.target.value,
+          }));
+          setOptionRenameNames((current) => ({
+            ...current,
+            [optionType]: e.target.value,
+          }));
+        }}
+      >
+        <option value="">Choose option</option>
+        {config.options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+
+      <input
+        value={optionRenameNames[optionType]}
+        onChange={(e) =>
+          setOptionRenameNames((current) => ({
+            ...current,
+            [optionType]: e.target.value,
+          }))
+        }
+      />
+
+      <button className="secondary" onClick={() => renameManagedTextOption(optionType)}>
+        Rename
+      </button>
+
+      <label>Remove From Dropdown</label>
+      <select
+        value={optionDeleteSelections[optionType]}
+        onChange={(e) =>
+          setOptionDeleteSelections((current) => ({
+            ...current,
+            [optionType]: e.target.value,
+          }))
+        }
+      >
+        <option value="">Choose option</option>
+        {config.options.map((option) => (
+          <option key={option} value={option}>
+            {option}
+          </option>
+        ))}
+      </select>
+
+      <button className="secondary" onClick={() => deleteManagedTextOption(optionType)}>
+        Remove
+      </button>
+    </section>
+  );
+}
+
   return (
     <main className="app">
       <h1>IL HRC Book Intake</h1>
@@ -1492,6 +2574,18 @@ function clearCatalogFilters() {
 </button>
 
         <button
+  className={view === "options" ? "primary" : "secondary"}
+  onClick={() => {
+    setView("options");
+    cancelEditing();
+    loadItems();
+    loadOptionLists();
+  }}
+>
+  Options
+</button>
+
+        <button
   className={view === "catalog" ? "primary" : "secondary"}
 onClick={() => {
   setView("catalog");
@@ -1511,13 +2605,19 @@ onClick={() => {
 
     <div className="location-box">
       <label>Current Location</label>
-      <input
-        placeholder="Example: Box 1, Tub A, Cart 2"
+      <select
         value={currentLocation}
         onChange={(e) => setCurrentLocation(e.target.value)}
-      />
+      >
+        <option value="">Choose location</option>
+        {activeLocationNames.map((location) => (
+          <option key={location} value={location}>
+            {location}
+          </option>
+        ))}
+      </select>
       <p className="helper-text">
-        This location will be saved with each book until you change it.
+        Manage locations from Options. This selection is saved with each book until you change it.
       </p>
     </div>
 
@@ -1769,6 +2869,48 @@ onClick={() => {
                 }
               />
 
+              <label>Weight</label>
+              <div className="weight-inputs">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="lb"
+                  value={getWeightPounds(bookData.weight_ounces)}
+                  onChange={(e) =>
+                    setBookData({
+                      ...bookData,
+                      weight_ounces: combineWeightPoundsOunces(
+                        e.target.value,
+                        getWeightRemainingOunces(bookData.weight_ounces)
+                      ),
+                    })
+                  }
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="oz"
+                  value={getWeightRemainingOunces(bookData.weight_ounces)}
+                  onChange={(e) =>
+                    setBookData({
+                      ...bookData,
+                      weight_ounces: combineWeightPoundsOunces(
+                        getWeightPounds(bookData.weight_ounces),
+                        e.target.value
+                      ),
+                    })
+                  }
+                />
+              </div>
+              <p className="helper-text">
+                Optional shipping weight. AI may estimate this when it can.
+              </p>
+              {bookData.weight_note && (
+                <p className="helper-text">{bookData.weight_note}</p>
+              )}
+
               <label>Status</label>
               <select
                 value={bookData.status || "Available"}
@@ -1841,69 +2983,6 @@ onClick={() => {
   onChange={(e) => setSearchTerm(e.target.value)}
 />
 
-<div className="catalog-filters">
-  <select
-    value={curriculumFilter}
-    onChange={(e) => setCurriculumFilter(e.target.value)}
-  >
-    <option value="">All Curricula</option>
-    {catalogCurriculumOptions.map((item) => (
-      <option key={item} value={item}>
-        {item}
-      </option>
-    ))}
-  </select>
-
-  <select
-    value={subjectFilter}
-    onChange={(e) => setSubjectFilter(e.target.value)}
-  >
-    <option value="">All Subjects</option>
-    {catalogSubjectOptions.map((item) => (
-      <option key={item} value={item}>
-        {item}
-      </option>
-    ))}
-  </select>
-
-  <select
-    value={categoryFilter}
-    onChange={(e) => setCategoryFilter(e.target.value)}
-  >
-    <option value="">All Categories</option>
-    {catalogCategoryOptions.map((item) => (
-      <option key={item} value={item}>
-        {item}
-      </option>
-    ))}
-  </select>
-
-  <select
-    value={gradeFilter}
-    onChange={(e) => setGradeFilter(e.target.value)}
-  >
-    <option value="">All Grades</option>
-    {catalogGradeOptions.map((item) => (
-      <option key={item} value={item}>
-        {item}
-      </option>
-    ))}
-  </select>
-
-  <select
-    value={locationFilter}
-    onChange={(e) => setLocationFilter(e.target.value)}
-  >
-    <option value="">All Locations</option>
-    {inventoryLocationOptions.map((location) => (
-      <option key={location} value={location}>
-        {location}
-      </option>
-    ))}
-  </select>
-
-</div>
-       
           {editData && (
             <section className="card">
               <h2>Edit Item</h2>
@@ -2071,6 +3150,21 @@ onClick={() => {
                 </p>
               )}
 
+              <label>Location</label>
+              <select
+                value={editData.location || ""}
+                onChange={(e) =>
+                  setEditData({ ...editData, location: e.target.value })
+                }
+              >
+                <option value="">No location</option>
+                {getActiveLocationNames([editData.location]).map((location) => (
+                  <option key={location} value={location}>
+                    {location}
+                  </option>
+                ))}
+              </select>
+
               <label>Final Price</label>
               <input
                 type="number"
@@ -2090,6 +3184,42 @@ onClick={() => {
                   setEditData({ ...editData, quantity: e.target.value })
                 }
               />
+
+              <label>Weight</label>
+              <div className="weight-inputs">
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="lb"
+                  value={getWeightPounds(editData.weight_ounces)}
+                  onChange={(e) =>
+                    setEditData({
+                      ...editData,
+                      weight_ounces: combineWeightPoundsOunces(
+                        e.target.value,
+                        getWeightRemainingOunces(editData.weight_ounces)
+                      ),
+                    })
+                  }
+                />
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  placeholder="oz"
+                  value={getWeightRemainingOunces(editData.weight_ounces)}
+                  onChange={(e) =>
+                    setEditData({
+                      ...editData,
+                      weight_ounces: combineWeightPoundsOunces(
+                        getWeightPounds(editData.weight_ounces),
+                        e.target.value
+                      ),
+                    })
+                  }
+                />
+              </div>
 
               <label>Status</label>
               <select
@@ -2140,220 +3270,27 @@ onClick={() => {
             </section>
           )}
 
-              {(searchTerm ||
-                curriculumFilter ||
-                subjectFilter ||
-                categoryFilter ||
-                gradeFilter) && (
-                <button
-                  type="button"
-                  className="filter-reset"
-                  onClick={() => {
-                    setSearchTerm("");
-                    setCurriculumFilter("");
-                    setSubjectFilter("");
-                    setCategoryFilter("");
-                    setGradeFilter("");
-                    setLocationFilter("");
-                  }}
-                >
-                  Reset Filters
-                </button>
-              )}
-
-              <div className="selection-toolbar">
-              <span>
-                <strong>{selectedItemIds.length}</strong> selected
-              </span>
-
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => setSelectedItemIds(filteredItems.map((item) => item.id))}
-              >
-                Select visible
-              </button>
-
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => setSelectedItemIds(items.map((item) => item.id))}
-              >
-                Select all
-              </button>
-
-              <button
-                type="button"
-                className="text-button"
-                onClick={() => setSelectedItemIds([])}
-              >
-                Clear
-              </button>
-            </div>
-
-            {(searchTerm ||
-            curriculumFilter ||
-            subjectFilter ||
-            categoryFilter ||
-            gradeFilter) && (
-            <button
-              type="button"
-              className="filter-reset"
-              onClick={() => {
-                setSearchTerm("");
-                setCurriculumFilter("");
-                setSubjectFilter("");
-                setCategoryFilter("");
-                setGradeFilter("");
-                setLocationFilter("");
-              }}
-            >
-              Reset Filters
-            </button>
-          )}
-
-{selectedItemIds.length > 0 && (
- <div className="bulk-edit-bar">
-    <div className="bulk-edit-field">
-  <label>Curriculum</label>
-  <select
-    value={bulkCurriculum}
-    onChange={(e) => setBulkCurriculum(e.target.value)}
-  >
-    <option value="">No Change</option>
-    {curriculumOptions.map((option) => (
-      <option key={option} value={option}>
-        {option}
-      </option>
-    ))}
-  </select>
-</div>
-
-    <div className="bulk-edit-field">
-  <label>Subject</label>
-  <select
-    value={bulkSubject}
-    onChange={(e) => setBulkSubject(e.target.value)}
-  >
-    <option value="">No Change</option>
-    {subjectOptions.map((option) => (
-      <option key={option} value={option}>
-        {option}
-      </option>
-    ))}
-  </select>
-</div>
-
-   <div className="bulk-edit-field">
-  <label>Grade Level</label>
-  <select
-    value={bulkGrade}
-    onChange={(e) => setBulkGrade(e.target.value)}
-  >
-    <option value="">No Change</option>
-    {gradeOptions.map((option) => (
-      <option key={option} value={option}>
-        {option}
-      </option>
-    ))}
-  </select>
-</div>
-
-<div className="bulk-edit-field">
-  <label>Category</label>
-  <select
-    value={bulkCategory}
-    onChange={(e) => setBulkCategory(e.target.value)}
-  >
-    <option value="">No Change</option>
-    {categoryOptions.map((option) => (
-      <option key={option.name} value={option.name}>
-        {option.name}
-      </option>
-    ))}
-  </select>
-</div>
-
-    <div className="bulk-edit-field">
-  <label>Status</label>
-  <select
-    value={bulkStatus}
-    onChange={(e) => setBulkStatus(e.target.value)}
-  >
-    <option value="">No Change</option>
-    <option value="Available">Available</option>
-    <option value="Sold">Sold</option>
-    <option value="Hold">Hold</option>
-    <option value="Removed">Removed</option>
-  </select>
-</div>
-
-<div className="bulk-edit-field">
-  <label>Public Catalog</label>
-  <select
-    value={bulkPublicVisible}
-    onChange={(e) => setBulkPublicVisible(e.target.value)}
-  >
-    <option value="">No Change</option>
-    <option value="show">Show</option>
-    <option value="hide">Hide</option>
-  </select>
-</div>
-
-    <div className="bulk-actions">
-  <button
-    type="button"
-    className="primary"
-    onClick={applyBulkEdit}
-  >
-    Apply to Selected
-  </button>
-
- <button
-  type="button"
-  className="secondary"
-  disabled={selectedItemIds.length === 0}
-  onClick={(e) => {
-    e.preventDefault();
-
-    const itemsToPrint = items.filter((item) =>
-      selectedItemIds.includes(item.id)
-    );
-
-    if (itemsToPrint.length === 0) {
-      alert("No selected items to print.");
-      return;
-    }
-
-    generateLabels(itemsToPrint);
-  }}
->
-  Print Labels
-</button>
-
-<button
-  type="button"
-  className="bulk-delete-btn"
-  onClick={(e) => {
-    e.preventDefault();
-    bulkDeleteSelected();
-  }}
->
-  Delete
-</button>
-</div>
-  </div>
-)}
+          <div className="inventory-layout">
+            <section className="inventory-main">
+              <div className="inventory-results-header">
+                <p>{filteredItems.length} matching item(s)</p>
+              </div>
 
           {filteredItems.length === 0 && <p>No matching items found.</p>}
 
+          <div className={`inventory-grid ${isSelectionMode ? "selection-mode" : ""}`}>
           {filteredItems.map((item) => (
             <div className="inventory-item" key={item.id}>
-              <input
-                type="checkbox"
-                checked={selectedItemIds.includes(item.id)}
-                onChange={() => toggleSelectedItem(item.id)}
-              />
+              {isSelectionMode && (
+                <label className="item-select">
+                  <input
+                    type="checkbox"
+                    checked={selectedItemIds.includes(item.id)}
+                    onChange={() => toggleSelectedItem(item.id)}
+                  />
+                  Select
+                </label>
+              )}
               {item.image_url && <img src={item.image_url} alt={item.title} />}
 
               <div>
@@ -2368,7 +3305,11 @@ onClick={() => {
                 <p>
                   ${item.final_price} • Qty: {item.quantity}
                 </p>
+                {item.weight_ounces !== null && item.weight_ounces !== undefined && (
+                  <p><strong>Weight:</strong> {formatWeight(item.weight_ounces)}</p>
+                )}
                 <p>Status: {item.status}</p>
+                  <p><strong>Added:</strong> {formatDateAdded(item.created_at)}</p>
                   <p><strong>Location:</strong> {item.location || "Not set"}</p>
                   <p>
                     Public: {item.public_visible !== false ? "Yes" : "No"}
@@ -2382,6 +3323,608 @@ onClick={() => {
               </div>
             </div>
           ))}
+          </div>
+            </section>
+
+            <aside className="inventory-sidebar">
+              <h3>Filters</h3>
+
+              <label>Curriculum</label>
+              <select
+                value={curriculumFilter}
+                onChange={(e) => setCurriculumFilter(e.target.value)}
+              >
+                <option value="">All Curricula</option>
+                {catalogCurriculumOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+
+              <label>Subject</label>
+              <select
+                value={subjectFilter}
+                onChange={(e) => setSubjectFilter(e.target.value)}
+              >
+                <option value="">All Subjects</option>
+                {catalogSubjectOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+
+              <label>Category</label>
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+              >
+                <option value="">All Categories</option>
+                {catalogCategoryOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+
+              <label>Grade</label>
+              <select
+                value={gradeFilter}
+                onChange={(e) => setGradeFilter(e.target.value)}
+              >
+                <option value="">All Grades</option>
+                {catalogGradeOptions.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+
+              <label>Location</label>
+              <select
+                value={locationFilter}
+                onChange={(e) => setLocationFilter(e.target.value)}
+              >
+                <option value="">All Locations</option>
+                {inventoryLocationOptions.map((location) => (
+                  <option key={location} value={location}>
+                    {location}
+                  </option>
+                ))}
+              </select>
+
+              <label>Added From</label>
+              <input
+                type="date"
+                value={inventoryDateFrom}
+                onChange={(e) => setInventoryDateFrom(e.target.value)}
+              />
+
+              <label>Added To</label>
+              <input
+                type="date"
+                value={inventoryDateTo}
+                onChange={(e) => setInventoryDateTo(e.target.value)}
+              />
+
+              {(searchTerm ||
+                curriculumFilter ||
+                subjectFilter ||
+                categoryFilter ||
+                gradeFilter ||
+                locationFilter ||
+                inventoryDateFrom ||
+                inventoryDateTo) && (
+                <button
+                  type="button"
+                  className="filter-reset"
+                  onClick={() => {
+                    setSearchTerm("");
+                    setCurriculumFilter("");
+                    setSubjectFilter("");
+                    setCategoryFilter("");
+                    setGradeFilter("");
+                    setLocationFilter("");
+                    setInventoryDateFrom("");
+                    setInventoryDateTo("");
+                  }}
+                >
+                  Reset Filters
+                </button>
+              )}
+
+              <div className="selection-panel">
+                <button
+                  type="button"
+                  className={isSelectionMode ? "primary" : "secondary"}
+                  onClick={() => {
+                    setIsSelectionMode((current) => {
+                      if (current) {
+                        setSelectedItemIds([]);
+                      }
+                      return !current;
+                    });
+                  }}
+                >
+                  {isSelectionMode ? "Exit Selection" : "Select Items"}
+                </button>
+
+                {isSelectionMode && (
+                  <>
+                    <div className="selection-toolbar">
+                      <span>
+                        <strong>{selectedItemIds.length}</strong> selected
+                      </span>
+
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() =>
+                          setSelectedItemIds(filteredItems.map((item) => item.id))
+                        }
+                      >
+                        Select visible
+                      </button>
+
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => setSelectedItemIds(items.map((item) => item.id))}
+                      >
+                        Select all
+                      </button>
+
+                      <button
+                        type="button"
+                        className="text-button"
+                        onClick={() => setSelectedItemIds([])}
+                      >
+                        Clear
+                      </button>
+                    </div>
+
+                    {selectedItemIds.length > 0 && (
+                      <div className="bulk-edit-bar">
+                        <div className="bulk-edit-field">
+                          <label>Curriculum</label>
+                          <select
+                            value={bulkCurriculum}
+                            onChange={(e) => setBulkCurriculum(e.target.value)}
+                          >
+                            <option value="">No Change</option>
+                            {curriculumOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="bulk-edit-field">
+                          <label>Subject</label>
+                          <select
+                            value={bulkSubject}
+                            onChange={(e) => setBulkSubject(e.target.value)}
+                          >
+                            <option value="">No Change</option>
+                            {subjectOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="bulk-edit-field">
+                          <label>Grade Level</label>
+                          <select
+                            value={bulkGrade}
+                            onChange={(e) => setBulkGrade(e.target.value)}
+                          >
+                            <option value="">No Change</option>
+                            {gradeOptions.map((option) => (
+                              <option key={option} value={option}>
+                                {option}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="bulk-edit-field">
+                          <label>Category</label>
+                          <select
+                            value={bulkCategory}
+                            onChange={(e) => setBulkCategory(e.target.value)}
+                          >
+                            <option value="">No Change</option>
+                            {categoryOptions.map((option) => (
+                              <option key={option.name} value={option.name}>
+                                {option.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="bulk-edit-field">
+                          <label>Status</label>
+                          <select
+                            value={bulkStatus}
+                            onChange={(e) => setBulkStatus(e.target.value)}
+                          >
+                            <option value="">No Change</option>
+                            <option value="Available">Available</option>
+                            <option value="Sold">Sold</option>
+                            <option value="Hold">Hold</option>
+                            <option value="Removed">Removed</option>
+                          </select>
+                        </div>
+
+                        <div className="bulk-edit-field">
+                          <label>Public Catalog</label>
+                          <select
+                            value={bulkPublicVisible}
+                            onChange={(e) => setBulkPublicVisible(e.target.value)}
+                          >
+                            <option value="">No Change</option>
+                            <option value="show">Show</option>
+                            <option value="hide">Hide</option>
+                          </select>
+                        </div>
+
+                        <div className="bulk-actions">
+                          <button
+                            type="button"
+                            className="primary"
+                            onClick={applyBulkEdit}
+                          >
+                            Apply to Selected
+                          </button>
+
+                          <button
+                            type="button"
+                            className="secondary"
+                            disabled={selectedItemIds.length === 0}
+                            onClick={(e) => {
+                              e.preventDefault();
+
+                              const itemsToPrint = items.filter((item) =>
+                                selectedItemIds.includes(item.id)
+                              );
+
+                              if (itemsToPrint.length === 0) {
+                                alert("No selected items to print.");
+                                return;
+                              }
+
+                              generateLabels(itemsToPrint);
+                            }}
+                          >
+                            Print Labels
+                          </button>
+
+                          <button
+                            type="button"
+                            className="secondary"
+                            disabled={selectedTemporaryLocationItemCount === 0}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              clearTemporaryLocationsFromSelected();
+                            }}
+                          >
+                            Clear Temporary Locations
+                          </button>
+
+                          <button
+                            type="button"
+                            className="bulk-delete-btn"
+                            onClick={(e) => {
+                              e.preventDefault();
+                              bulkDeleteSelected();
+                            }}
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+            </aside>
+          </div>
+        </section>
+      )}
+
+      {view === "options" && (
+        <section className="card">
+          <h2>Options</h2>
+
+          <section className="options-section">
+            <h3>Inventory Lists</h3>
+            <div className="options-grid">
+              {renderManagedTextOptionPanel("curriculum")}
+              {renderManagedTextOptionPanel("subject")}
+              {renderManagedTextOptionPanel("grade")}
+            </div>
+          </section>
+
+          <section className="options-section">
+            <h3>Categories & Pricing</h3>
+            <div className="options-grid">
+              <section className="option-panel">
+                <h3>Add Category</h3>
+                <label>Category Name</label>
+                <input
+                  value={newCategoryName}
+                  onChange={(e) => setNewCategoryName(e.target.value)}
+                  placeholder="Example: Workbook"
+                />
+
+                <label>Default Price</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={newCategoryPrice}
+                  onChange={(e) => setNewCategoryPrice(e.target.value)}
+                  placeholder="0.00"
+                />
+
+                <button className="primary" onClick={addCategoryOption}>
+                  Add Category
+                </button>
+              </section>
+
+              <section className="option-panel">
+                <h3>Edit Category</h3>
+                <label>Category</label>
+                <select
+                  value={editCategoryName}
+                  onChange={(e) => {
+                    const category = categoryOptions.find(
+                      (item) => item.name === e.target.value
+                    );
+                    setEditCategoryName(e.target.value);
+                    setEditCategoryNewName(category?.name || "");
+                    setEditCategoryPrice(category?.default_price ?? "");
+                  }}
+                >
+                  <option value="">Choose category</option>
+                  {categoryOptions.map((category) => (
+                    <option key={category.name} value={category.name}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+
+                <label>Name</label>
+                <input
+                  value={editCategoryNewName}
+                  onChange={(e) => setEditCategoryNewName(e.target.value)}
+                />
+
+                <label>Default Price</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={editCategoryPrice}
+                  onChange={(e) => setEditCategoryPrice(e.target.value)}
+                />
+
+                <button className="primary" onClick={updateCategoryOption}>
+                  Save Category
+                </button>
+              </section>
+
+              <section className="option-panel">
+                <h3>Remove Category</h3>
+                <label>Category</label>
+                <select
+                  value={deleteCategoryName}
+                  onChange={(e) => setDeleteCategoryName(e.target.value)}
+                >
+                  <option value="">Choose category</option>
+                  {categoryOptions.map((category) => (
+                    <option key={category.name} value={category.name}>
+                      {category.name}
+                    </option>
+                  ))}
+                </select>
+
+                <button className="secondary" onClick={deleteCategoryOption}>
+                  Remove
+                </button>
+              </section>
+            </div>
+          </section>
+
+          <section className="options-section">
+            <h3>Locations</h3>
+
+          <div className="options-grid">
+            <section className="option-panel">
+              <h3>Add Location</h3>
+              <label>Location Name</label>
+              <input
+                value={newLocationName}
+                onChange={(e) => setNewLocationName(e.target.value)}
+                placeholder="Example: Cart 2"
+              />
+
+              <label className="checkbox-label">
+                <input
+                  type="checkbox"
+                  checked={newLocationTemporary}
+                  onChange={(e) => setNewLocationTemporary(e.target.checked)}
+                />
+                Temporary location
+              </label>
+
+              <button className="primary" onClick={handleAddLocation}>
+                Add Location
+              </button>
+
+              <button className="secondary" onClick={seedTemporaryLocations}>
+                Add Box 1-4
+              </button>
+            </section>
+
+            <section className="option-panel">
+              <h3>Rename Location</h3>
+              <label>Location</label>
+              <select
+                value={renameLocationId}
+                onChange={(e) => {
+                  const location = getLocationOptionById(e.target.value);
+                  setRenameLocationId(e.target.value);
+                  setRenameLocationName(location?.name || "");
+                }}
+              >
+                <option value="">Choose location</option>
+                {locationOptions.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+
+              <label>New Name</label>
+              <input
+                value={renameLocationName}
+                onChange={(e) => setRenameLocationName(e.target.value)}
+              />
+
+              <button className="primary" onClick={renameLocation}>
+                Rename
+              </button>
+            </section>
+
+            <section className="option-panel">
+              <h3>Deactivate Location</h3>
+              <label>Location</label>
+              <select
+                value={deactivateLocationId}
+                onChange={(e) => setDeactivateLocationId(e.target.value)}
+              >
+                <option value="">Choose location</option>
+                {locationOptions
+                  .filter((location) => location.active !== false)
+                  .map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+              </select>
+
+              <button className="secondary" onClick={deactivateLocation}>
+                Deactivate
+              </button>
+            </section>
+
+            <section className="option-panel">
+              <h3>Merge Locations</h3>
+              <label>Move Items From</label>
+              <select
+                value={mergeFromLocationId}
+                onChange={(e) => setMergeFromLocationId(e.target.value)}
+              >
+                <option value="">Choose source</option>
+                {locationOptions.map((location) => (
+                  <option key={location.id} value={location.id}>
+                    {location.name}
+                  </option>
+                ))}
+              </select>
+
+              <label>Into</label>
+              <select
+                value={mergeToLocationId}
+                onChange={(e) => setMergeToLocationId(e.target.value)}
+              >
+                <option value="">Choose target</option>
+                {locationOptions
+                  .filter((location) => location.active !== false)
+                  .map((location) => (
+                    <option key={location.id} value={location.id}>
+                      {location.name}
+                    </option>
+                  ))}
+              </select>
+
+              <button className="primary" onClick={mergeLocations}>
+                Merge
+              </button>
+            </section>
+          </div>
+
+          <section className="location-list">
+            <h3>Managed Locations</h3>
+
+            {locationOptions.length === 0 && (
+              <p>No managed locations yet. Add locations or run the Supabase backfill SQL.</p>
+            )}
+
+            {staleTemporaryItems.length > 0 && (
+              <p className="warning-text">
+                {staleTemporaryItems.length} item(s) have been in temporary locations for more than 14 days.
+              </p>
+            )}
+
+            <div className="location-tools">
+              <select
+                value={locationListFilter}
+                onChange={(e) => setLocationListFilter(e.target.value)}
+              >
+                <option value="all">All locations</option>
+                <option value="temporary">Temporary only</option>
+                <option value="permanent">Permanent only</option>
+                <option value="active">Active only</option>
+                <option value="inactive">Inactive only</option>
+              </select>
+
+              <button
+                type="button"
+                className="secondary"
+                onClick={deactivateEmptyTemporaryLocations}
+              >
+                Deactivate Empty Temporary
+              </button>
+            </div>
+
+            <div className="location-summary-grid">
+              <div className="location-summary">
+                <strong>Temporary</strong>
+                <p>{temporaryLocations.length} locations</p>
+              </div>
+              <div className="location-summary">
+                <strong>Permanent</strong>
+                <p>{permanentLocations.length} locations</p>
+              </div>
+            </div>
+
+            {filteredManagedLocations.map((location) => (
+              <div className="location-row" key={location.id}>
+                <div>
+                  <strong>{location.name}</strong>
+                  <p>
+                    {location.active === false ? "Inactive" : "Active"}
+                    {location.temporary ? " / Temporary" : ""}
+                    {" / "}
+                    {locationUsageCounts[normalizeLocationName(location.name)] || 0} copies
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => toggleLocationTemporary(location)}
+                >
+                  {location.temporary ? "Unmark Temporary" : "Mark Temporary"}
+                </button>
+              </div>
+            ))}
+          </section>
+          </section>
         </section>
       )}
 
@@ -2407,6 +3950,40 @@ onClick={() => {
     </option>
   ))}
 </select>
+
+<div className="catalog-filters">
+  <label className="date-filter-label">
+    Added From
+    <input
+      type="date"
+      value={labelDateFrom}
+      onChange={(e) => setLabelDateFrom(e.target.value)}
+    />
+  </label>
+
+  <label className="date-filter-label">
+    Added To
+    <input
+      type="date"
+      value={labelDateTo}
+      onChange={(e) => setLabelDateTo(e.target.value)}
+    />
+  </label>
+
+  {(labelLocationFilter || labelDateFrom || labelDateTo) && (
+    <button
+      type="button"
+      className="filter-reset"
+      onClick={() => {
+        setLabelLocationFilter("");
+        setLabelDateFrom("");
+        setLabelDateTo("");
+      }}
+    >
+      Reset Label Filters
+    </button>
+  )}
+</div>
 
           <button
   className="primary"
@@ -2446,6 +4023,7 @@ onClick={() => {
                 <p><strong>Price:</strong> ${item.final_price}</p>
                 <p><strong>Quantity:</strong> {item.quantity}</p>
                 <p><strong>Category:</strong> {item.category}</p>
+                <p><strong>Added:</strong> {formatDateAdded(item.created_at)}</p>
               </div>
             </div>
           ))}
@@ -2494,82 +4072,20 @@ onClick={() => {
 {!selectedCatalogItem && (
   <>
 
+<div className="catalog-layout">
+  <section className="catalog-main">
     <input
       placeholder="Search title, curriculum, subject, grade..."
       value={searchTerm}
       onChange={(e) => setSearchTerm(e.target.value)}
     />
 
-<div className="catalog-filters">
+    <div className="catalog-results-header">
+      <p>{filteredCatalogItems.length} matching item(s)</p>
+    </div>
 
-  <select
-    value={pendingCurriculumFilter}
-    onChange={(e) => setPendingCurriculumFilter(e.target.value)}
-  >
-    <option value="">All Curricula</option>
-    {catalogCurriculumOptions.map((item) => (
-      <option key={item} value={item}>
-        {item}
-      </option>
-    ))}
-  </select>
-
-  <select
-    value={pendingSubjectFilter}
-    onChange={(e) => setPendingSubjectFilter(e.target.value)}
-  >
-    <option value="">All Subjects</option>
-    {catalogSubjectOptions.map((item) => (
-      <option key={item} value={item}>
-        {item}
-      </option>
-    ))}
-  </select>
-
-  <select
-    value={pendingCategoryFilter}
-    onChange={(e) => setPendingCategoryFilter(e.target.value)}
-  >
-    <option value="">All Categories</option>
-    {catalogCategoryOptions.map((item) => (
-      <option key={item} value={item}>
-        {item}
-      </option>
-    ))}
-  </select>
-
-  <select
-    value={pendingGradeFilter}
-    onChange={(e) => setPendingGradeFilter(e.target.value)}
-  >
-    <option value="">All Grades</option>
-    {catalogGradeOptions.map((item) => (
-      <option key={item} value={item}>
-        {item}
-      </option>
-    ))}
-  </select>
-
-</div>
-
-<label>Sort By</label>
-<select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-  <option value="title">Title A-Z</option>
-  <option value="curriculum">Curriculum</option>
-  <option value="priceLow">Price Low-High</option>
-  <option value="priceHigh">Price High-Low</option>
-  <option value="newest">Newest Added</option>
-</select>
-
-<button className="primary" onClick={applyCatalogFilters}>
-  Apply Filters
-</button>
-
-<button className="secondary" onClick={clearCatalogFilters}>
-  Clear Filters
-</button>
-
-{filteredCatalogItems.map((item) => (
+    <div className="catalog-grid">
+ {filteredCatalogItems.map((item) => (
         <div className="catalog-item" key={item.id}>
           {item.image_url && <img src={item.image_url} alt={item.title} />}
 
@@ -2596,8 +4112,84 @@ onClick={() => {
           </div>
         </div>
       ))}
+    </div>
 
     {filteredCatalogItems.length === 0 && <p>No matching catalog items found.</p>}
+  </section>
+
+  <aside className="catalog-sidebar">
+    <h3>Filters</h3>
+
+    <label>Curriculum</label>
+    <select
+      value={pendingCurriculumFilter}
+      onChange={(e) => setPendingCurriculumFilter(e.target.value)}
+    >
+      <option value="">All Curricula</option>
+      {catalogCurriculumOptions.map((item) => (
+        <option key={item} value={item}>
+          {item}
+        </option>
+      ))}
+    </select>
+
+    <label>Subject</label>
+    <select
+      value={pendingSubjectFilter}
+      onChange={(e) => setPendingSubjectFilter(e.target.value)}
+    >
+      <option value="">All Subjects</option>
+      {catalogSubjectOptions.map((item) => (
+        <option key={item} value={item}>
+          {item}
+        </option>
+      ))}
+    </select>
+
+    <label>Category</label>
+    <select
+      value={pendingCategoryFilter}
+      onChange={(e) => setPendingCategoryFilter(e.target.value)}
+    >
+      <option value="">All Categories</option>
+      {catalogCategoryOptions.map((item) => (
+        <option key={item} value={item}>
+          {item}
+        </option>
+      ))}
+    </select>
+
+    <label>Grade</label>
+    <select
+      value={pendingGradeFilter}
+      onChange={(e) => setPendingGradeFilter(e.target.value)}
+    >
+      <option value="">All Grades</option>
+      {catalogGradeOptions.map((item) => (
+        <option key={item} value={item}>
+          {item}
+        </option>
+      ))}
+    </select>
+
+    <label>Sort By</label>
+    <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+      <option value="title">Title A-Z</option>
+      <option value="curriculum">Curriculum</option>
+      <option value="priceLow">Price Low-High</option>
+      <option value="priceHigh">Price High-Low</option>
+      <option value="newest">Newest Added</option>
+    </select>
+
+    <button className="primary" onClick={applyCatalogFilters}>
+      Apply Filters
+    </button>
+
+    <button className="secondary" onClick={clearCatalogFilters}>
+      Clear Filters
+    </button>
+  </aside>
+</div>
     </>
 )}
   </section>

@@ -367,8 +367,6 @@ app.post("/archive-square-item", async (req, res) => {
 });
 
 app.post("/unarchive-square-item", async (req, res) => {
-  console.log("UNARCHIVE ROUTE HIT");
-  console.log(req.body);
   try {
     const { square_item_id } = req.body;
 
@@ -379,19 +377,55 @@ app.post("/unarchive-square-item", async (req, res) => {
       });
     }
 
-    const response = await squareClient.catalogApi.upsertCatalogObject({
-      idempotencyKey: crypto.randomUUID(),
-      object: {
-        type: "ITEM",
-        id: square_item_id,
-        presentAtAllLocations: true,
-        itemData: {},
-      },
-    });
+    const response = await fetch(
+      `${SQUARE_BASE_URL}/v2/catalog/object/${square_item_id}`,
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    const existingData = await response.json();
+
+    if (!response.ok) {
+      return res.status(response.status).json({
+        success: false,
+        error: existingData,
+      });
+    }
+
+    const itemObject = existingData.object;
+    itemObject.is_deleted = false;
+    itemObject.item_data.is_archived = false;
+
+    const updateResponse = await fetch(
+      `${SQUARE_BASE_URL}/v2/catalog/object`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          idempotency_key: `unarchive-${square_item_id}-${Date.now()}`,
+          object: itemObject,
+        }),
+      }
+    );
+
+    const updateData = await updateResponse.json();
+
+    if (!updateResponse.ok) {
+      return res.status(updateResponse.status).json({
+        success: false,
+        error: updateData,
+      });
+    }
 
     res.json({
       success: true,
-      result: response.result,
     });
   } catch (error) {
     console.error("Square unarchive failed:", error);
@@ -579,6 +613,7 @@ Return ONLY valid JSON in this exact format:
 "grade": "",
 "edition": "",
 "isbn": "",
+"weight_ounces": null,
 "confidence": 0.0,
 "notes": ""
 }
@@ -624,6 +659,8 @@ Apologia, Abeka, BJU Press, Notgrass, IEW, Saxon, Math-U-See, Master Books, The 
 * Remove spaces and dashes from ISBN values.
 
 * If no ISBN is visible, return an empty string.
+
+* Weight_ounces should be a numeric estimated shipping weight in ounces when you can make a reasonable estimate from the item type, size, format, and visible clues. Use null if there is not enough information. Do not guess wildly.
 
 * Confidence should be a number between 0.0 and 1.0 indicating overall confidence in the identification.
 
