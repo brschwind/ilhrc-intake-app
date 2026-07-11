@@ -5,6 +5,26 @@ import { supabase } from "./supabaseClient";
 import jsPDF from "jspdf";
 import JsBarcode from "jsbarcode";
 
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
+
+const PUBLIC_CATALOG_COLUMNS = [
+  "id",
+  "title",
+  "curriculum",
+  "subject",
+  "grade_level",
+  "category",
+  "edition",
+  "isbn",
+  "final_price",
+  "quantity",
+  "image_url",
+  "created_at",
+].join(",");
+
+const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "users"]);
+
 async function shrinkImageFile(file, maxSize = 1400, quality = 0.82) {
   if (!file?.type?.startsWith("image/")) return file;
 
@@ -43,10 +63,74 @@ async function shrinkImageFile(file, maxSize = 1400, quality = 0.82) {
   }
 }
 
+function getOptimizedImageUrl(url, width = 240, height = 320) {
+  if (!url) return "";
+
+  const cleanUrl = String(url).replace(/^http:\/\//i, "https://");
+
+  if (!cleanUrl.includes("/storage/v1/object/public/book-covers/")) {
+    return cleanUrl;
+  }
+
+  const [baseUrl, existingQuery = ""] = cleanUrl.split("?");
+  const renderUrl = baseUrl.replace(
+    "/storage/v1/object/public/",
+    "/storage/v1/render/image/public/"
+  );
+  const params = new URLSearchParams(existingQuery);
+
+  params.set("width", String(width));
+  params.set("height", String(height));
+  params.set("resize", "contain");
+  params.set("quality", "72");
+
+  return `${renderUrl}?${params.toString()}`;
+}
+
+function BookCoverImage({
+  src,
+  alt,
+  className = "",
+  width = 240,
+  height = 320,
+  eager = false,
+}) {
+  if (!src) return null;
+
+  return (
+    <img
+      src={getOptimizedImageUrl(src, width, height)}
+      alt={alt || "Book cover"}
+      className={className}
+      loading={eager ? "eager" : "lazy"}
+      decoding="async"
+      fetchPriority={eager ? "high" : "low"}
+    />
+  );
+}
+
 export default function App() {
-  const [view, setView] = useState("add");
+  const [view, setView] = useState(() => {
+    const hashView = window.location.hash.replace("#", "");
+    return hashView === "catalog" ? "catalog" : "add";
+  });
   const [items, setItems] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
+  const [authLoading, setAuthLoading] = useState(true);
+  const [session, setSession] = useState(null);
+  const [profile, setProfile] = useState(null);
+  const [authMessage, setAuthMessage] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [userManagementMessage, setUserManagementMessage] = useState("");
+  const [inviteForm, setInviteForm] = useState({
+    email: "",
+    full_name: "",
+    role: "team",
+  });
 
   const coverInputRef = useRef(null);
   const isbnInputRef = useRef(null);
@@ -84,10 +168,6 @@ export default function App() {
   const [editCoverPreview, setEditCoverPreview] = useState(null);
 
   const [analysisStatus, setAnalysisStatus] = useState("");
-        useEffect(() => {
-        loadItems();
-        loadOptionLists();
-      }, []);
 
   const [curriculumOptions, setCurriculumOptions] = useState([]);
   const [subjectOptions, setSubjectOptions] = useState([]);
@@ -149,14 +229,281 @@ export default function App() {
   const [editCategoryPrice, setEditCategoryPrice] = useState("");
   const [deleteCategoryName, setDeleteCategoryName] = useState("");
 
+  const isAuthenticated = Boolean(session && profile?.is_active !== false);
+  const isAdmin = profile?.role === "admin";
+  const isInternalView = INTERNAL_VIEWS.has(view);
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function initializeAuth() {
+      const { data } = await supabase.auth.getSession();
+
+      if (!mounted) return;
+
+      setSession(data.session || null);
+
+      if (data.session) {
+        await refreshProfile(data.session);
+      } else {
+        setProfile(null);
+      }
+
+      setAuthLoading(false);
+    }
+
+    initializeAuth();
+
+    const { data: listener } = supabase.auth.onAuthStateChange(
+      async (_event, nextSession) => {
+        setSession(nextSession);
+
+        if (nextSession) {
+          await refreshProfile(nextSession);
+          if (view === "catalog") setView("add");
+        } else {
+          setProfile(null);
+          if (INTERNAL_VIEWS.has(view)) setView("catalog");
+        }
+      }
+    );
+
+    return () => {
+      mounted = false;
+      listener.subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    window.location.hash = view === "catalog" ? "catalog" : "";
+  }, [view]);
+
+  useEffect(() => {
+    if (authLoading) return;
+
+    if (isInternalView && !isAuthenticated) {
+      setView("catalog");
+      setAuthMessage("Please sign in to use internal tools.");
+      return;
+    }
+
+    if (view === "users" && !isAdmin) {
+      setView("inventory");
+      setAuthMessage("Admin access is required for user management.");
+    }
+  }, [authLoading, isAuthenticated, isAdmin, isInternalView, view]);
+
+  useEffect(() => {
+    if (authLoading) return;
+    loadItems();
+    loadOptionLists();
+  }, [authLoading, isAuthenticated]);
+
+  useEffect(() => {
+    if (view === "users" && isAdmin) {
+      loadUsers();
+      loadAuditLogs();
+    }
+  }, [view, isAdmin]);
+
+  async function refreshProfile(nextSession = session) {
+    if (!nextSession) {
+      setProfile(null);
+      return null;
+    }
+
+    const response = await fetch(`${API_BASE_URL}/auth/me`, {
+      headers: {
+        Authorization: `Bearer ${nextSession.access_token}`,
+      },
+    });
+
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setProfile(null);
+      setAuthMessage(data.error || "Your session has expired. Please sign in again.");
+      await supabase.auth.signOut();
+      return null;
+    }
+
+    setProfile(data.profile);
+    setAuthMessage("");
+    return data.profile;
+  }
+
+  async function authFetch(path, options = {}) {
+    const { data } = await supabase.auth.getSession();
+    const accessToken = data.session?.access_token;
+
+    if (!accessToken) {
+      throw new Error("Please sign in to continue.");
+    }
+
+    const headers = {
+      ...(options.body instanceof FormData ? {} : { "Content-Type": "application/json" }),
+      ...(options.headers || {}),
+      Authorization: `Bearer ${accessToken}`,
+    };
+
+    return fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers,
+    });
+  }
+
+  async function logAudit(action, entityType, entityId, details = {}) {
+    if (!isAuthenticated) return;
+
+    const safeDetails = { ...details };
+    delete safeDetails.password;
+    delete safeDetails.token;
+    delete safeDetails.access_token;
+
+    await supabase.from("audit_logs").insert([
+      {
+        user_id: profile?.id || null,
+        action,
+        entity_type: entityType,
+        entity_id: entityId ? String(entityId) : null,
+        details: safeDetails,
+      },
+    ]);
+  }
+
+  async function handleLogin(event) {
+    event.preventDefault();
+    setLoginLoading(true);
+    setAuthMessage("");
+
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email: loginEmail.trim(),
+      password: loginPassword,
+    });
+
+    if (error) {
+      setAuthMessage("Invalid email or password.");
+      setLoginLoading(false);
+      return;
+    }
+
+    const nextProfile = await refreshProfile(data.session);
+    setLoginLoading(false);
+
+    if (nextProfile?.is_active === false) {
+      setAuthMessage("This account is inactive. Please contact an Admin.");
+      await supabase.auth.signOut();
+      return;
+    }
+
+    setLoginPassword("");
+    setView("add");
+  }
+
+  async function handleLogout() {
+    await supabase.auth.signOut();
+    setSession(null);
+    setProfile(null);
+    setView("catalog");
+  }
+
+  async function loadUsers() {
+    const response = await authFetch("/admin/users");
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setUserManagementMessage(data.error || "Could not load users.");
+      return;
+    }
+
+    setUsers(data.users || []);
+  }
+
+  async function loadAuditLogs() {
+    const response = await authFetch("/admin/audit-logs");
+    const data = await response.json().catch(() => ({}));
+
+    if (response.ok) {
+      setAuditLogs(data.audit_logs || []);
+    }
+  }
+
+  async function inviteUser(event) {
+    event.preventDefault();
+    setUserManagementMessage("");
+
+    const response = await authFetch("/admin/users/invite", {
+      method: "POST",
+      body: JSON.stringify(inviteForm),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setUserManagementMessage(data.error || "Failed invitation.");
+      return;
+    }
+
+    setInviteForm({ email: "", full_name: "", role: "team" });
+    setUserManagementMessage("Invitation sent.");
+    loadUsers();
+    loadAuditLogs();
+  }
+
+  async function updateUserProfile(user, updates) {
+    const action =
+      updates.role && updates.role !== user.role
+        ? `Change ${user.email} to ${updates.role}?`
+        : updates.is_active === false
+          ? `Deactivate ${user.email}?`
+          : updates.is_active === true
+            ? `Reactivate ${user.email}?`
+            : `Update ${user.email}?`;
+
+    if (!confirm(action)) return;
+
+    if (user.id === profile?.id && updates.is_active === false) {
+      const selfConfirmed = confirm(
+        "This is your current account. Deactivating it will sign you out and block internal access. Continue?"
+      );
+
+      if (!selfConfirmed) return;
+    }
+
+    const response = await authFetch(`/admin/users/${user.id}`, {
+      method: "PATCH",
+      body: JSON.stringify(updates),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      setUserManagementMessage(data.error || "User update failed.");
+      return;
+    }
+
+    setUserManagementMessage("User updated.");
+    setUsers((current) =>
+      current.map((currentUser) =>
+        currentUser.id === data.user.id ? data.user : currentUser
+      )
+    );
+    loadAuditLogs();
+  }
+
   async function loadItems() {
+    const tableName = isAuthenticated ? "items" : "public_catalog_items";
+    const columns = isAuthenticated ? "*" : PUBLIC_CATALOG_COLUMNS;
+
     const { data, error } = await supabase
-      .from("items")
-      .select("*")
+      .from(tableName)
+      .select(columns)
       .order("created_at", { ascending: false });
 
     if (error) {
-      alert("Could not load inventory: " + error.message);
+      alert(
+        isAuthenticated
+          ? "Could not load inventory: " + error.message
+          : "Could not load the public catalog."
+      );
       return;
     }
 
@@ -182,17 +529,12 @@ async function loadOptionLists() {
 
     const { data: categories } = await supabase
       .from("category_options")
-      .select("*")
+      .select(isAuthenticated ? "*" : "name")
       .order("name");
 
-    const { data: locations, error: locationsError } = await supabase
-      .from("location_options")
-      .select("*")
-      .order("name");
-
-    if (locationsError) {
-      console.warn("Could not load location options:", locationsError.message);
-    }
+    const { data: locations } = isAuthenticated
+      ? await supabase.from("location_options").select("*").order("name")
+      : { data: [], error: null };
 
   setCurriculumOptions(curricula?.map((x) => x.name) || []);
   setSubjectOptions(subjects?.map((x) => x.name) || []);
@@ -891,8 +1233,9 @@ function toggleSelectedItem(id) {
 async function bulkDeleteSelected() {
   if (selectedItemIds.length === 0) return;
 
+  const actionLabel = isAdmin ? "Delete" : "Remove";
   const confirmed = window.confirm(
-    `Delete ${selectedItemIds.length} selected item(s)? This will also archive them in Square.`
+    `${actionLabel} ${selectedItemIds.length} selected item(s)? This will also archive them in Square.`
   );
 
   if (!confirmed) return;
@@ -906,8 +1249,8 @@ async function bulkDeleteSelected() {
       const squareItemId = item.square_item_id;
 
       if (squareItemId) {
-        const archiveRes = await fetch(
-          "https://ilhrc-intake-app.onrender.com/archive-square-item",
+        const archiveRes = await authFetch(
+          "/archive-square-item",
           {
             method: "POST",
             headers: {
@@ -930,20 +1273,56 @@ async function bulkDeleteSelected() {
       }
     }
 
-    const { error } = await supabase
-      .from("items")
-      .delete()
-      .in("id", selectedItemIds);
+    if (isAdmin) {
+      const { error } = await supabase
+        .from("items")
+        .delete()
+        .in("id", selectedItemIds);
 
-    if (error) throw error;
+      if (error) throw error;
 
-    setItems((prev) =>
-      prev.filter((item) => !selectedItemIds.includes(item.id))
-    );
+      setItems((prev) =>
+        prev.filter((item) => !selectedItemIds.includes(item.id))
+      );
+
+      await logAudit("inventory_bulk_delete", "items", null, {
+        count: selectedItemIds.length,
+        item_ids: selectedItemIds,
+      });
+    } else {
+      const removedAt = new Date().toISOString();
+      const { error } = await supabase
+        .from("items")
+        .update({
+          status: "Removed",
+          public_visible: false,
+          updated_at: removedAt,
+        })
+        .in("id", selectedItemIds);
+
+      if (error) throw error;
+
+      setItems((prev) =>
+        prev.map((item) =>
+          selectedItemIds.includes(item.id)
+            ? { ...item, status: "Removed", public_visible: false, updated_at: removedAt }
+            : item
+        )
+      );
+
+      await logAudit("inventory_bulk_removed", "items", null, {
+        count: selectedItemIds.length,
+        item_ids: selectedItemIds,
+      });
+    }
 
     setSelectedItemIds([]);
 
-    alert("Selected items archived in Square and deleted.");
+    alert(
+      isAdmin
+        ? "Selected items archived in Square and deleted."
+        : "Selected items archived in Square and marked Removed."
+    );
   } catch (err) {
   console.error("Bulk delete failed full error:", err);
 
@@ -992,8 +1371,8 @@ async function applyBulkEdit() {
 
       for (const item of selectedItems) {
         if (item.square_item_id) {
-          const archiveResponse = await fetch(
-            "https://ilhrc-intake-app.onrender.com/archive-square-item",
+          const archiveResponse = await authFetch(
+            "/archive-square-item",
             {
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -1023,6 +1402,12 @@ async function applyBulkEdit() {
       .in("id", selectedItemIds);
 
     if (error) throw error;
+
+    await logAudit("inventory_bulk_update", "items", null, {
+      count: selectedItemIds.length,
+      item_ids: selectedItemIds,
+      fields: Object.keys(updates),
+    });
 
     alert(`Updated ${selectedItemIds.length} items.`);
 
@@ -1381,7 +1766,7 @@ async function analyzePhotoWithFile(file) {
 
     setAnalysisStatus("Sending image to AI server...");
 
-    const response = await fetch("https://ilhrc-intake-app.onrender.com/analyze-book", {
+    const response = await authFetch("/analyze-book", {
       method: "POST",
       body: formData,
     });
@@ -1741,8 +2126,8 @@ const sameGrade =
     }
 
 if (existingItem.square_variation_id) {
-  const squareInventoryResponse = await fetch(
-    "https://ilhrc-intake-app.onrender.com/update-square-inventory",
+  const squareInventoryResponse = await authFetch(
+    "/update-square-inventory",
     {
       method: "POST",
       headers: {
@@ -1774,6 +2159,11 @@ try {
     return;
   }
 }
+
+    await logAudit("inventory_quantity_updated", "item", existingItem.id, {
+      title: existingItem.title,
+      quantity: newQuantity,
+    });
 
     alert("Existing item found. Quantity updated!");
 } else {
@@ -1821,8 +2211,8 @@ try {
     image_url: imageUrl || bookData.image_url || "",
   };
 
-  const squareResponse = await fetch(
-    "https://ilhrc-intake-app.onrender.com/create-square-item",
+  const squareResponse = await authFetch(
+    "/create-square-item",
     {
       method: "POST",
       headers: {
@@ -1863,6 +2253,11 @@ try {
     return;
   }
 
+  await logAudit("inventory_item_created", "item", itemWithSquareIds.sku, {
+    title: itemWithSquareIds.title,
+    sku: itemWithSquareIds.sku,
+  });
+
   alert("New item saved!");
 }
 
@@ -1902,14 +2297,16 @@ async function deleteItem() {
   }
 
   const confirmed = confirm(
-    `Delete "${editingItem.title}" from inventory? This cannot be undone.`
+    isAdmin
+      ? `Delete "${editingItem.title}" from inventory? This cannot be undone.`
+      : `Remove "${editingItem.title}" from active inventory? This will archive it in Square and keep the record.`
   );
 
   if (!confirmed) return;
 
   if (editingItem.square_item_id) {
-  const squareResponse = await fetch(
-    "https://ilhrc-intake-app.onrender.com/archive-square-item",
+  const squareResponse = await authFetch(
+    "/archive-square-item",
     {
       method: "POST",
       headers: {
@@ -1932,25 +2329,53 @@ async function deleteItem() {
   }
 }
 
-  const { data, error } = await supabase
-    .from("items")
-    .delete()
-    .eq("id", editingItem.id)
-    .select();
+  if (isAdmin) {
+    const { data, error } = await supabase
+      .from("items")
+      .delete()
+      .eq("id", editingItem.id)
+      .select();
 
-  if (error) {
-    alert("Delete failed: " + error.message);
-    return;
+    if (error) {
+      alert("Delete failed: " + error.message);
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      alert(
+        "Delete did not remove anything. This is usually a Supabase Row Level Security policy issue."
+      );
+      return;
+    }
+
+    alert("Item deleted!");
+
+    await logAudit("inventory_item_deleted", "item", editingItem.id, {
+      title: editingItem.title,
+      square_item_id: editingItem.square_item_id || null,
+    });
+  } else {
+    const { error } = await supabase
+      .from("items")
+      .update({
+        status: "Removed",
+        public_visible: false,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", editingItem.id);
+
+    if (error) {
+      alert("Remove failed: " + error.message);
+      return;
+    }
+
+    alert("Item marked Removed!");
+
+    await logAudit("inventory_item_removed", "item", editingItem.id, {
+      title: editingItem.title,
+      square_item_id: editingItem.square_item_id || null,
+    });
   }
-
-  if (!data || data.length === 0) {
-    alert(
-      "Delete did not remove anything. This is usually a Supabase Row Level Security policy issue."
-    );
-    return;
-  }
-
-  alert("Item deleted!");
 
   setEditingItem(null);
   setEditData(null);
@@ -2002,8 +2427,8 @@ async function updateItem() {
 
   // If restoring, create a NEW Square item instead of unarchiving
   if (isRestoringToAvailable) {
-    const squareResponse = await fetch(
-      "https://ilhrc-intake-app.onrender.com/create-square-item",
+    const squareResponse = await authFetch(
+      "/create-square-item",
       {
         method: "POST",
         headers: {
@@ -2039,8 +2464,8 @@ async function updateItem() {
     squareItemId &&
     squareVariationId
   ) {
-    const squareUpdateResponse = await fetch(
-      "https://ilhrc-intake-app.onrender.com/update-square-item",
+    const squareUpdateResponse = await authFetch(
+      "/update-square-item",
       {
         method: "POST",
         headers: {
@@ -2071,8 +2496,8 @@ async function updateItem() {
 
   // Archive if marked Sold/Removed or quantity is 0
   if (shouldArchive && squareItemId) {
-    const archiveResponse = await fetch(
-      "https://ilhrc-intake-app.onrender.com/archive-square-item",
+    const archiveResponse = await authFetch(
+      "/archive-square-item",
       {
         method: "POST",
         headers: {
@@ -2132,6 +2557,29 @@ async function updateItem() {
     alert("Update failed: " + error.message);
     return;
   }
+
+  await logAudit("inventory_item_updated", "item", editingItem.id, {
+    title: editData.title || "",
+    fields: [
+      "title",
+      "curriculum",
+      "subject",
+      "publisher",
+      "grade_level",
+      "edition",
+      "isbn",
+      "category",
+      "location",
+      "final_price",
+      "quantity",
+      "weight_ounces",
+      "status",
+      "notes",
+      "sku",
+      "public_visible",
+      "image_url",
+    ],
+  });
 
   alert("Item updated!");
 
@@ -2559,11 +3007,194 @@ function renderManagedTextOptionPanel(optionType) {
   );
 }
 
+function renderLoginPanel() {
+  return (
+    <section className="card auth-card">
+      <h2>Staff Sign In</h2>
+      <p>Sign in with your IL HRC team account to use intake and inventory tools.</p>
+
+      <form onSubmit={handleLogin}>
+        <label>Email</label>
+        <input
+          type="email"
+          value={loginEmail}
+          autoComplete="email"
+          onChange={(e) => setLoginEmail(e.target.value)}
+        />
+
+        <label>Password</label>
+        <input
+          type="password"
+          value={loginPassword}
+          autoComplete="current-password"
+          onChange={(e) => setLoginPassword(e.target.value)}
+        />
+
+        {authMessage && <p className="warning-text">{authMessage}</p>}
+
+        <button className="primary" type="submit" disabled={loginLoading}>
+          {loginLoading ? "Signing In..." : "Sign In"}
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function renderUserManagement() {
+  return (
+    <section className="card">
+      <h2>Team Management</h2>
+
+      {userManagementMessage && (
+        <p className="status-message">{userManagementMessage}</p>
+      )}
+
+      <form className="user-invite-form" onSubmit={inviteUser}>
+        <label>Name</label>
+        <input
+          value={inviteForm.full_name}
+          onChange={(e) =>
+            setInviteForm((current) => ({
+              ...current,
+              full_name: e.target.value,
+            }))
+          }
+          placeholder="Team member name"
+        />
+
+        <label>Email</label>
+        <input
+          type="email"
+          value={inviteForm.email}
+          onChange={(e) =>
+            setInviteForm((current) => ({
+              ...current,
+              email: e.target.value,
+            }))
+          }
+          placeholder="team@example.org"
+          required
+        />
+
+        <label>Role</label>
+        <select
+          value={inviteForm.role}
+          onChange={(e) =>
+            setInviteForm((current) => ({
+              ...current,
+              role: e.target.value,
+            }))
+          }
+        >
+          <option value="team">Team</option>
+          <option value="admin">Admin</option>
+        </select>
+
+        <button className="primary" type="submit">
+          Send Invitation
+        </button>
+      </form>
+
+      <div className="user-list">
+        {users.map((user) => (
+          <div className="user-row" key={user.id}>
+            <div>
+              <strong>{user.full_name || user.email}</strong>
+              <p>
+                {user.email} / {user.role} / {user.is_active ? "Active" : "Inactive"}
+              </p>
+              <p>Created {formatDateAdded(user.created_at)}</p>
+            </div>
+
+            <div className="user-actions">
+              <select
+                value={user.role}
+                onChange={(e) =>
+                  updateUserProfile(user, { role: e.target.value })
+                }
+              >
+                <option value="team">Team</option>
+                <option value="admin">Admin</option>
+              </select>
+
+              {user.is_active ? (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => updateUserProfile(user, { is_active: false })}
+                >
+                  Deactivate
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => updateUserProfile(user, { is_active: true })}
+                >
+                  Reactivate
+                </button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <section className="options-section">
+        <h3>Recent Security Activity</h3>
+        {auditLogs.length === 0 && <p>No audit activity yet.</p>}
+        {auditLogs.map((entry) => (
+          <div className="audit-row" key={entry.id}>
+            <strong>{entry.action}</strong>
+            <p>
+              {entry.entity_type} {entry.entity_id || ""} /{" "}
+              {formatDateAdded(entry.created_at)}
+            </p>
+          </div>
+        ))}
+      </section>
+    </section>
+  );
+}
+
   return (
     <main className="app">
       <h1>IL HRC Book Intake</h1>
 
-{view !== "catalog" && (
+      {authLoading && (
+        <section className="card">
+          <p>Checking account access...</p>
+        </section>
+      )}
+
+      {!authLoading && (
+        <div className="account-bar">
+          {isAuthenticated ? (
+            <>
+              <span>
+                {profile.full_name || profile.email} / {profile.role}
+              </span>
+              <button className="secondary" type="button" onClick={handleLogout}>
+                Log Out
+              </button>
+            </>
+          ) : (
+            <>
+              <span>Public catalog access</span>
+              <button
+                className="secondary"
+                type="button"
+                onClick={() => setAuthMessage("")}
+              >
+                Staff Sign In
+              </button>
+            </>
+          )}
+        </div>
+      )}
+
+      {!authLoading && !isAuthenticated && renderLoginPanel()}
+
+{!authLoading && isAuthenticated && (
   <div className="nav-buttons">        <button
           className={view === "add" ? "primary" : "secondary"}
           onClick={() => {
@@ -2608,6 +3239,18 @@ function renderManagedTextOptionPanel(optionType) {
   Options
 </button>
 
+        {isAdmin && (
+          <button
+            className={view === "users" ? "primary" : "secondary"}
+            onClick={() => {
+              setView("users");
+              cancelEditing();
+            }}
+          >
+            Team Management
+          </button>
+        )}
+
         <button
   className={view === "catalog" ? "primary" : "secondary"}
 onClick={() => {
@@ -2622,7 +3265,12 @@ onClick={() => {
 
       </div>
 )}
-   {view === "add" && (
+
+      {!authLoading && authMessage && isAuthenticated && (
+        <p className="warning-text">{authMessage}</p>
+      )}
+
+   {!authLoading && isAuthenticated && view === "add" && (
   <>
     <p>Use the cover photo and ISBN/barcode when available.</p>
 
@@ -2977,7 +3625,7 @@ onClick={() => {
         </>
       )}
 
-      {view === "inventory" && (
+      {!authLoading && isAuthenticated && view === "inventory" && (
         <section className="card">
           <h2>Inventory</h2>
         <div className="stats-grid">
@@ -3296,7 +3944,7 @@ onClick={() => {
             </button>
 
             <button className="danger" onClick={deleteItem}>
-              Delete Item
+              {isAdmin ? "Delete Item" : "Remove Item"}
             </button>
             </section>
           )}
@@ -3322,7 +3970,7 @@ onClick={() => {
                   Select
                 </label>
               )}
-              {item.image_url && <img src={item.image_url} alt={item.title} />}
+              <BookCoverImage src={item.image_url} alt={item.title} />
 
               <div>
                 <h3>{item.title}</h3>
@@ -3654,7 +4302,7 @@ onClick={() => {
                               bulkDeleteSelected();
                             }}
                           >
-                            Delete
+                            {isAdmin ? "Delete" : "Remove"}
                           </button>
                         </div>
                       </div>
@@ -3667,7 +4315,7 @@ onClick={() => {
         </section>
       )}
 
-      {view === "options" && (
+      {!authLoading && isAuthenticated && view === "options" && (
         <section className="card">
           <h2>Options</h2>
 
@@ -3959,7 +4607,7 @@ onClick={() => {
         </section>
       )}
 
-      {view === "labels" && (
+      {!authLoading && isAuthenticated && view === "labels" && (
         <section className="card">
           <h2>Print Labels</h2>
 
@@ -4044,9 +4692,7 @@ onClick={() => {
 
           {labelItems.map((item) => (
             <div className="inventory-item" key={item.id}>
-              {item.image_url && (
-                <img src={item.image_url} alt={item.title} />
-              )}
+              <BookCoverImage src={item.image_url} alt={item.title} />
 
               <div>
                 <h3>{item.title}</h3>
@@ -4061,7 +4707,9 @@ onClick={() => {
         </section>
       )}
 
-      {view === "catalog" && (
+      {!authLoading && isAdmin && view === "users" && renderUserManagement()}
+
+      {!authLoading && view === "catalog" && (
   <section className="card">
     <h2>Public Catalog Preview</h2>
     <p>
@@ -4077,13 +4725,14 @@ onClick={() => {
       ← Back to Catalog
     </button>
 
-    {selectedCatalogItem.image_url && (
-      <img
-        src={selectedCatalogItem.image_url}
-        alt={selectedCatalogItem.title}
-        className="catalog-detail-image"
-      />
-    )}
+    <BookCoverImage
+      src={selectedCatalogItem.image_url}
+      alt={selectedCatalogItem.title}
+      className="catalog-detail-image"
+      width={520}
+      height={700}
+      eager
+    />
 
     <h2>{selectedCatalogItem.title}</h2>
 
@@ -4118,7 +4767,7 @@ onClick={() => {
     <div className="catalog-grid">
  {filteredCatalogItems.map((item) => (
         <div className="catalog-item" key={item.id}>
-          {item.image_url && <img src={item.image_url} alt={item.title} />}
+          <BookCoverImage src={item.image_url} alt={item.title} />
 
           <div>
             <h3>{item.title}</h3>

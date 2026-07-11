@@ -6,6 +6,7 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.108.0",
     "@zxing/library": "^0.21.3",
     "canvas": "^3.2.3",
     "cors": "^2.8.5",

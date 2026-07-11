@@ -2,6 +2,7 @@ const express = require("express");
 const cors = require("cors");
 const multer = require("multer");
 const OpenAI = require("openai");
+const { createClient } = require("@supabase/supabase-js");
 require("dotenv").config();
 
 const SQUARE_BASE_URL =
@@ -10,20 +11,320 @@ const SQUARE_BASE_URL =
     : "https://connect.squareupsandbox.com";
 
 const app = express();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 8 * 1024 * 1024,
+    files: 3,
+  },
+});
 
-app.use(cors());
-app.use(express.json());
+const allowedOrigins = (process.env.ALLOWED_ORIGINS || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const localOrigins = ["http://localhost:5173", "http://127.0.0.1:5173"];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || localOrigins.includes(origin) || allowedOrigins.includes(origin)) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("Origin not allowed."));
+    },
+  })
+);
+app.use(express.json({ limit: "1mb" }));
+
+const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const supabaseAnonKey =
+  process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+const supabaseAuth =
+  supabaseUrl && supabaseAnonKey
+    ? createClient(supabaseUrl, supabaseAnonKey, {
+        auth: { persistSession: false },
+      })
+    : null;
+
+const supabaseAdmin =
+  supabaseUrl && supabaseServiceRoleKey
+    ? createClient(supabaseUrl, supabaseServiceRoleKey, {
+        auth: { persistSession: false },
+      })
+    : null;
 
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
+function sendSafeError(res, status, message) {
+  res.status(status).json({
+    success: false,
+    error: message,
+  });
+}
+
+async function loadProfile(userId) {
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .select("id,email,full_name,role,is_active,created_at,updated_at")
+    .eq("id", userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  return data;
+}
+
+async function requireAuth(req, res, next) {
+  try {
+    if (!supabaseAuth || !supabaseAdmin) {
+      sendSafeError(res, 500, "Authentication is not configured.");
+      return;
+    }
+
+    const authHeader = req.get("authorization") || "";
+    const match = authHeader.match(/^Bearer\s+(.+)$/i);
+
+    if (!match) {
+      sendSafeError(res, 401, "Sign in to continue.");
+      return;
+    }
+
+    const { data, error } = await supabaseAuth.auth.getUser(match[1]);
+
+    if (error || !data?.user) {
+      sendSafeError(res, 401, "Your session is no longer valid.");
+      return;
+    }
+
+    const profile = await loadProfile(data.user.id);
+
+    if (!profile || profile.is_active === false) {
+      sendSafeError(res, 403, "This account is inactive.");
+      return;
+    }
+
+    req.user = data.user;
+    req.profile = profile;
+    next();
+  } catch (error) {
+    console.error("Authentication failed:", error.message);
+    sendSafeError(res, 500, "Could not verify account access.");
+  }
+}
+
+function requireAdmin(req, res, next) {
+  if (req.profile?.role !== "admin") {
+    sendSafeError(res, 403, "Admin access is required.");
+    return;
+  }
+
+  next();
+}
+
+async function writeAudit(req, action, entityType, entityId, details = {}) {
+  if (!supabaseAdmin) return;
+
+  const safeDetails = { ...details };
+  delete safeDetails.password;
+  delete safeDetails.token;
+  delete safeDetails.access_token;
+
+  await supabaseAdmin.from("audit_logs").insert([
+    {
+      user_id: req.user?.id || null,
+      action,
+      entity_type: entityType,
+      entity_id: entityId ? String(entityId) : null,
+      details: safeDetails,
+    },
+  ]);
+}
+
+function sanitizeProfile(profile) {
+  return {
+    id: profile.id,
+    email: profile.email,
+    full_name: profile.full_name,
+    role: profile.role,
+    is_active: profile.is_active,
+    created_at: profile.created_at,
+    updated_at: profile.updated_at,
+  };
+}
+
 app.get("/", (req, res) => {
   res.send("IL HRC AI Vision Server Running");
 });
 
-app.get("/test-square", async (req, res) => {
+app.get("/auth/me", requireAuth, async (req, res) => {
+  res.json({
+    user: {
+      id: req.user.id,
+      email: req.user.email,
+    },
+    profile: sanitizeProfile(req.profile),
+  });
+});
+
+app.get("/admin/users", requireAuth, requireAdmin, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .select("id,email,full_name,role,is_active,created_at,updated_at")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    sendSafeError(res, 500, "Could not load users.");
+    return;
+  }
+
+  res.json({ users: data || [] });
+});
+
+app.post("/admin/users/invite", requireAuth, requireAdmin, async (req, res) => {
+  const email = String(req.body.email || "").trim().toLowerCase();
+  const fullName = String(req.body.full_name || "").trim();
+  const role = req.body.role === "admin" ? "admin" : "team";
+
+  if (!email || !email.includes("@")) {
+    sendSafeError(res, 400, "Enter a valid email address.");
+    return;
+  }
+
+  const redirectTo = process.env.SUPABASE_INVITE_REDIRECT_URL;
+  const { data, error } = await supabaseAdmin.auth.admin.inviteUserByEmail(
+    email,
+    redirectTo ? { redirectTo } : undefined
+  );
+
+  if (error || !data?.user) {
+    sendSafeError(res, 400, "Could not send the invitation.");
+    return;
+  }
+
+  const { error: profileError } = await supabaseAdmin.from("profiles").upsert({
+    id: data.user.id,
+    email,
+    full_name: fullName || null,
+    role,
+    is_active: true,
+    updated_at: new Date().toISOString(),
+  });
+
+  if (profileError) {
+    sendSafeError(res, 500, "Invitation was sent, but the profile could not be saved.");
+    return;
+  }
+
+  await writeAudit(req, "user_invited", "profile", data.user.id, {
+    email,
+    role,
+  });
+
+  res.json({ success: true });
+});
+
+app.patch("/admin/users/:id", requireAuth, requireAdmin, async (req, res) => {
+  const targetId = req.params.id;
+  const updates = {};
+
+  if (Object.prototype.hasOwnProperty.call(req.body, "full_name")) {
+    updates.full_name = String(req.body.full_name || "").trim() || null;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body, "role")) {
+    if (!["admin", "team"].includes(req.body.role)) {
+      sendSafeError(res, 400, "Choose either Admin or Team.");
+      return;
+    }
+
+    updates.role = req.body.role;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(req.body, "is_active")) {
+    updates.is_active = req.body.is_active === true;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    sendSafeError(res, 400, "No user changes were provided.");
+    return;
+  }
+
+  const { data: current, error: currentError } = await supabaseAdmin
+    .from("profiles")
+    .select("id,role,is_active")
+    .eq("id", targetId)
+    .maybeSingle();
+
+  if (currentError || !current) {
+    sendSafeError(res, 404, "User not found.");
+    return;
+  }
+
+  const wouldRemoveActiveAdmin =
+    current.role === "admin" &&
+    current.is_active !== false &&
+    (updates.role === "team" || updates.is_active === false);
+
+  if (wouldRemoveActiveAdmin) {
+    const { count, error: countError } = await supabaseAdmin
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .eq("role", "admin")
+      .eq("is_active", true);
+
+    if (countError) {
+      sendSafeError(res, 500, "Could not verify active admins.");
+      return;
+    }
+
+    if ((count || 0) <= 1) {
+      sendSafeError(res, 400, "At least one active Admin must remain.");
+      return;
+    }
+  }
+
+  updates.updated_at = new Date().toISOString();
+
+  const { data, error } = await supabaseAdmin
+    .from("profiles")
+    .update(updates)
+    .eq("id", targetId)
+    .select("id,email,full_name,role,is_active,created_at,updated_at")
+    .single();
+
+  if (error) {
+    sendSafeError(res, 500, "Could not update the user.");
+    return;
+  }
+
+  await writeAudit(req, "user_updated", "profile", targetId, updates);
+
+  res.json({ user: data });
+});
+
+app.get("/admin/audit-logs", requireAuth, requireAdmin, async (req, res) => {
+  const { data, error } = await supabaseAdmin
+    .from("audit_logs")
+    .select("id,user_id,action,entity_type,entity_id,details,created_at")
+    .order("created_at", { ascending: false })
+    .limit(100);
+
+  if (error) {
+    sendSafeError(res, 500, "Could not load audit logs.");
+    return;
+  }
+
+  res.json({ audit_logs: data || [] });
+});
+
+app.get("/test-square", requireAuth, requireAdmin, async (req, res) => {
   try {
     const response = await fetch(`${SQUARE_BASE_URL}/v2/locations`, {
       headers: {
@@ -50,7 +351,7 @@ app.get("/test-square", async (req, res) => {
   }
 });
 
-app.get("/test-square-item", async (req, res) => {
+app.get("/test-square-item", requireAuth, requireAdmin, async (req, res) => {
   try {
     const response = await fetch(
       `${SQUARE_BASE_URL}/v2/catalog/object`,
@@ -108,7 +409,7 @@ app.get("/test-square-item", async (req, res) => {
   }
 });
 
-app.post("/update-square-inventory", async (req, res) => {
+app.post("/update-square-inventory", requireAuth, async (req, res) => {
   try {
     const { square_variation_id, quantity } = req.body;
 
@@ -154,6 +455,10 @@ app.post("/update-square-inventory", async (req, res) => {
       });
     }
 
+    await writeAudit(req, "square_inventory_synced", "square_variation", square_variation_id, {
+      quantity,
+    });
+
     res.json({
       success: true,
       square_inventory_synced: true,
@@ -167,7 +472,7 @@ app.post("/update-square-inventory", async (req, res) => {
   }
 });
 
-app.post("/update-square-item", async (req, res) => {
+app.post("/update-square-item", requireAuth, async (req, res) => {
   try {
     const {
       square_item_id,
@@ -284,6 +589,11 @@ app.post("/update-square-item", async (req, res) => {
       }
     }
 
+    await writeAudit(req, "square_item_updated", "square_item", square_item_id, {
+      square_variation_id,
+      quantity,
+    });
+
     res.json({
       success: true,
       square_item_updated: true,
@@ -296,7 +606,7 @@ app.post("/update-square-item", async (req, res) => {
   }
 });
 
-app.post("/archive-square-item", async (req, res) => {
+app.post("/archive-square-item", requireAuth, async (req, res) => {
   try {
     const { square_item_id } = req.body;
 
@@ -366,7 +676,7 @@ app.post("/archive-square-item", async (req, res) => {
   }
 });
 
-app.post("/unarchive-square-item", async (req, res) => {
+app.post("/unarchive-square-item", requireAuth, async (req, res) => {
   try {
     const { square_item_id } = req.body;
 
@@ -437,7 +747,7 @@ app.post("/unarchive-square-item", async (req, res) => {
   }
 });
 
-app.post("/create-square-item", async (req, res) => {
+app.post("/create-square-item", requireAuth, async (req, res) => {
   try {
     const { title, sku, final_price, notes } = req.body;
 
@@ -552,7 +862,7 @@ res.json({
   }
 });
 
-app.post("/analyze-book", upload.any(), async (req, res) => {
+app.post("/analyze-book", requireAuth, upload.any(), async (req, res) => {
   try {
     const coverFile =
       req.files?.find((file) => file.fieldname === "cover") ||

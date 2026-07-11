@@ -147,6 +147,23 @@ button:disabled {
   cursor: pointer;
 }
 
+.account-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 0.84rem;
+}
+
+.account-bar button {
+  margin-top: 0;
+}
+
 .card {
   width: 100%;
   box-sizing: border-box;
@@ -714,6 +731,49 @@ button:disabled {
   text-align: center;
 }
 
+.auth-card {
+  max-width: 460px;
+}
+
+.user-invite-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.user-invite-form button {
+  margin-top: 0;
+}
+
+.user-list {
+  border-top: 1px solid var(--border);
+}
+
+.user-row,
+.audit-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.user-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 230px;
+}
+
+.user-actions select {
+  min-width: 100px;
+}
+
 @media (max-width: 850px) {
   .inventory-layout,
   .catalog-layout {
@@ -728,6 +788,20 @@ button:disabled {
 
   .bulk-edit-bar {
     grid-template-columns: 1fr;
+  }
+
+  .user-invite-form {
+    grid-template-columns: 1fr;
+  }
+
+  .user-row,
+  .audit-row {
+    display: block;
+  }
+
+  .user-actions {
+    margin-top: 8px;
+    min-width: 0;
   }
 
   .bulk-actions {
