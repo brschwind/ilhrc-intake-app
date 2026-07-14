@@ -164,6 +164,12 @@ button:disabled {
   margin-top: 0;
 }
 
+.staff-sign-in-button {
+  min-height: 30px;
+  padding: 5px 10px;
+  margin-left: auto;
+}
+
 .account-actions,
 .auth-actions {
   display: flex;

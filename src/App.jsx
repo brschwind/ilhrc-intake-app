@@ -158,6 +158,7 @@ export default function App() {
   const [changePasswordError, setChangePasswordError] = useState("");
   const [changePasswordMessage, setChangePasswordMessage] = useState("");
   const [authMessage, setAuthMessage] = useState("");
+  const [staffSignInOpen, setStaffSignInOpen] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
@@ -306,6 +307,7 @@ export default function App() {
           setProfileLoading(false);
           setPasswordSetupRequired(false);
           setPasswordSetupSaved(false);
+          setStaffSignInOpen(false);
           if (INTERNAL_VIEWS.has(view)) setView("catalog");
         }
       }
@@ -492,6 +494,7 @@ export default function App() {
     }
 
     setLoginPassword("");
+    setStaffSignInOpen(false);
     setView("add");
   }
 
@@ -504,6 +507,7 @@ export default function App() {
     setSetupPassword("");
     setSetupConfirmPassword("");
     setChangePasswordOpen(false);
+    setStaffSignInOpen(false);
     setView("catalog");
   }
 
@@ -3554,9 +3558,12 @@ function renderUserManagement() {
             <>
               <span>Public catalog access</span>
               <button
-                className="secondary"
+                className="secondary staff-sign-in-button"
                 type="button"
-                onClick={() => setAuthMessage("")}
+                onClick={() => {
+                  setStaffSignInOpen(true);
+                  setAuthMessage("");
+                }}
               >
                 Staff Sign In
               </button>
@@ -3577,6 +3584,7 @@ function renderUserManagement() {
         !shouldShowPasswordSetup &&
         !profileLoading &&
         !isAuthenticated &&
+        staffSignInOpen &&
         renderLoginPanel()}
 
       {!authLoading &&
