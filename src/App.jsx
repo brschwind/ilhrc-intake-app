@@ -119,6 +119,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
+  const [profileLoading, setProfileLoading] = useState(false);
   const [authMessage, setAuthMessage] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -229,7 +230,7 @@ export default function App() {
   const [editCategoryPrice, setEditCategoryPrice] = useState("");
   const [deleteCategoryName, setDeleteCategoryName] = useState("");
 
-  const isAuthenticated = Boolean(session && profile?.is_active !== false);
+  const isAuthenticated = Boolean(session && profile && profile.is_active !== false);
   const isAdmin = profile?.role === "admin";
   const isInternalView = INTERNAL_VIEWS.has(view);
 
@@ -260,9 +261,9 @@ export default function App() {
 
         if (nextSession) {
           await refreshProfile(nextSession);
-          if (view === "catalog") setView("add");
         } else {
           setProfile(null);
+          setProfileLoading(false);
           if (INTERNAL_VIEWS.has(view)) setView("catalog");
         }
       }
@@ -279,11 +280,13 @@ export default function App() {
   }, [view]);
 
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading || profileLoading) return;
 
     if (isInternalView && !isAuthenticated) {
       setView("catalog");
-      setAuthMessage("Please sign in to use internal tools.");
+      if (!session) {
+        setAuthMessage("Please sign in to use internal tools.");
+      }
       return;
     }
 
@@ -291,7 +294,7 @@ export default function App() {
       setView("inventory");
       setAuthMessage("Admin access is required for user management.");
     }
-  }, [authLoading, isAuthenticated, isAdmin, isInternalView, view]);
+  }, [authLoading, profileLoading, isAuthenticated, isAdmin, isInternalView, session, view]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -307,29 +310,66 @@ export default function App() {
   }, [view, isAdmin]);
 
   async function refreshProfile(nextSession = session) {
-    if (!nextSession) {
+    const accessToken = nextSession?.access_token;
+
+    if (!accessToken) {
       setProfile(null);
+      setProfileLoading(false);
+      setAuthMessage("Please sign in to use internal tools.");
       return null;
     }
 
-    const response = await fetch(`${API_BASE_URL}/auth/me`, {
-      headers: {
-        Authorization: `Bearer ${nextSession.access_token}`,
-      },
-    });
+    setProfileLoading(true);
 
-    const data = await response.json().catch(() => ({}));
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/me`, {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+      });
 
-    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+
+      if (response.status === 401) {
+        setProfile(null);
+        setAuthMessage(data.error || "Your session has expired. Please sign in again.");
+        await supabase.auth.signOut();
+        return null;
+      }
+
+      if (response.status === 403) {
+        setProfile(null);
+        setAuthMessage(
+          data.error || "This account is not active or is missing a team profile."
+        );
+        return null;
+      }
+
+      if (!response.ok) {
+        setProfile(null);
+        setAuthMessage(data.error || "Could not verify account access.");
+        return null;
+      }
+
+      if (!data.profile) {
+        setProfile(null);
+        setAuthMessage("This account is missing a team profile.");
+        return null;
+      }
+
+      setProfile(data.profile);
+      setAuthMessage("");
+
+      if (view === "catalog") setView("add");
+
+      return data.profile;
+    } catch {
       setProfile(null);
-      setAuthMessage(data.error || "Your session has expired. Please sign in again.");
-      await supabase.auth.signOut();
+      setAuthMessage("Could not reach the authentication server. Please try again.");
       return null;
+    } finally {
+      setProfileLoading(false);
     }
-
-    setProfile(data.profile);
-    setAuthMessage("");
-    return data.profile;
   }
 
   async function authFetch(path, options = {}) {
@@ -390,9 +430,13 @@ export default function App() {
     const nextProfile = await refreshProfile(data.session);
     setLoginLoading(false);
 
-    if (nextProfile?.is_active === false) {
+    if (!nextProfile) {
+      setLoginLoading(false);
+      return;
+    }
+
+    if (nextProfile.is_active === false) {
       setAuthMessage("This account is inactive. Please contact an Admin.");
-      await supabase.auth.signOut();
       return;
     }
 
@@ -3171,8 +3215,16 @@ function renderUserManagement() {
           {isAuthenticated ? (
             <>
               <span>
-                {profile.full_name || profile.email} / {profile.role}
+                {profile?.full_name || profile?.email || "Signed in"} /{" "}
+                {profile?.role || "profile loading"}
               </span>
+              <button className="secondary" type="button" onClick={handleLogout}>
+                Log Out
+              </button>
+            </>
+          ) : session ? (
+            <>
+              <span>Account access not verified</span>
               <button className="secondary" type="button" onClick={handleLogout}>
                 Log Out
               </button>
@@ -3192,7 +3244,13 @@ function renderUserManagement() {
         </div>
       )}
 
-      {!authLoading && !isAuthenticated && renderLoginPanel()}
+      {!authLoading && profileLoading && (
+        <section className="card">
+          <p>Loading account profile...</p>
+        </section>
+      )}
+
+      {!authLoading && !profileLoading && !isAuthenticated && renderLoginPanel()}
 
 {!authLoading && isAuthenticated && (
   <div className="nav-buttons">        <button

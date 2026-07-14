@@ -70,6 +70,25 @@ function sendSafeError(res, status, message) {
   });
 }
 
+function getSupabaseHostname() {
+  try {
+    return supabaseUrl ? new URL(supabaseUrl).hostname : "missing";
+  } catch {
+    return "invalid-url";
+  }
+}
+
+function logAuthDiagnostic(details) {
+  console.info("[auth diagnostic]", {
+    hasAuthorizationHeader: details.hasAuthorizationHeader,
+    hasBearerToken: details.hasBearerToken,
+    tokenLength: details.tokenLength,
+    supabaseHostname: getSupabaseHostname(),
+    authErrorMessage: details.authErrorMessage || null,
+    authErrorCode: details.authErrorCode || null,
+  });
+}
+
 async function loadProfile(userId) {
   const { data, error } = await supabaseAdmin
     .from("profiles")
@@ -90,22 +109,40 @@ async function requireAuth(req, res, next) {
 
     const authHeader = req.get("authorization") || "";
     const match = authHeader.match(/^Bearer\s+(.+)$/i);
+    const accessToken = match?.[1]?.trim() || "";
 
-    if (!match) {
+    if (!accessToken) {
+      logAuthDiagnostic({
+        hasAuthorizationHeader: Boolean(authHeader),
+        hasBearerToken: false,
+        tokenLength: 0,
+      });
       sendSafeError(res, 401, "Sign in to continue.");
       return;
     }
 
-    const { data, error } = await supabaseAuth.auth.getUser(match[1]);
+    const { data, error } = await supabaseAuth.auth.getUser(accessToken);
 
     if (error || !data?.user) {
+      logAuthDiagnostic({
+        hasAuthorizationHeader: Boolean(authHeader),
+        hasBearerToken: Boolean(accessToken),
+        tokenLength: accessToken.length,
+        authErrorMessage: error?.message,
+        authErrorCode: error?.code || error?.status,
+      });
       sendSafeError(res, 401, "Your session is no longer valid.");
       return;
     }
 
     const profile = await loadProfile(data.user.id);
 
-    if (!profile || profile.is_active === false) {
+    if (!profile) {
+      sendSafeError(res, 403, "No active account profile was found.");
+      return;
+    }
+
+    if (profile.is_active === false) {
       sendSafeError(res, 403, "This account is inactive.");
       return;
     }
