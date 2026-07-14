@@ -111,16 +111,24 @@ function BookCoverImage({
   height = 320,
   eager = false,
 }) {
+  const originalSrc = src ? String(src).replace(/^http:\/\//i, "https://") : "";
+  const optimizedSrc = getOptimizedImageUrl(src, width, height);
+
   if (!src) return null;
 
   return (
     <img
-      src={getOptimizedImageUrl(src, width, height)}
+      src={optimizedSrc}
       alt={alt || "Book cover"}
       className={className}
       loading={eager ? "eager" : "lazy"}
       decoding="async"
       fetchPriority={eager ? "high" : "low"}
+      onError={(event) => {
+        if (event.currentTarget.src !== originalSrc) {
+          event.currentTarget.src = originalSrc;
+        }
+      }}
     />
   );
 }
