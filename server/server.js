@@ -245,6 +245,26 @@ app.post("/admin/users/invite", requireAuth, requireAdmin, async (req, res) => {
     return;
   }
 
+  const existingAppMetadata = data.user.app_metadata || {};
+  const { error: metadataError } = await supabaseAdmin.auth.admin.updateUserById(
+    data.user.id,
+    {
+      app_metadata: {
+        ...existingAppMetadata,
+        password_setup_required: true,
+      },
+    }
+  );
+
+  if (metadataError) {
+    sendSafeError(
+      res,
+      500,
+      "Invitation was sent, but account setup could not be marked as required."
+    );
+    return;
+  }
+
   const { error: profileError } = await supabaseAdmin.from("profiles").upsert({
     id: data.user.id,
     email,
@@ -263,6 +283,36 @@ app.post("/admin/users/invite", requireAuth, requireAdmin, async (req, res) => {
     email,
     role,
   });
+
+  res.json({ success: true });
+});
+
+app.post("/auth/complete-password-setup", requireAuth, async (req, res) => {
+  const { data: currentUserData, error: currentUserError } =
+    await supabaseAdmin.auth.admin.getUserById(req.user.id);
+
+  if (currentUserError || !currentUserData?.user) {
+    sendSafeError(res, 500, "Password was saved, but account metadata could not be loaded.");
+    return;
+  }
+
+  const existingAppMetadata = currentUserData.user.app_metadata || {};
+  const { data, error } = await supabaseAdmin.auth.admin.updateUserById(
+    req.user.id,
+    {
+      app_metadata: {
+        ...existingAppMetadata,
+        password_setup_required: false,
+      },
+    }
+  );
+
+  if (error || !data?.user) {
+    sendSafeError(res, 500, "Password was saved, but account setup could not be completed.");
+    return;
+  }
+
+  await writeAudit(req, "password_setup_completed", "profile", req.user.id);
 
   res.json({ success: true });
 });

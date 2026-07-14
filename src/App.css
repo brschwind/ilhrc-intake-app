@@ -164,6 +164,14 @@ button:disabled {
   margin-top: 0;
 }
 
+.account-actions,
+.auth-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .card {
   width: 100%;
   box-sizing: border-box;

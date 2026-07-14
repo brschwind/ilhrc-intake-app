@@ -24,6 +24,22 @@ const PUBLIC_CATALOG_COLUMNS = [
 ].join(",");
 
 const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "users"]);
+const PASSWORD_MIN_LENGTH = 10;
+
+function getAuthUrlType() {
+  const searchParams = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return searchParams.get("type") || hashParams.get("type") || "";
+}
+
+function sessionRequiresPasswordSetup(nextSession) {
+  const appMetadata = nextSession?.user?.app_metadata || {};
+
+  if (appMetadata.password_setup_required === true) return true;
+  if (appMetadata.password_setup_required === false) return false;
+
+  return getAuthUrlType() === "invite";
+}
 
 async function shrinkImageFile(file, maxSize = 1400, quality = 0.82) {
   if (!file?.type?.startsWith("image/")) return file;
@@ -120,6 +136,19 @@ export default function App() {
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [profileLoading, setProfileLoading] = useState(false);
+  const [passwordSetupRequired, setPasswordSetupRequired] = useState(false);
+  const [setupPassword, setSetupPassword] = useState("");
+  const [setupConfirmPassword, setSetupConfirmPassword] = useState("");
+  const [passwordSetupLoading, setPasswordSetupLoading] = useState(false);
+  const [passwordSetupError, setPasswordSetupError] = useState("");
+  const [passwordSetupMessage, setPasswordSetupMessage] = useState("");
+  const [passwordSetupSaved, setPasswordSetupSaved] = useState(false);
+  const [changePasswordOpen, setChangePasswordOpen] = useState(false);
+  const [changePassword, setChangePassword] = useState("");
+  const [changeConfirmPassword, setChangeConfirmPassword] = useState("");
+  const [changePasswordLoading, setChangePasswordLoading] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState("");
+  const [changePasswordMessage, setChangePasswordMessage] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
@@ -233,6 +262,7 @@ export default function App() {
   const isAuthenticated = Boolean(session && profile && profile.is_active !== false);
   const isAdmin = profile?.role === "admin";
   const isInternalView = INTERNAL_VIEWS.has(view);
+  const shouldShowPasswordSetup = Boolean(session && passwordSetupRequired);
 
   useEffect(() => {
     let mounted = true;
@@ -243,6 +273,7 @@ export default function App() {
       if (!mounted) return;
 
       setSession(data.session || null);
+      setPasswordSetupRequired(sessionRequiresPasswordSetup(data.session));
 
       if (data.session) {
         await refreshProfile(data.session);
@@ -258,12 +289,15 @@ export default function App() {
     const { data: listener } = supabase.auth.onAuthStateChange(
       async (_event, nextSession) => {
         setSession(nextSession);
+        setPasswordSetupRequired(sessionRequiresPasswordSetup(nextSession));
 
         if (nextSession) {
           await refreshProfile(nextSession);
         } else {
           setProfile(null);
           setProfileLoading(false);
+          setPasswordSetupRequired(false);
+          setPasswordSetupSaved(false);
           if (INTERNAL_VIEWS.has(view)) setView("catalog");
         }
       }
@@ -280,7 +314,7 @@ export default function App() {
   }, [view]);
 
   useEffect(() => {
-    if (authLoading || profileLoading) return;
+    if (authLoading || profileLoading || shouldShowPasswordSetup) return;
 
     if (isInternalView && !isAuthenticated) {
       setView("catalog");
@@ -294,13 +328,22 @@ export default function App() {
       setView("inventory");
       setAuthMessage("Admin access is required for user management.");
     }
-  }, [authLoading, profileLoading, isAuthenticated, isAdmin, isInternalView, session, view]);
+  }, [
+    authLoading,
+    profileLoading,
+    shouldShowPasswordSetup,
+    isAuthenticated,
+    isAdmin,
+    isInternalView,
+    session,
+    view,
+  ]);
 
   useEffect(() => {
-    if (authLoading) return;
+    if (authLoading || shouldShowPasswordSetup) return;
     loadItems();
     loadOptionLists();
-  }, [authLoading, isAuthenticated]);
+  }, [authLoading, shouldShowPasswordSetup, isAuthenticated]);
 
   useEffect(() => {
     if (view === "users" && isAdmin) {
@@ -448,7 +491,139 @@ export default function App() {
     await supabase.auth.signOut();
     setSession(null);
     setProfile(null);
+    setPasswordSetupRequired(false);
+    setPasswordSetupSaved(false);
+    setSetupPassword("");
+    setSetupConfirmPassword("");
+    setChangePasswordOpen(false);
     setView("catalog");
+  }
+
+  function validatePasswordPair(password, confirmPassword) {
+    if (password.length < PASSWORD_MIN_LENGTH) {
+      return `Password must be at least ${PASSWORD_MIN_LENGTH} characters.`;
+    }
+
+    if (password !== confirmPassword) {
+      return "Passwords do not match.";
+    }
+
+    return "";
+  }
+
+  async function refreshSessionAndProfile() {
+    const { data: refreshData, error: refreshError } =
+      await supabase.auth.refreshSession();
+
+    if (refreshError) {
+      setAuthMessage("Password saved, but the session could not refresh. Please sign in again.");
+      await supabase.auth.signOut();
+      return null;
+    }
+
+    const nextSession = refreshData.session;
+    setSession(nextSession);
+    setPasswordSetupRequired(sessionRequiresPasswordSetup(nextSession));
+    await refreshProfile(nextSession);
+    return nextSession;
+  }
+
+  async function completePasswordSetup(event) {
+    event.preventDefault();
+    if (passwordSetupLoading) return;
+
+    setPasswordSetupError("");
+    setPasswordSetupMessage("");
+    setPasswordSetupLoading(true);
+
+    try {
+      if (!passwordSetupSaved) {
+        const validationError = validatePasswordPair(
+          setupPassword,
+          setupConfirmPassword
+        );
+
+        if (validationError) {
+          setPasswordSetupError(validationError);
+          return;
+        }
+
+        const { error: updateError } = await supabase.auth.updateUser({
+          password: setupPassword,
+        });
+
+        if (updateError) {
+          setPasswordSetupError(updateError.message || "Could not save password.");
+          return;
+        }
+
+        setSetupPassword("");
+        setSetupConfirmPassword("");
+        setPasswordSetupSaved(true);
+        setPasswordSetupMessage("Password saved. Finishing account setup...");
+      }
+
+      const response = await authFetch("/auth/complete-password-setup", {
+        method: "POST",
+      });
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        setPasswordSetupError(
+          data.error ||
+            "Password was saved, but setup could not be completed. Try again."
+        );
+        setPasswordSetupMessage("Password saved. You can retry without re-entering it.");
+        return;
+      }
+
+      await refreshSessionAndProfile();
+      setPasswordSetupRequired(false);
+      setPasswordSetupSaved(false);
+      setPasswordSetupMessage("");
+      setView("add");
+    } finally {
+      setPasswordSetupLoading(false);
+    }
+  }
+
+  async function submitPasswordChange(event) {
+    event.preventDefault();
+    if (changePasswordLoading) return;
+
+    setChangePasswordError("");
+    setChangePasswordMessage("");
+
+    const validationError = validatePasswordPair(
+      changePassword,
+      changeConfirmPassword
+    );
+
+    if (validationError) {
+      setChangePasswordError(validationError);
+      return;
+    }
+
+    const confirmed = confirm("Change your account password?");
+    if (!confirmed) return;
+
+    setChangePasswordLoading(true);
+
+    const { error } = await supabase.auth.updateUser({
+      password: changePassword,
+    });
+
+    setChangePasswordLoading(false);
+
+    if (error) {
+      setChangePasswordError(error.message || "Could not change password.");
+      return;
+    }
+
+    setChangePassword("");
+    setChangeConfirmPassword("");
+    setChangePasswordMessage("Password changed.");
+    await refreshSessionAndProfile();
   }
 
   async function loadUsers() {
@@ -3051,6 +3226,66 @@ function renderManagedTextOptionPanel(optionType) {
   );
 }
 
+function renderPasswordSetupPanel() {
+  return (
+    <section className="card auth-card">
+      <h2>Finish Setting Up Your Account</h2>
+      <p>Create a password before using the internal IL HRC tools.</p>
+
+      <form onSubmit={completePasswordSetup}>
+        {!passwordSetupSaved && (
+          <>
+            <label>Create Password</label>
+            <input
+              type="password"
+              value={setupPassword}
+              autoComplete="new-password"
+              onChange={(e) => setSetupPassword(e.target.value)}
+            />
+
+            <label>Confirm Password</label>
+            <input
+              type="password"
+              value={setupConfirmPassword}
+              autoComplete="new-password"
+              onChange={(e) => setSetupConfirmPassword(e.target.value)}
+            />
+
+            <p className="helper-text">
+              Use at least {PASSWORD_MIN_LENGTH} characters.
+            </p>
+          </>
+        )}
+
+        {passwordSetupMessage && (
+          <p className="status-message">{passwordSetupMessage}</p>
+        )}
+        {passwordSetupError && (
+          <p className="warning-text">{passwordSetupError}</p>
+        )}
+
+        <div className="auth-actions">
+          <button className="primary" type="submit" disabled={passwordSetupLoading}>
+            {passwordSetupLoading
+              ? "Saving..."
+              : passwordSetupSaved
+                ? "Retry Setup"
+                : "Finish Setup"}
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            disabled={passwordSetupLoading}
+            onClick={handleLogout}
+          >
+            Log Out
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
 function renderLoginPanel() {
   return (
     <section className="card auth-card">
@@ -3079,6 +3314,69 @@ function renderLoginPanel() {
         <button className="primary" type="submit" disabled={loginLoading}>
           {loginLoading ? "Signing In..." : "Sign In"}
         </button>
+      </form>
+    </section>
+  );
+}
+
+function renderChangePasswordPanel() {
+  if (!changePasswordOpen) return null;
+
+  return (
+    <section className="card auth-card">
+      <h2>Change Password</h2>
+
+      <form onSubmit={submitPasswordChange}>
+        <label>New Password</label>
+        <input
+          type="password"
+          value={changePassword}
+          autoComplete="new-password"
+          onChange={(e) => setChangePassword(e.target.value)}
+        />
+
+        <label>Confirm Password</label>
+        <input
+          type="password"
+          value={changeConfirmPassword}
+          autoComplete="new-password"
+          onChange={(e) => setChangeConfirmPassword(e.target.value)}
+        />
+
+        <p className="helper-text">
+          Use at least {PASSWORD_MIN_LENGTH} characters.
+        </p>
+
+        {changePasswordMessage && (
+          <p className="status-message">{changePasswordMessage}</p>
+        )}
+        {changePasswordError && (
+          <p className="warning-text">{changePasswordError}</p>
+        )}
+
+        <div className="auth-actions">
+          <button
+            className="primary"
+            type="submit"
+            disabled={changePasswordLoading}
+          >
+            {changePasswordLoading ? "Saving..." : "Save Password"}
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            disabled={changePasswordLoading}
+            onClick={() => {
+              setChangePasswordOpen(false);
+              setChangePassword("");
+              setChangeConfirmPassword("");
+              setChangePasswordError("");
+              setChangePasswordMessage("");
+            }}
+          >
+            Cancel
+          </button>
+        </div>
       </form>
     </section>
   );
@@ -3218,9 +3516,24 @@ function renderUserManagement() {
                 {profile?.full_name || profile?.email || "Signed in"} /{" "}
                 {profile?.role || "profile loading"}
               </span>
-              <button className="secondary" type="button" onClick={handleLogout}>
-                Log Out
-              </button>
+              <div className="account-actions">
+                {!shouldShowPasswordSetup && (
+                  <button
+                    className="secondary"
+                    type="button"
+                    onClick={() => {
+                      setChangePasswordOpen((current) => !current);
+                      setChangePasswordError("");
+                      setChangePasswordMessage("");
+                    }}
+                  >
+                    Change Password
+                  </button>
+                )}
+                <button className="secondary" type="button" onClick={handleLogout}>
+                  Log Out
+                </button>
+              </div>
             </>
           ) : session ? (
             <>
@@ -3244,15 +3557,26 @@ function renderUserManagement() {
         </div>
       )}
 
-      {!authLoading && profileLoading && (
+      {!authLoading && shouldShowPasswordSetup && renderPasswordSetupPanel()}
+
+      {!authLoading && !shouldShowPasswordSetup && profileLoading && (
         <section className="card">
           <p>Loading account profile...</p>
         </section>
       )}
 
-      {!authLoading && !profileLoading && !isAuthenticated && renderLoginPanel()}
+      {!authLoading &&
+        !shouldShowPasswordSetup &&
+        !profileLoading &&
+        !isAuthenticated &&
+        renderLoginPanel()}
 
-{!authLoading && isAuthenticated && (
+      {!authLoading &&
+        !shouldShowPasswordSetup &&
+        isAuthenticated &&
+        renderChangePasswordPanel()}
+
+{!authLoading && !shouldShowPasswordSetup && isAuthenticated && (
   <div className="nav-buttons">        <button
           className={view === "add" ? "primary" : "secondary"}
           onClick={() => {
@@ -3328,7 +3652,7 @@ onClick={() => {
         <p className="warning-text">{authMessage}</p>
       )}
 
-   {!authLoading && isAuthenticated && view === "add" && (
+   {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "add" && (
   <>
     <p>Use the cover photo and ISBN/barcode when available.</p>
 
@@ -3683,7 +4007,7 @@ onClick={() => {
         </>
       )}
 
-      {!authLoading && isAuthenticated && view === "inventory" && (
+      {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "inventory" && (
         <section className="card">
           <h2>Inventory</h2>
         <div className="stats-grid">
@@ -4373,7 +4697,7 @@ onClick={() => {
         </section>
       )}
 
-      {!authLoading && isAuthenticated && view === "options" && (
+      {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "options" && (
         <section className="card">
           <h2>Options</h2>
 
@@ -4665,7 +4989,7 @@ onClick={() => {
         </section>
       )}
 
-      {!authLoading && isAuthenticated && view === "labels" && (
+      {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "labels" && (
         <section className="card">
           <h2>Print Labels</h2>
 
@@ -4765,9 +5089,9 @@ onClick={() => {
         </section>
       )}
 
-      {!authLoading && isAdmin && view === "users" && renderUserManagement()}
+      {!authLoading && !shouldShowPasswordSetup && isAdmin && view === "users" && renderUserManagement()}
 
-      {!authLoading && view === "catalog" && (
+      {!authLoading && !shouldShowPasswordSetup && view === "catalog" && (
   <section className="card">
     <h2>Public Catalog Preview</h2>
     <p>
