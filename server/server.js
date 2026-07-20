@@ -3,6 +3,13 @@ const cors = require("cors");
 const multer = require("multer");
 const OpenAI = require("openai");
 const { createClient } = require("@supabase/supabase-js");
+const {
+  MAX_SOURCE_TEXT,
+  curriculumAnalysisPrompt,
+  curriculumAnalysisSchema,
+  fetchPublicCurriculumSource,
+  normalizeAnalysisResult,
+} = require("./curriculumImport");
 require("dotenv").config();
 
 const SQUARE_BASE_URL =
@@ -946,6 +953,116 @@ res.json({
       success: false,
       error: error.message,
     });
+  }
+});
+
+app.post("/analyze-curriculum", requireAuth, upload.single("file"), async (req, res) => {
+  try {
+    const sourceType = String(req.body.source_type || "").trim().toLowerCase();
+    if (!["link", "text", "pdf"].includes(sourceType)) {
+      sendSafeError(res, 400, "Choose a publisher link, pasted text, or PDF.");
+      return;
+    }
+
+    let sourceUrl = "";
+    let sourceText = "";
+    let pdfBuffer = null;
+    let pdfFilename = "curriculum.pdf";
+
+    if (sourceType === "link") {
+      const requestedUrl = String(req.body.url || "").trim();
+      if (!requestedUrl || requestedUrl.length > 2048) {
+        sendSafeError(res, 400, "Enter a valid publisher link.");
+        return;
+      }
+      const fetched = await fetchPublicCurriculumSource(requestedUrl);
+      sourceUrl = fetched.url;
+      if (fetched.kind === "pdf") {
+        pdfBuffer = fetched.buffer;
+        pdfFilename = fetched.filename;
+      } else {
+        sourceText = fetched.text;
+      }
+    } else if (sourceType === "text") {
+      sourceText = String(req.body.text || "").trim().slice(0, MAX_SOURCE_TEXT);
+      if (sourceText.length < 30) {
+        sendSafeError(res, 400, "Paste more of the curriculum list before analyzing it.");
+        return;
+      }
+    } else {
+      const file = req.file;
+      const looksLikePdf = file?.buffer?.subarray(0, 4).toString() === "%PDF";
+      if (!file || (!looksLikePdf && file.mimetype !== "application/pdf")) {
+        sendSafeError(res, 400, "Choose a PDF file.");
+        return;
+      }
+      pdfBuffer = file.buffer;
+      pdfFilename = String(file.originalname || "curriculum.pdf").slice(0, 200);
+    }
+
+    const checkedOn = new Date().toISOString().slice(0, 10);
+    const content = [{
+      type: "input_text",
+      text: curriculumAnalysisPrompt({ sourceType, sourceUrl, checkedOn }),
+    }];
+    if (sourceText) {
+      content.push({ type: "input_text", text: `SOURCE CONTENT\n---\n${sourceText}\n---\nEND SOURCE` });
+    }
+    if (pdfBuffer) {
+      content.push({
+        type: "input_file",
+        filename: pdfFilename,
+        file_data: `data:application/pdf;base64,${pdfBuffer.toString("base64")}`,
+        detail: "low",
+      });
+    }
+
+    const model = sourceType === "link"
+      ? process.env.CURRICULUM_LINK_MODEL || "gpt-5.6-luna"
+      : process.env.CURRICULUM_IMPORT_MODEL || "gpt-4.1-mini";
+    const request = {
+      model,
+      input: [{ role: "user", content }],
+      text: {
+        format: {
+          type: "json_schema",
+          name: "curriculum_package_import",
+          strict: true,
+          schema: curriculumAnalysisSchema,
+        },
+      },
+      max_output_tokens: 16_000,
+    };
+    if (sourceType === "link") request.tools = [{ type: "web_search" }];
+    const response = await openai.responses.create(request);
+
+    if (!response.output_text) throw new Error("The analysis returned no package data.");
+    const analysis = normalizeAnalysisResult(JSON.parse(response.output_text), sourceUrl, checkedOn);
+    if (!analysis.package.name || !analysis.materials.length) {
+      analysis.warnings.unshift("The source did not provide a clear package name or material list. Review carefully or try another source format.");
+    }
+
+    await writeAudit(req, "analyze_curriculum", "curriculum_import", null, {
+      source_type: sourceType,
+      source_host: sourceUrl ? new URL(sourceUrl).hostname : null,
+      materials_found: analysis.materials.length,
+      model,
+      input_tokens: response.usage?.input_tokens || null,
+      output_tokens: response.usage?.output_tokens || null,
+    });
+
+    res.json({
+      success: true,
+      ...analysis,
+      usage: {
+        model,
+        input_tokens: response.usage?.input_tokens || null,
+        output_tokens: response.usage?.output_tokens || null,
+      },
+    });
+  } catch (error) {
+    console.error("Curriculum analysis failed:", error);
+    sendSafeError(res, 500, error.message || "Could not analyze that curriculum source.");
   }
 });
 

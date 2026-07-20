@@ -4,6 +4,14 @@ import "./App.css";
 import { supabase } from "./supabaseClient";
 import jsPDF from "jspdf";
 import JsBarcode from "jsbarcode";
+import {
+  RULE_INPUT_FIELDS,
+  RULE_OUTPUT_FIELDS,
+  applyIntakeRules,
+  mergeExactIsbnMemory,
+} from "./intakeRules";
+import { findIsbnInconsistencies, generateRuleSuggestions } from "./ruleSuggestions";
+import CurriculumCatalog from "./CurriculumCatalog";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -23,8 +31,32 @@ const PUBLIC_CATALOG_COLUMNS = [
   "created_at",
 ].join(",");
 
-const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "users"]);
+const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "requests", "users"]);
 const PASSWORD_MIN_LENGTH = 10;
+const INTAKE_LEARNING_FIELDS = [
+  "title",
+  "author",
+  "publisher",
+  "curriculum",
+  "subject",
+  "grade_level",
+  "category",
+  "isbn",
+  "final_price",
+];
+const EMPTY_INTAKE_RULE = {
+  name: "",
+  description: "",
+  match_mode: "all",
+  priority: 0,
+  active: true,
+  conditions: [{ field: "curriculum", operator: "contains", value: "" }],
+  actions: { curriculum: "", subject: "", grade_level: "", category: "", final_price: "" },
+};
+const EMPTY_CUSTOMER_REQUEST = {
+  customer_name: "", email: "", phone: "", preferred_contact: "email",
+  isbn: "", title: "", author: "", curriculum: "", subject: "", grade_level: "", notes: "",
+};
 
 function getAuthUrlType() {
   const searchParams = new URLSearchParams(window.location.search);
@@ -136,6 +168,7 @@ function BookCoverImage({
 export default function App() {
   const [view, setView] = useState(() => {
     const hashView = window.location.hash.replace("#", "");
+    if (hashView === "curricula") return "curricula";
     return hashView === "catalog" ? "catalog" : "add";
   });
   const [items, setItems] = useState([]);
@@ -164,6 +197,7 @@ export default function App() {
   const [loginLoading, setLoginLoading] = useState(false);
   const [users, setUsers] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
+  const [optionsSection, setOptionsSection] = useState("lists");
   const [userManagementMessage, setUserManagementMessage] = useState("");
   const [inviteForm, setInviteForm] = useState({
     email: "",
@@ -196,9 +230,14 @@ export default function App() {
   const [selectedCatalogItem, setSelectedCatalogItem] = useState(null);
 
   const [sortBy, setSortBy] = useState("newest");
+  const [inventorySortBy, setInventorySortBy] = useState("newest");
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
 
   const listingPhotoInputRef = useRef(null);
+  const intakeRuleEditorRef = useRef(null);
+  const intakeRuleNameRef = useRef(null);
+  const isbnMergePanelRef = useRef(null);
+  const isbnMergeKeeperRef = useRef(null);
 
   const [isSaving, setIsSaving] = useState(false);
 
@@ -207,6 +246,24 @@ export default function App() {
   const [editCoverPreview, setEditCoverPreview] = useState(null);
 
   const [analysisStatus, setAnalysisStatus] = useState("");
+  const [intakeRules, setIntakeRules] = useState([]);
+  const [ruleSources, setRuleSources] = useState({});
+  const [ruleConflicts, setRuleConflicts] = useState({});
+  const [intakeContext, setIntakeContext] = useState(null);
+  const [intakeRuleDraft, setIntakeRuleDraft] = useState(EMPTY_INTAKE_RULE);
+  const [editingIntakeRuleId, setEditingIntakeRuleId] = useState(null);
+  const [intakeRuleMessage, setIntakeRuleMessage] = useState("");
+  const [intakeHistories, setIntakeHistories] = useState([]);
+  const [suggestionReviews, setSuggestionReviews] = useState([]);
+  const [isbnInconsistencyReviews, setIsbnInconsistencyReviews] = useState([]);
+  const [reviewingSuggestionKey, setReviewingSuggestionKey] = useState(null);
+  const [isbnMergeIssue, setIsbnMergeIssue] = useState(null);
+  const [isbnMergeKeeperId, setIsbnMergeKeeperId] = useState("");
+  const [isbnMergeDraft, setIsbnMergeDraft] = useState(null);
+  const [isbnMergePrintLabels, setIsbnMergePrintLabels] = useState(true);
+  const [isbnMergeLoading, setIsbnMergeLoading] = useState(false);
+  const [isbnMergeMessage, setIsbnMergeMessage] = useState("");
+  const [expandedIsbnReview, setExpandedIsbnReview] = useState("");
 
   const [curriculumOptions, setCurriculumOptions] = useState([]);
   const [subjectOptions, setSubjectOptions] = useState([]);
@@ -267,6 +324,17 @@ export default function App() {
   const [editCategoryNewName, setEditCategoryNewName] = useState("");
   const [editCategoryPrice, setEditCategoryPrice] = useState("");
   const [deleteCategoryName, setDeleteCategoryName] = useState("");
+  const [customerRequests, setCustomerRequests] = useState([]);
+  const [customerRequestMatches, setCustomerRequestMatches] = useState([]);
+  const [customerRequestDraft, setCustomerRequestDraft] = useState(EMPTY_CUSTOMER_REQUEST);
+  const [customerRequestFilter, setCustomerRequestFilter] = useState("active");
+  const [customerRequestMessage, setCustomerRequestMessage] = useState("");
+  const [customerRequestLoading, setCustomerRequestLoading] = useState(false);
+  const [expandedCustomerMatchId, setExpandedCustomerMatchId] = useState("");
+  const [publicRequestOpen, setPublicRequestOpen] = useState(false);
+  const [publicRequestDraft, setPublicRequestDraft] = useState({ ...EMPTY_CUSTOMER_REQUEST, website: "" });
+  const [publicRequestMessage, setPublicRequestMessage] = useState("");
+  const [publicRequestSubmitting, setPublicRequestSubmitting] = useState(false);
 
   const isAuthenticated = Boolean(session && profile && profile.is_active !== false);
   const isAdmin = profile?.role === "admin";
@@ -320,7 +388,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    window.location.hash = view === "catalog" ? "catalog" : "";
+    window.location.hash = view === "catalog" || view === "curricula" ? view : "";
   }, [view]);
 
   useEffect(() => {
@@ -353,6 +421,10 @@ export default function App() {
     if (authLoading || shouldShowPasswordSetup) return;
     loadItems();
     loadOptionLists();
+    if (isAuthenticated) {
+      loadIntakeRules();
+      loadCustomerRequestData();
+    }
   }, [authLoading, shouldShowPasswordSetup, isAuthenticated]);
 
   useEffect(() => {
@@ -361,6 +433,14 @@ export default function App() {
       loadAuditLogs();
     }
   }, [view, isAdmin]);
+
+  useEffect(() => {
+    if (view === "options" && isAdmin) loadRuleSuggestionData();
+  }, [view, isAdmin]);
+
+  useEffect(() => {
+    if (view === "requests" && isAuthenticated) loadCustomerRequestData();
+  }, [view, isAuthenticated]);
 
   async function refreshProfile(nextSession = session) {
     const accessToken = nextSession?.access_token;
@@ -772,6 +852,600 @@ async function loadOptionLists() {
   setGradeOptions(grades?.map((x) => x.name) || []);
   setCategoryOptions(categories || []);
   setLocationOptions(locations || []);
+}
+
+async function loadIntakeRules() {
+  const { data, error } = await supabase
+    .from("intake_rules")
+    .select("*")
+    .order("priority", { ascending: false })
+    .order("name");
+
+  if (error) {
+    console.error("Could not load intake rules:", error);
+    setIntakeRules([]);
+    return;
+  }
+
+  setIntakeRules(data || []);
+}
+
+async function loadRuleSuggestionData() {
+  if (!isAdmin) return;
+  const [historyResult, reviewResult, isbnReviewResult] = await Promise.all([
+    supabase
+      .from("intake_history")
+      .select("id, imported_values, final_values, manual_corrections, applied_rules, matched_rule_ids, created_at")
+      .order("created_at", { ascending: false })
+      .limit(1000),
+    supabase.from("intake_rule_suggestion_reviews").select("*"),
+    supabase.from("isbn_inconsistency_reviews").select("*"),
+  ]);
+  if (historyResult.error) console.error("Could not load intake history for suggestions:", historyResult.error);
+  if (reviewResult.error) console.error("Could not load suggestion reviews:", reviewResult.error);
+  if (isbnReviewResult.error) console.error("Could not load ISBN review decisions:", isbnReviewResult.error);
+  setIntakeHistories(historyResult.data || []);
+  setSuggestionReviews(reviewResult.data || []);
+  setIsbnInconsistencyReviews(isbnReviewResult.data || []);
+}
+
+function getIntakeLearningValues(book) {
+  return Object.fromEntries(
+    INTAKE_LEARNING_FIELDS.map((field) => [field, book?.[field] || ""])
+  );
+}
+
+async function loadExactIsbnMemory(isbn) {
+  const normalizedIsbn = String(isbn || "").toLowerCase().replace(/[^0-9x]/g, "");
+  if (normalizedIsbn.length < 10) return null;
+
+  const { data, error } = await supabase.rpc("get_exact_isbn_memory", {
+    lookup_isbn: normalizedIsbn,
+  });
+  if (error) {
+    console.error("Could not load exact ISBN memory:", error);
+    return null;
+  }
+  return data || null;
+}
+
+async function applyRulesToImportedBook(importedBook, sourceType) {
+  const ruleResult = applyIntakeRules(importedBook, intakeRules);
+  const isbnMemory = await loadExactIsbnMemory(importedBook.isbn);
+  const result = mergeExactIsbnMemory(ruleResult, isbnMemory);
+  setRuleSources(result.sources);
+  setRuleConflicts(result.conflicts);
+  setIntakeContext({
+    source_type: sourceType,
+    imported_values: getIntakeLearningValues(importedBook),
+    rule_values: getIntakeLearningValues(result.book),
+    applied_rules: Object.entries(result.sources).map(([field, source]) => ({
+      field,
+      rule_id: source.ruleId,
+      rule_name: source.ruleName,
+      source_type: source.sourceType || "rule",
+      previous_value: source.previousValue,
+      applied_value: result.book[field] || "",
+    })),
+    matched_rule_ids: result.matchingRules.map((rule) => rule.id),
+    initial_conflicts: result.conflicts,
+    isbn_memory: result.isbnMemory || null,
+    manual_fields: [],
+  });
+  return result.book;
+}
+
+function updateIntakeField(field, value, additionalChanges = {}) {
+  setBookData((current) => ({ ...current, [field]: value, ...additionalChanges }));
+  const changedLearningFields = [field, ...Object.keys(additionalChanges)].filter((item) =>
+    INTAKE_LEARNING_FIELDS.includes(item)
+  );
+  if (changedLearningFields.length > 0) {
+    setIntakeContext((current) => ({
+      ...(current || {
+        source_type: "manual",
+        imported_values: getIntakeLearningValues({}),
+        rule_values: getIntakeLearningValues({}),
+        applied_rules: [],
+        matched_rule_ids: [],
+        initial_conflicts: {},
+        manual_fields: [],
+      }),
+      manual_fields: [...new Set([...(current?.manual_fields || []), ...changedLearningFields])],
+    }));
+  }
+  setRuleSources((current) => {
+    const next = { ...current };
+    delete next[field];
+    return next;
+  });
+  setRuleConflicts((current) => {
+    const next = { ...current };
+    delete next[field];
+    return next;
+  });
+}
+
+function getIntakeSourceLabel(source) {
+  return source?.sourceType === "isbn_memory" || source?.sourceType === "isbn_inventory"
+    ? `Remembered from ${source.ruleName}`
+    : `Filled by rule: ${source?.ruleName || "Unknown rule"}`;
+}
+
+function clearRuleFeedback() {
+  setRuleSources({});
+  setRuleConflicts({});
+  setIntakeContext(null);
+}
+
+async function recordIntakeHistory(itemId, finalBook, duplicateItem) {
+  const context = intakeContext || {
+    source_type: "manual",
+    imported_values: getIntakeLearningValues({}),
+    rule_values: getIntakeLearningValues({}),
+    applied_rules: [],
+    matched_rule_ids: [],
+    initial_conflicts: {},
+    manual_fields: INTAKE_LEARNING_FIELDS,
+  };
+  const finalValues = getIntakeLearningValues(finalBook);
+  const manualCorrections = Object.fromEntries(
+    (context.manual_fields || []).map((field) => [field, {
+      before: context.rule_values?.[field] ?? context.imported_values?.[field] ?? "",
+      after: finalValues[field] || "",
+    }])
+  );
+  const appliedRules = context.applied_rules || [];
+
+  const { error } = await supabase.from("intake_history").insert([{
+    item_id: itemId ? String(itemId) : null,
+    isbn: finalValues.isbn,
+    source_type: context.source_type || "manual",
+    imported_values: context.imported_values,
+    rule_values: context.rule_values,
+    final_values: finalValues,
+    manual_corrections: manualCorrections,
+    applied_rules: appliedRules,
+    matched_rule_ids: context.matched_rule_ids || [],
+    unresolved_conflicts: ruleConflicts,
+    duplicate_item: duplicateItem,
+    created_by: profile?.id,
+  }]);
+
+  if (error) {
+    console.error("Could not record intake history:", error);
+  }
+}
+
+function getIntakeRulePerformance(ruleId) {
+  let applied = 0;
+  let accepted = 0;
+  let corrected = 0;
+
+  for (const history of intakeHistories) {
+    const applications = (history.applied_rules || []).filter(
+      (application) => application.rule_id === ruleId
+    );
+    if (applications.length === 0) continue;
+    applied += 1;
+    const wasCorrected = applications.some(
+      (application) => history.manual_corrections?.[application.field]
+    );
+    if (wasCorrected) corrected += 1;
+    else accepted += 1;
+  }
+
+  return {
+    applied,
+    accepted,
+    corrected,
+    acceptanceRate: applied ? Math.round((accepted / applied) * 100) : null,
+  };
+}
+
+function resetIntakeRuleDraft() {
+  setEditingIntakeRuleId(null);
+  setReviewingSuggestionKey(null);
+  setIntakeRuleDraft({
+    ...EMPTY_INTAKE_RULE,
+    conditions: [{ ...EMPTY_INTAKE_RULE.conditions[0] }],
+    actions: { ...EMPTY_INTAKE_RULE.actions },
+  });
+}
+
+function editIntakeRule(rule) {
+  setEditingIntakeRuleId(rule.id);
+  setIntakeRuleDraft({
+    name: rule.name || "",
+    description: rule.description || "",
+    match_mode: rule.match_mode || "all",
+    priority: Number(rule.priority || 0),
+    active: rule.active !== false,
+    conditions: (rule.conditions || []).map((condition) => ({ ...condition })),
+    actions: { ...EMPTY_INTAKE_RULE.actions, ...(rule.actions || {}) },
+  });
+  setIntakeRuleMessage("");
+}
+
+async function saveIntakeRule() {
+  if (!isAdmin) return;
+
+  const conditions = intakeRuleDraft.conditions.filter(
+    (condition) => condition.field && condition.operator && condition.value.trim()
+  );
+  const actions = Object.fromEntries(
+    Object.entries(intakeRuleDraft.actions).filter(([, value]) => value.trim())
+  );
+
+  if (!intakeRuleDraft.name.trim() || conditions.length === 0 || Object.keys(actions).length === 0) {
+    setIntakeRuleMessage("Add a rule name, at least one complete condition, and at least one result.");
+    return;
+  }
+
+  const suggestionKeyToApprove = reviewingSuggestionKey;
+  const payload = {
+    name: intakeRuleDraft.name.trim(),
+    description: intakeRuleDraft.description.trim(),
+    match_mode: intakeRuleDraft.match_mode,
+    priority: Number(intakeRuleDraft.priority || 0),
+    active: intakeRuleDraft.active,
+    conditions,
+    actions,
+    created_by: profile?.id || null,
+  };
+
+  const query = editingIntakeRuleId
+    ? supabase.from("intake_rules").update(payload).eq("id", editingIntakeRuleId)
+    : supabase.from("intake_rules").insert([payload]);
+  const { error } = await query;
+
+  if (error) {
+    setIntakeRuleMessage("Could not save rule: " + error.message);
+    return;
+  }
+
+  await logAudit(
+    editingIntakeRuleId ? "intake_rule_updated" : "intake_rule_created",
+    "intake_rule",
+    editingIntakeRuleId,
+    { name: payload.name }
+  );
+  if (suggestionKeyToApprove) {
+    await reviewRuleSuggestion(
+      { key: suggestionKeyToApprove, sample_count: 0, actions: payload.actions },
+      "approved"
+    );
+  }
+  setIntakeRuleMessage(editingIntakeRuleId ? "Rule updated." : "Rule created.");
+  resetIntakeRuleDraft();
+  await loadIntakeRules();
+}
+
+function approveRuleSuggestion(suggestion) {
+  setEditingIntakeRuleId(null);
+  setReviewingSuggestionKey(suggestion.key);
+  setIntakeRuleDraft({
+    ...EMPTY_INTAKE_RULE,
+    name: `${RULE_INPUT_FIELDS.find(([field]) => field === suggestion.input_field)?.[1] || suggestion.input_field}: ${suggestion.input_value}`,
+    description: `Suggested from ${suggestion.sample_count} consistent intake records.`,
+    conditions: [{
+      field: suggestion.input_field,
+      operator: suggestion.input_field === "title" ? "equals" : "contains",
+      value: suggestion.input_value,
+    }],
+    actions: { ...EMPTY_INTAKE_RULE.actions, ...suggestion.actions },
+  });
+  setIntakeRuleMessage("Review the suggested rule, then select Create Rule to approve it.");
+  window.setTimeout(() => {
+    intakeRuleEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    intakeRuleNameRef.current?.focus({ preventScroll: true });
+  }, 0);
+}
+
+async function reviewRuleSuggestion(suggestion, status) {
+  if (!isAdmin) return;
+  const payload = {
+    suggestion_key: suggestion.key,
+    status,
+    sample_count_at_review: suggestion.sample_count || 0,
+    details: {
+      input_field: suggestion.input_field,
+      input_value: suggestion.input_value,
+      actions: suggestion.actions,
+    },
+    reviewed_by: profile?.id,
+    reviewed_at: new Date().toISOString(),
+  };
+  const { error } = await supabase
+    .from("intake_rule_suggestion_reviews")
+    .upsert([payload], { onConflict: "suggestion_key" });
+  if (error) {
+    setIntakeRuleMessage("Could not update suggestion: " + error.message);
+    return;
+  }
+  await loadRuleSuggestionData();
+}
+
+async function dismissIsbnInconsistency(issue) {
+  if (!isAdmin) return;
+  const confirmed = confirm(
+    `Dismiss this ISBN match for "${issue.title}"? It will return if these records change or another matching ISBN is added.`
+  );
+  if (!confirmed) return;
+
+  const { error } = await supabase.from("isbn_inconsistency_reviews").upsert([{
+    isbn: issue.isbn,
+    record_signature: issue.record_signature,
+    status: "dismissed",
+    reviewed_by: profile?.id,
+    reviewed_at: new Date().toISOString(),
+  }], { onConflict: "isbn" });
+  if (error) {
+    setIsbnMergeMessage("Could not dismiss ISBN match: " + error.message);
+    return;
+  }
+
+  setExpandedIsbnReview("");
+  if (isbnMergeIssue?.isbn === issue.isbn) closeIsbnMerge();
+  await logAudit("isbn_inconsistency_dismissed", "isbn", issue.isbn, {
+    title: issue.title,
+    record_count: issue.record_count,
+  });
+  await loadRuleSuggestionData();
+}
+
+function getIsbnMergeCandidates(issue) {
+  return items.filter(
+    (item) => String(item.isbn || "").toLowerCase().replace(/[^0-9x]/g, "") === issue.isbn
+  );
+}
+
+function buildIsbnMergeDraft(keeper, candidates) {
+  return {
+    title: keeper.title || "",
+    publisher: keeper.publisher || "",
+    curriculum: keeper.curriculum || "",
+    subject: keeper.subject || "",
+    grade_level: keeper.grade_level || "",
+    category: keeper.category || "",
+    edition: keeper.edition || "",
+    location: keeper.location || "",
+    final_price: keeper.final_price ?? "",
+    quantity: candidates.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
+  };
+}
+
+function openIsbnMerge(issue, preferredKeeperId = "") {
+  const candidates = getIsbnMergeCandidates(issue);
+  const keeper = candidates.find((item) => String(item.id) === String(preferredKeeperId)) || candidates.find(
+    (item) => (item.status || "Available") === "Available" && item.square_item_id
+  ) || candidates.find((item) => (item.status || "Available") === "Available") || candidates[0];
+  if (!keeper) return;
+  setIsbnMergeIssue(issue);
+  setIsbnMergeKeeperId(String(keeper.id));
+  setIsbnMergeDraft(buildIsbnMergeDraft(keeper, candidates));
+  setIsbnMergePrintLabels(true);
+  setIsbnMergeMessage("");
+  window.setTimeout(() => {
+    isbnMergePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    isbnMergeKeeperRef.current?.focus({ preventScroll: true });
+  }, 0);
+}
+
+function changeIsbnMergeKeeper(keeperId) {
+  const candidates = getIsbnMergeCandidates(isbnMergeIssue);
+  const keeper = candidates.find((item) => String(item.id) === keeperId);
+  if (!keeper) return;
+  setIsbnMergeKeeperId(keeperId);
+  setIsbnMergeDraft(buildIsbnMergeDraft(keeper, candidates));
+  setIsbnMergeMessage("");
+}
+
+function closeIsbnMerge() {
+  if (isbnMergeLoading) return;
+  setIsbnMergeIssue(null);
+  setIsbnMergeKeeperId("");
+  setIsbnMergeDraft(null);
+  setIsbnMergeMessage("");
+}
+
+async function requireSuccessfulApiResponse(response, fallbackMessage) {
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok || data.success === false) {
+    throw new Error(data.error?.message || data.error || fallbackMessage);
+  }
+  return data;
+}
+
+async function mergeDuplicateIsbnEntries() {
+  if (!isAdmin || !isbnMergeIssue || !isbnMergeDraft || isbnMergeLoading) return;
+  const candidates = getIsbnMergeCandidates(isbnMergeIssue);
+  const keeper = candidates.find((item) => String(item.id) === isbnMergeKeeperId);
+  const duplicates = candidates.filter((item) => String(item.id) !== isbnMergeKeeperId);
+  if (!keeper || duplicates.length === 0) return;
+  if (!isbnMergeDraft.title.trim()) {
+    setIsbnMergeMessage("Choose a title before merging.");
+    return;
+  }
+  if (isbnMergeDraft.final_price === "" || Number(isbnMergeDraft.final_price) < 0) {
+    setIsbnMergeMessage("Choose a valid final price before merging.");
+    return;
+  }
+  if (Number(isbnMergeDraft.quantity) < 1) {
+    setIsbnMergeMessage("The combined quantity must be at least 1.");
+    return;
+  }
+
+  const confirmed = confirm(
+    `Merge ${candidates.length} records for ISBN ${isbnMergeIssue.isbn} into SKU ${keeper.sku}? ` +
+    `The surviving quantity will be ${isbnMergeDraft.quantity}, duplicate Square products will be archived, ` +
+    `and duplicate inventory records will be deleted.`
+  );
+  if (!confirmed) return;
+
+  setIsbnMergeLoading(true);
+  setIsbnMergeMessage("Updating Square and merging inventory...");
+  const archivedDuplicates = [];
+  let squareItemId = keeper.square_item_id || "";
+  let squareVariationId = keeper.square_variation_id || "";
+  let createdKeeperSquareItem = false;
+
+  async function restoreSquareAfterFailure() {
+    for (const duplicate of archivedDuplicates) {
+      try {
+        await authFetch("/unarchive-square-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ square_item_id: duplicate.square_item_id }),
+        });
+      } catch (error) {
+        console.error("Could not restore duplicate Square item:", error);
+      }
+    }
+    try {
+      if (createdKeeperSquareItem && squareItemId) {
+        await authFetch("/archive-square-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ square_item_id: squareItemId }),
+        });
+      } else if (squareItemId && squareVariationId) {
+        await authFetch("/update-square-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            square_item_id: squareItemId,
+            square_variation_id: squareVariationId,
+            title: keeper.title || "",
+            sku: keeper.sku || "",
+            final_price: keeper.final_price || 0,
+            quantity: keeper.quantity || 0,
+            notes: keeper.notes || "",
+          }),
+        });
+      }
+    } catch (error) {
+      console.error("Could not restore surviving Square item:", error);
+    }
+  }
+
+  try {
+    if (squareItemId && squareVariationId) {
+      const response = await authFetch("/update-square-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          square_item_id: squareItemId,
+          square_variation_id: squareVariationId,
+          title: isbnMergeDraft.title,
+          sku: keeper.sku || "",
+          final_price: isbnMergeDraft.final_price || 0,
+          quantity: isbnMergeDraft.quantity,
+          notes: keeper.notes || "",
+        }),
+      });
+      await requireSuccessfulApiResponse(response, "Could not update the surviving Square item.");
+    } else {
+      const response = await authFetch("/create-square-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: isbnMergeDraft.title,
+          sku: keeper.sku || "",
+          final_price: isbnMergeDraft.final_price || 0,
+          quantity: isbnMergeDraft.quantity,
+          notes: keeper.notes || "",
+        }),
+      });
+      const data = await requireSuccessfulApiResponse(response, "Could not create the surviving Square item.");
+      squareItemId = data.square_item_id;
+      squareVariationId = data.square_variation_id;
+      createdKeeperSquareItem = true;
+    }
+
+    const duplicateSquareIds = new Set();
+    for (const duplicate of duplicates) {
+      if (
+        !duplicate.square_item_id ||
+        duplicate.square_item_id === squareItemId ||
+        duplicateSquareIds.has(duplicate.square_item_id)
+      ) continue;
+      duplicateSquareIds.add(duplicate.square_item_id);
+      const response = await authFetch("/archive-square-item", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ square_item_id: duplicate.square_item_id }),
+      });
+      await requireSuccessfulApiResponse(response, `Could not archive Square item for ${duplicate.sku}.`);
+      archivedDuplicates.push(duplicate);
+    }
+
+    const { data: mergedItem, error } = await supabase.rpc("merge_inventory_items", {
+      p_keeper_id: String(keeper.id),
+      p_duplicate_ids: duplicates.map((item) => String(item.id)),
+      p_values: {
+        ...isbnMergeDraft,
+        square_item_id: squareItemId,
+        square_variation_id: squareVariationId,
+      },
+    });
+    if (error) throw error;
+
+    await logAudit("inventory_isbn_merged", "item", keeper.id, {
+      isbn: isbnMergeIssue.isbn,
+      kept_item_id: keeper.id,
+      removed_item_ids: duplicates.map((item) => item.id),
+      combined_quantity: isbnMergeDraft.quantity,
+      final_price: isbnMergeDraft.final_price,
+    });
+
+    setItems((current) => [
+      ...current.filter((item) => !candidates.some((candidate) => candidate.id === item.id)),
+      mergedItem,
+    ]);
+    setIsbnMergeMessage("Merge complete.");
+    if (isbnMergePrintLabels) generateLabels([mergedItem]);
+    setIsbnMergeIssue(null);
+    setIsbnMergeKeeperId("");
+    setIsbnMergeDraft(null);
+    await loadItems();
+  } catch (error) {
+    await restoreSquareAfterFailure();
+    setIsbnMergeMessage(
+      "Merge stopped before the database was changed. Square recovery was attempted. " + error.message
+    );
+  } finally {
+    setIsbnMergeLoading(false);
+  }
+}
+
+async function toggleIntakeRule(rule) {
+  if (!isAdmin) return;
+  const { error } = await supabase
+    .from("intake_rules")
+    .update({ active: !rule.active })
+    .eq("id", rule.id);
+  if (error) {
+    setIntakeRuleMessage("Could not update rule: " + error.message);
+    return;
+  }
+  await logAudit("intake_rule_toggled", "intake_rule", rule.id, {
+    name: rule.name,
+    active: !rule.active,
+  });
+  await loadIntakeRules();
+}
+
+async function deleteIntakeRule(rule) {
+  if (!isAdmin || !confirm(`Delete the intake rule "${rule.name}"?`)) return;
+  const { error } = await supabase.from("intake_rules").delete().eq("id", rule.id);
+  if (error) {
+    setIntakeRuleMessage("Could not delete rule: " + error.message);
+    return;
+  }
+  await logAudit("intake_rule_deleted", "intake_rule", rule.id, { name: rule.name });
+  if (editingIntakeRuleId === rule.id) resetIntakeRuleDraft();
+  await loadIntakeRules();
 }
 
 function normalizeLocationName(value) {
@@ -1663,6 +2337,7 @@ async function handleCoverPhoto(event) {
 
   setCoverPhoto(URL.createObjectURL(file));
   setBookData(null);
+  clearRuleFeedback();
 
   const optimizedFile = await shrinkImageFile(file);
   setCoverFile(optimizedFile);
@@ -1671,6 +2346,16 @@ async function handleCoverPhoto(event) {
 }
 
 function startManualEntry() {
+  clearRuleFeedback();
+  setIntakeContext({
+    source_type: "manual",
+    imported_values: getIntakeLearningValues({}),
+    rule_values: getIntakeLearningValues({}),
+    applied_rules: [],
+    matched_rule_ids: [],
+    initial_conflicts: {},
+    manual_fields: [],
+  });
   setBookData({
     title: "",
     curriculum: "",
@@ -1836,8 +2521,9 @@ const coverUrl =
   book.imageLinks?.smallThumbnail ||
   "";
 
-setBookData({
+setBookData(await applyRulesToImportedBook({
   title: book.title || "",
+  author: book.authors?.join(", ") || "",
   curriculum: "",
   publisher: book.publisher || "",
   subject: book.categories?.[0] || "",
@@ -1854,7 +2540,7 @@ setBookData({
   notes: book.description || "",
   confidence: "Google Books ISBN lookup",
   public_visible: true,
-  image_url: coverUrl,});
+  image_url: coverUrl,}, "google_books"));
 
       setAnalysisStatus("ISBN lookup complete!");
       setTimeout(() => setAnalysisStatus(""), 1800);
@@ -1880,8 +2566,12 @@ setBookData({
         physical_format: openLibraryData.physical_format,
       });
 
-      setBookData({
+      setBookData(await applyRulesToImportedBook({
         title: openLibraryData.title || "",
+        author: Array.isArray(openLibraryData.authors)
+          ? openLibraryData.authors.map((author) => author.name || author.key || "").filter(Boolean).join(", ")
+          : "",
+        publisher: openLibraryData.publishers?.[0] || "",
         curriculum: openLibraryData.publishers?.[0] || "",
         subject: "",
         grade_level: "",
@@ -1897,7 +2587,7 @@ setBookData({
         notes: "",
         confidence: "Open Library ISBN lookup",
         public_visible: true,
-      });
+      }, "open_library"));
 
       setAnalysisStatus("ISBN lookup complete!");
       setTimeout(() => setAnalysisStatus(""), 1800);
@@ -1905,7 +2595,7 @@ setBookData({
     }
 
     // 3. If neither source finds it, still fill ISBN
-    setBookData({
+    setBookData(await applyRulesToImportedBook({
       title: "",
       curriculum: "",
       subject: "",
@@ -1920,7 +2610,7 @@ setBookData({
       notes: "",
       confidence: "ISBN scanned only",
       public_visible: true,
-    });
+    }, "isbn_only"));
 
     setAnalysisStatus("");
     alert("ISBN scanned, but no book data was found. You can enter the details manually.");
@@ -2016,7 +2706,7 @@ async function analyzePhotoWithFile(file) {
     const improvedData = improveDetectedBookData(data);
     const suggested = suggestPricingCategory(improvedData);
 
-setBookData({
+setBookData(await applyRulesToImportedBook({
   ...improvedData,
   category: improvedData.category || suggested?.name || "",
   weight_ounces: getWeightFromBookData(improvedData) ?? "",
@@ -2028,7 +2718,7 @@ setBookData({
     improvedData.suggested_price || suggested?.default_price || "",
   final_price:
     improvedData.final_price || suggested?.default_price || "",
-});
+}, "cover_analysis"));
 
 
     setAnalysisStatus("Analysis complete!");
@@ -2295,38 +2985,90 @@ async function saveItem() {
     public_visible: true,
   };
 
-const { data: possibleMatches, error: searchError } = await supabase
-  .from("items")
-  .select("*")
-  .eq("curriculum", itemDraft.curriculum)
-  .eq("category", itemDraft.category);
+let existingItem = null;
+let duplicateMatchReason = "";
+let exactIsbnMatchDeclined = false;
+const normalizedDraftIsbn = String(itemDraft.isbn || "")
+  .toLowerCase()
+  .replace(/[^0-9x]/g, "");
 
-if (searchError) {
-  alert("Could not check for existing item: " + searchError.message);
-  return;
+if (normalizedDraftIsbn.length >= 10) {
+  const { data: isbnCandidates, error: isbnSearchError } = await supabase
+    .from("items")
+    .select("*")
+    .neq("isbn", "");
+
+  if (isbnSearchError) {
+    alert("Could not check ISBN duplicates: " + isbnSearchError.message);
+    return;
+  }
+
+  const exactMatches = (isbnCandidates || [])
+    .filter((item) =>
+      ["Available", "Hold"].includes(item.status || "Available") &&
+      String(item.isbn || "").toLowerCase().replace(/[^0-9x]/g, "") === normalizedDraftIsbn
+    )
+    .sort((a, b) => {
+      const aTitleMatch = normalizeTitle(a.title) === normalizeTitle(itemDraft.title) ? 1 : 0;
+      const bTitleMatch = normalizeTitle(b.title) === normalizeTitle(itemDraft.title) ? 1 : 0;
+      return bTitleMatch - aTitleMatch;
+    });
+
+  if (exactMatches.length > 0) {
+    const candidate = exactMatches[0];
+    const addQuantity = confirm(
+      `Matching ISBN found:\n\n${candidate.title}\nSKU: ${candidate.sku}\n` +
+      `Current quantity: ${candidate.quantity || 0}\nPrice: $${Number(candidate.final_price || 0).toFixed(2)}\n\n` +
+      `Select OK to add ${itemDraft.quantity || 1} copy/copies to this listing.\n` +
+      `Select Cancel to create a separate listing instead.`
+    );
+    if (addQuantity) {
+      existingItem = candidate;
+      duplicateMatchReason = "exact_isbn";
+    } else {
+      exactIsbnMatchDeclined = true;
+    }
+  }
 }
 
-const existingItems = (possibleMatches || []).filter((item) => {
-  const sameTitle =
-    normalizeTitle(item.title) === normalizeTitle(itemDraft.title);
+if (!existingItem && !exactIsbnMatchDeclined) {
+  const { data: possibleMatches, error: searchError } = await supabase
+    .from("items")
+    .select("*")
+    .eq("curriculum", itemDraft.curriculum)
+    .eq("category", itemDraft.category);
 
- const sameEdition =
-  String(item.edition || "").trim().toLowerCase() ===
-  String(itemDraft.edition || "").trim().toLowerCase();
+  if (searchError) {
+    alert("Could not check for an existing item: " + searchError.message);
+    return;
+  }
 
-  const samePrice =
-    Number(item.final_price || 0) === Number(itemDraft.final_price || 0);
+  const metadataMatch = (possibleMatches || []).find((item) => {
+    if (!["Available", "Hold"].includes(item.status || "Available")) return false;
+    const sameTitle = normalizeTitle(item.title) === normalizeTitle(itemDraft.title);
+    const sameEdition = String(item.edition || "").trim().toLowerCase() ===
+      String(itemDraft.edition || "").trim().toLowerCase();
+    const samePrice = Number(item.final_price || 0) === Number(itemDraft.final_price || 0);
+    const sameGrade = String(item.grade_level || "").trim().toLowerCase() ===
+      String(itemDraft.grade_level || "").trim().toLowerCase();
+    return sameTitle && sameEdition && samePrice && sameGrade;
+  });
 
-const sameGrade =
-  String(item.grade_level || "").trim().toLowerCase() ===
-  String(itemDraft.grade_level || "").trim().toLowerCase();
+  if (metadataMatch) {
+    const addQuantity = confirm(
+      `Possible matching book found:\n\n${metadataMatch.title}\nSKU: ${metadataMatch.sku}\n` +
+      `Current quantity: ${metadataMatch.quantity || 0}\n\n` +
+      `Select OK to add ${itemDraft.quantity || 1} copy/copies to this listing.\n` +
+      `Select Cancel to create a separate listing instead.`
+    );
+    if (addQuantity) {
+      existingItem = metadataMatch;
+      duplicateMatchReason = "matching_metadata";
+    }
+  }
+}
 
-  return sameTitle && sameEdition && samePrice && sameGrade;
-});
-
-
-  if (existingItems && existingItems.length > 0) {
-    const existingItem = existingItems[0];
+  if (existingItem) {
 
     const newQuantity =
       Number(existingItem.quantity || 0) + Number(itemDraft.quantity || 1);
@@ -2394,9 +3136,29 @@ try {
     await logAudit("inventory_quantity_updated", "item", existingItem.id, {
       title: existingItem.title,
       quantity: newQuantity,
+      duplicate_match_reason: duplicateMatchReason,
+      intake_rules: Object.entries(ruleSources).map(([field, source]) => ({
+        field,
+        rule_id: source.ruleId,
+        rule_name: source.ruleName,
+      })),
     });
 
-    alert("Existing item found. Quantity updated!");
+    await recordIntakeHistory(existingItem.id, itemDraft, true);
+
+    const receivedQuantity = Number(itemDraft.quantity || 1);
+    generateLabels([
+      {
+        ...existingItem,
+        ...duplicateUpdates,
+        quantity: receivedQuantity,
+      },
+    ]);
+
+    alert(
+      `Existing listing updated to quantity ${newQuantity}. ` +
+        `${receivedQuantity} new label${receivedQuantity === 1 ? " was" : "s were"} generated.`
+    );
 } else {
   setAnalysisStatus("Saving new item...");
 
@@ -2475,9 +3237,11 @@ try {
     square_variation_id: squareData.square_variation_id,
   };
 
-  const { error: insertError } = await supabase
+  const { data: insertedItem, error: insertError } = await supabase
     .from("items")
-    .insert([itemWithSquareIds]);
+    .insert([itemWithSquareIds])
+    .select("id")
+    .single();
 
   if (insertError) {
     alert("Save failed: " + insertError.message);
@@ -2487,12 +3251,20 @@ try {
   await logAudit("inventory_item_created", "item", itemWithSquareIds.sku, {
     title: itemWithSquareIds.title,
     sku: itemWithSquareIds.sku,
+    intake_rules: Object.entries(ruleSources).map(([field, source]) => ({
+      field,
+      rule_id: source.ruleId,
+      rule_name: source.ruleName,
+    })),
   });
+
+  await recordIntakeHistory(insertedItem?.id, itemWithSquareIds, false);
 
   alert("New item saved!");
 }
 
   setBookData(null);
+  clearRuleFeedback();
   setCoverPhoto(null);
   setCoverFile(null);
   setIsbnPhoto(null);
@@ -3009,6 +3781,24 @@ const filteredItems = items.filter((item) => {
   matchesLocation &&
   matchesDateAdded
 );
+}).sort((a, b) => {
+  if (inventorySortBy === "title") {
+    return (a.title || "").localeCompare(b.title || "");
+  }
+
+  if (inventorySortBy === "quantityLow") {
+    return Number(a.quantity || 0) - Number(b.quantity || 0);
+  }
+
+  if (inventorySortBy === "quantityHigh") {
+    return Number(b.quantity || 0) - Number(a.quantity || 0);
+  }
+
+  if (inventorySortBy === "oldest") {
+    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
+  }
+
+  return new Date(b.created_at || 0) - new Date(a.created_at || 0);
 });
 
 
@@ -3104,6 +3894,52 @@ const catalogGradeOptions = [
       .sort()
   ),
 ];
+
+const inventorySuggestionEvidence = items.map((item) => ({
+  imported_values: {},
+  final_values: {
+    title: item.title || "",
+    author: item.author || "",
+    publisher: item.publisher || "",
+    curriculum: item.curriculum || "",
+    subject: item.subject || "",
+    grade_level: item.grade_level || "",
+    category: item.category || "",
+    final_price: (item.status || "Available") === "Available" ? item.final_price : "",
+  },
+}));
+
+const automaticRuleSuggestions = isAdmin
+  ? (() => {
+      const fromHistory = generateRuleSuggestions(
+        intakeHistories,
+        intakeRules,
+        suggestionReviews
+      ).map((suggestion) => ({ ...suggestion, evidence_source: "Intake history" }));
+      const fromInventory = generateRuleSuggestions(
+        inventorySuggestionEvidence,
+        intakeRules,
+        suggestionReviews
+      ).map((suggestion) => ({ ...suggestion, evidence_source: "Existing inventory" }));
+      const byKey = new Map();
+      for (const suggestion of [...fromHistory, ...fromInventory]) {
+        const existing = byKey.get(suggestion.key);
+        if (!existing || suggestion.sample_count > existing.sample_count) {
+          byKey.set(suggestion.key, suggestion);
+        }
+      }
+      return [...byKey.values()].sort(
+        (a, b) => b.confidence - a.confidence || b.sample_count - a.sample_count
+      );
+    })()
+  : [];
+
+const inventoryIsbnInconsistencies = isAdmin
+  ? findIsbnInconsistencies(items).filter((issue) => {
+      const review = isbnInconsistencyReviews.find((item) => item.isbn === issue.isbn);
+      return !review || review.record_signature !== issue.record_signature;
+    })
+  : [];
 
 const totalTitles = items.length;
 
@@ -3394,6 +4230,276 @@ function renderChangePasswordPanel() {
   );
 }
 
+async function submitPublicCustomerRequest(event) {
+  event.preventDefault();
+  setPublicRequestSubmitting(true);
+  setPublicRequestMessage("");
+  const { data, error } = await supabase.rpc("submit_customer_request", {
+    p_customer_name: publicRequestDraft.customer_name,
+    p_email: publicRequestDraft.email,
+    p_phone: publicRequestDraft.phone,
+    p_preferred_contact: publicRequestDraft.preferred_contact,
+    p_isbn: publicRequestDraft.isbn,
+    p_title: publicRequestDraft.title,
+    p_author: publicRequestDraft.author,
+    p_curriculum: publicRequestDraft.curriculum,
+    p_subject: publicRequestDraft.subject,
+    p_grade_level: publicRequestDraft.grade_level,
+    p_notes: publicRequestDraft.notes,
+    p_website: publicRequestDraft.website,
+  });
+  setPublicRequestSubmitting(false);
+  if (error) {
+    setPublicRequestMessage(error.message || "We could not save your request. Please try again.");
+    return;
+  }
+  setPublicRequestDraft({ ...EMPTY_CUSTOMER_REQUEST, website: "" });
+  setPublicRequestMessage(data
+    ? "Your request has been received. We checked current inventory and will contact you if there is a possible match now or after a future arrival."
+    : "Your request has been received.");
+}
+
+function openPublicRequestForItem(item = null) {
+  setPublicRequestDraft((current) => ({
+    ...current,
+    title: item?.title || current.title,
+    isbn: item?.isbn || current.isbn,
+    curriculum: item?.curriculum || current.curriculum,
+    subject: item?.subject || current.subject,
+    grade_level: item?.grade_level || current.grade_level,
+  }));
+  setPublicRequestMessage("");
+  setPublicRequestOpen(true);
+}
+
+async function loadCustomerRequestData() {
+  const [requestsResult, matchesResult] = await Promise.all([
+    supabase.from("customer_requests").select("*").order("created_at", { ascending: false }),
+    supabase.from("customer_request_matches").select("*").order("created_at", { ascending: false }),
+  ]);
+
+  if (requestsResult.error || matchesResult.error) {
+    setCustomerRequestMessage(
+      "Could not load customer requests. Make sure the customer requests migration has been run."
+    );
+    return;
+  }
+  setCustomerRequests(requestsResult.data || []);
+  setCustomerRequestMatches(matchesResult.data || []);
+}
+
+async function createCustomerRequest(event) {
+  event.preventDefault();
+  if (!customerRequestDraft.email.trim() && !customerRequestDraft.phone.trim()) {
+    setCustomerRequestMessage("Enter an email address or phone number.");
+    return;
+  }
+  setCustomerRequestLoading(true);
+  setCustomerRequestMessage("");
+  const { data: insertedRequest, error } = await supabase.from("customer_requests").insert([{
+    ...customerRequestDraft,
+    created_by: session?.user?.id || null,
+  }]).select("id").single();
+  setCustomerRequestLoading(false);
+  if (error) {
+    setCustomerRequestMessage("Could not save request: " + error.message);
+    return;
+  }
+  setCustomerRequestDraft(EMPTY_CUSTOMER_REQUEST);
+  const { count: immediateMatchCount } = await supabase
+    .from("customer_request_matches")
+    .select("id", { count: "exact", head: true })
+    .eq("request_id", insertedRequest.id);
+  setCustomerRequestMessage(
+    `Customer request saved and current inventory checked. ${Number(immediateMatchCount || 0)} possible ` +
+    `match${Number(immediateMatchCount || 0) === 1 ? "" : "es"} found.`
+  );
+  await loadCustomerRequestData();
+}
+
+async function updateCustomerRequestStatus(request, status) {
+  const { error } = await supabase.from("customer_requests").update({
+    status,
+    updated_at: new Date().toISOString(),
+  }).eq("id", request.id);
+  if (error) setCustomerRequestMessage("Could not update request: " + error.message);
+  else await loadCustomerRequestData();
+}
+
+async function runCustomerRequestCheck() {
+  setCustomerRequestLoading(true);
+  setCustomerRequestMessage("Checking queued inventory arrivals...");
+  const { data, error } = await supabase.rpc("run_customer_request_matching");
+  setCustomerRequestLoading(false);
+  if (error) {
+    setCustomerRequestMessage("Could not complete the check: " + error.message);
+    return;
+  }
+  setCustomerRequestMessage(`${Number(data || 0)} new possible match${Number(data || 0) === 1 ? "" : "es"} found.`);
+  await loadCustomerRequestData();
+}
+
+async function updateCustomerMatchStatus(match, status) {
+  const updates = {
+    status,
+    reviewed_by: session?.user?.id || null,
+    reviewed_at: new Date().toISOString(),
+  };
+  const { error } = await supabase.from("customer_request_matches").update(updates).eq("id", match.id);
+  if (error) {
+    setCustomerRequestMessage("Could not update match: " + error.message);
+    return;
+  }
+  if (status === "fulfilled") {
+    await supabase.from("customer_requests").update({ status: "fulfilled", updated_at: new Date().toISOString() }).eq("id", match.request_id);
+  }
+  await loadCustomerRequestData();
+}
+
+function renderPublicRequestForm() {
+  if (!publicRequestOpen) return null;
+  return (
+    <section className="public-request-panel">
+      <div className="public-request-heading">
+        <div><h2>Request a Book</h2><p>Tell us what you’re looking for. We’ll contact you if a possible match comes in.</p></div>
+        <button type="button" className="secondary" onClick={() => setPublicRequestOpen(false)}>Close</button>
+      </div>
+      {publicRequestMessage && <p className="status-message">{publicRequestMessage}</p>}
+      {!publicRequestMessage && (
+        <form onSubmit={submitPublicCustomerRequest}>
+          <div className="customer-form-grid">
+            <div><label>Your Name</label><input required value={publicRequestDraft.customer_name} onChange={(e) => setPublicRequestDraft((current) => ({...current, customer_name: e.target.value}))} /></div>
+            <div><label>Email</label><input type="email" value={publicRequestDraft.email} onChange={(e) => setPublicRequestDraft((current) => ({...current, email: e.target.value}))} /></div>
+            <div><label>Phone</label><input value={publicRequestDraft.phone} onChange={(e) => setPublicRequestDraft((current) => ({...current, phone: e.target.value}))} /></div>
+            <div><label>How should we contact you?</label><select value={publicRequestDraft.preferred_contact} onChange={(e) => setPublicRequestDraft((current) => ({...current, preferred_contact: e.target.value}))}><option value="email">Email</option><option value="phone">Phone</option><option value="either">Either</option></select></div>
+            <div><label>Book Title</label><input value={publicRequestDraft.title} onChange={(e) => setPublicRequestDraft((current) => ({...current, title: e.target.value}))} /></div>
+            <div><label>ISBN, if known</label><input value={publicRequestDraft.isbn} onChange={(e) => setPublicRequestDraft((current) => ({...current, isbn: e.target.value}))} /></div>
+            <div><label>Author</label><input value={publicRequestDraft.author} onChange={(e) => setPublicRequestDraft((current) => ({...current, author: e.target.value}))} /></div>
+            <div><label>Curriculum</label><input value={publicRequestDraft.curriculum} onChange={(e) => setPublicRequestDraft((current) => ({...current, curriculum: e.target.value}))} /></div>
+            <div><label>Subject</label><input value={publicRequestDraft.subject} onChange={(e) => setPublicRequestDraft((current) => ({...current, subject: e.target.value}))} /></div>
+            <div><label>Grade Level</label><input value={publicRequestDraft.grade_level} onChange={(e) => setPublicRequestDraft((current) => ({...current, grade_level: e.target.value}))} /></div>
+          </div>
+          <div className="request-honeypot" aria-hidden="true"><label>Website</label><input tabIndex="-1" autoComplete="off" value={publicRequestDraft.website} onChange={(e) => setPublicRequestDraft((current) => ({...current, website: e.target.value}))} /></div>
+          <label>Anything else we should know?</label><textarea value={publicRequestDraft.notes} onChange={(e) => setPublicRequestDraft((current) => ({...current, notes: e.target.value}))} />
+          <p className="helper-text">Your contact information is used only to follow up about this request. Submitting a request does not reserve a book.</p>
+          <button type="submit" className="primary" disabled={publicRequestSubmitting}>{publicRequestSubmitting ? "Sending..." : "Submit Request"}</button>
+        </form>
+      )}
+    </section>
+  );
+}
+
+function renderCustomerRequests() {
+  const visibleRequests = customerRequests.filter((request) =>
+    customerRequestFilter === "all" || request.status === customerRequestFilter
+  );
+  const pendingMatches = customerRequestMatches.filter((match) =>
+    ["pending", "still_waiting"].includes(match.status)
+  );
+  const requestById = Object.fromEntries(customerRequests.map((request) => [request.id, request]));
+  const itemById = Object.fromEntries(items.map((item) => [String(item.id), item]));
+
+  return (
+    <section className="card customer-requests-page">
+      <div className="customer-requests-heading">
+        <div><h2>Customer Requests</h2><p>New requests check current inventory immediately. New arrivals are checked here or by the nightly processor.</p></div>
+        <button type="button" className="primary" onClick={runCustomerRequestCheck} disabled={customerRequestLoading}>
+          {customerRequestLoading ? "Checking..." : "Check Now"}
+        </button>
+      </div>
+      {customerRequestMessage && <p className="status-message">{customerRequestMessage}</p>}
+
+      <section className="customer-match-section">
+        <h3>Matches to Review {pendingMatches.length > 0 && <span className="options-nav-badge">{pendingMatches.length}</span>}</h3>
+        {pendingMatches.length === 0 && <p>No customer matches need review.</p>}
+        {pendingMatches.map((match) => {
+          const request = requestById[match.request_id];
+          const item = itemById[String(match.item_id)];
+          if (!request) return null;
+          return (
+            <article className="customer-match-card" key={match.id}>
+              <div>
+                <span className={`match-strength ${match.match_strength}`}>{match.match_strength} match</span>
+                <h3>{item?.title || request.title || "Requested book"}</h3>
+                <p><strong>{request.customer_name}</strong> · {request.preferred_contact}</p>
+                <p>{request.email || request.phone}</p>
+                <p>Matched: {(match.match_reasons || []).join(", ")}</p>
+                {item && <p>SKU {item.sku} · Qty {item.quantity} · ${Number(item.final_price || 0).toFixed(2)}</p>}
+              </div>
+              <div className="customer-match-actions">
+                {item && <button type="button" className="secondary" onClick={() => setExpandedCustomerMatchId((current) => current === match.id ? "" : match.id)}>{expandedCustomerMatchId === match.id ? "Hide Book" : "View Book"}</button>}
+                <button type="button" className="primary" onClick={() => updateCustomerMatchStatus(match, "contacted")}>Mark Contacted</button>
+                <button type="button" className="secondary" onClick={() => updateCustomerMatchStatus(match, "fulfilled")}>Fulfilled</button>
+                <button type="button" className="secondary" onClick={() => updateCustomerMatchStatus(match, "still_waiting")}>Still Waiting</button>
+                <button type="button" className="secondary" onClick={() => updateCustomerMatchStatus(match, "not_match")}>Not a Match</button>
+              </div>
+              {item && expandedCustomerMatchId === match.id && (
+                <section className="customer-match-preview">
+                  <BookCoverImage src={item.image_url} alt={item.title} width={240} height={320} eager />
+                  <div>
+                    <h3>{item.title}</h3>
+                    <p><strong>ISBN:</strong> {item.isbn || "Not set"}</p>
+                    <p><strong>Author:</strong> {item.author || "Not set"}</p>
+                    <p><strong>Publisher:</strong> {item.publisher || "Not set"}</p>
+                    <p><strong>Curriculum:</strong> {item.curriculum || "Not set"}</p>
+                    <p><strong>Subject:</strong> {item.subject || "Not set"}</p>
+                    <p><strong>Grade Level:</strong> {item.grade_level || "Not set"}</p>
+                    <p><strong>Category:</strong> {item.category || "Not set"}</p>
+                    <p><strong>Edition:</strong> {item.edition || "Not set"}</p>
+                    <p><strong>Location:</strong> {item.location || "Not set"}</p>
+                    <p><strong>Status:</strong> {item.status || "Available"}</p>
+                    <p><strong>SKU:</strong> {item.sku || "Not set"}</p>
+                    <p><strong>Quantity:</strong> {item.quantity || 0}</p>
+                    <p><strong>Price:</strong> ${Number(item.final_price || 0).toFixed(2)}</p>
+                  </div>
+                  <div className="customer-request-comparison">
+                    <h3>Customer Asked For</h3>
+                    <p><strong>Title:</strong> {request.title || "Any"}</p>
+                    <p><strong>ISBN:</strong> {request.isbn || "Any"}</p>
+                    <p><strong>Author:</strong> {request.author || "Any"}</p>
+                    <p><strong>Curriculum:</strong> {request.curriculum || "Any"}</p>
+                    <p><strong>Subject:</strong> {request.subject || "Any"}</p>
+                    <p><strong>Grade Level:</strong> {request.grade_level || "Any"}</p>
+                    {request.notes && <p><strong>Notes:</strong> {request.notes}</p>}
+                  </div>
+                </section>
+              )}
+            </article>
+          );
+        })}
+      </section>
+
+      <section className="customer-request-layout">
+        <form className="customer-request-form option-panel" onSubmit={createCustomerRequest}>
+          <h3>Add Customer Request</h3>
+          <label>Customer Name</label><input required value={customerRequestDraft.customer_name} onChange={(e) => setCustomerRequestDraft((current) => ({...current, customer_name: e.target.value}))} />
+          <div className="customer-form-grid">
+            <div><label>Email</label><input type="email" value={customerRequestDraft.email} onChange={(e) => setCustomerRequestDraft((current) => ({...current, email: e.target.value}))} /></div>
+            <div><label>Phone</label><input value={customerRequestDraft.phone} onChange={(e) => setCustomerRequestDraft((current) => ({...current, phone: e.target.value}))} /></div>
+          </div>
+          <label>Preferred Contact</label><select value={customerRequestDraft.preferred_contact} onChange={(e) => setCustomerRequestDraft((current) => ({...current, preferred_contact: e.target.value}))}><option value="email">Email</option><option value="phone">Phone</option><option value="either">Either</option></select>
+          <div className="customer-form-grid">
+            <div><label>ISBN</label><input value={customerRequestDraft.isbn} onChange={(e) => setCustomerRequestDraft((current) => ({...current, isbn: e.target.value}))} /></div>
+            <div><label>Title Contains</label><input value={customerRequestDraft.title} onChange={(e) => setCustomerRequestDraft((current) => ({...current, title: e.target.value}))} /></div>
+            <div><label>Author Contains</label><input value={customerRequestDraft.author} onChange={(e) => setCustomerRequestDraft((current) => ({...current, author: e.target.value}))} /></div>
+            <div><label>Curriculum Contains</label><input value={customerRequestDraft.curriculum} onChange={(e) => setCustomerRequestDraft((current) => ({...current, curriculum: e.target.value}))} /></div>
+            <div><label>Subject</label><select value={customerRequestDraft.subject} onChange={(e) => setCustomerRequestDraft((current) => ({...current, subject: e.target.value}))}><option value="">Any</option>{subjectOptions.map((option) => <option key={option}>{option}</option>)}</select></div>
+            <div><label>Grade Level</label><select value={customerRequestDraft.grade_level} onChange={(e) => setCustomerRequestDraft((current) => ({...current, grade_level: e.target.value}))}><option value="">Any</option>{gradeOptions.map((option) => <option key={option}>{option}</option>)}</select></div>
+          </div>
+          <label>Notes</label><textarea value={customerRequestDraft.notes} onChange={(e) => setCustomerRequestDraft((current) => ({...current, notes: e.target.value}))} />
+          <button type="submit" className="primary" disabled={customerRequestLoading}>Save Request</button>
+        </form>
+
+        <section className="customer-request-list">
+          <div className="customer-list-heading"><h3>Saved Requests</h3><select value={customerRequestFilter} onChange={(e) => setCustomerRequestFilter(e.target.value)}><option value="active">Active</option><option value="fulfilled">Fulfilled</option><option value="closed">Closed</option><option value="all">All</option></select></div>
+          {visibleRequests.length === 0 && <p>No requests in this section.</p>}
+          {visibleRequests.map((request) => <article className="customer-request-card" key={request.id}><div><h3>{request.customer_name}</h3><p>{[request.title, request.author, request.curriculum, request.subject, request.grade_level, request.isbn].filter(Boolean).join(" · ")}</p><p>{request.email || request.phone} · {request.status}</p>{request.notes && <p>{request.notes}</p>}</div>{request.status === "active" && <button type="button" className="secondary" onClick={() => updateCustomerRequestStatus(request, "closed")}>Close</button>}</article>)}
+        </section>
+      </section>
+    </section>
+  );
+}
+
 function renderUserManagement() {
   return (
     <section className="card">
@@ -3512,7 +4618,7 @@ function renderUserManagement() {
 
   return (
     <main className="app">
-      <h1>IL HRC Book Intake</h1>
+      <h1>{view === "catalog" || view === "curricula" ? "IL HRC Used Books" : "IL HRC Book Intake"}</h1>
 
       {authLoading && (
         <section className="card">
@@ -3614,7 +4720,7 @@ function renderUserManagement() {
           Inventory
         </button>
 
-        <button
+<button
   className={view === "labels" ? "primary" : "secondary"}
   onClick={() => {
     setView("labels");
@@ -3624,6 +4730,20 @@ function renderUserManagement() {
 >
   Print Labels
 </button>
+
+        <button
+          className={view === "requests" ? "primary" : "secondary"}
+          onClick={() => {
+            setView("requests");
+            cancelEditing();
+            loadItems();
+          }}
+        >
+          Customer Requests
+          {customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length > 0 && (
+            <span className="nav-count-badge">{customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length}</span>
+          )}
+        </button>
 
         <button
   className={view === "options" ? "primary" : "secondary"}
@@ -3661,8 +4781,30 @@ onClick={() => {
   Public Catalog
 </button>
 
+        <button
+          className={view === "curricula" ? "primary" : "secondary"}
+          onClick={() => {
+            setView("curricula");
+            cancelEditing();
+            loadItems();
+          }}
+        >
+          Curriculum Lists
+        </button>
+
       </div>
 )}
+
+      {!authLoading && !shouldShowPasswordSetup && !isAuthenticated && !staffSignInOpen && (
+        <nav className="public-nav" aria-label="Public pages">
+          <button className={view === "catalog" ? "primary" : "secondary"} type="button" onClick={() => setView("catalog")}>
+            Browse Books
+          </button>
+          <button className={view === "curricula" ? "primary" : "secondary"} type="button" onClick={() => setView("curricula")}>
+            Curriculum Lists
+          </button>
+        </nav>
+      )}
 
       {!authLoading && authMessage && isAuthenticated && (
         <p className="warning-text">{authMessage}</p>
@@ -3754,6 +4896,27 @@ onClick={() => {
             <section className="card">
   <h2>Review & Edit Details</h2>
 
+  {Object.keys(ruleConflicts).length > 0 && (
+    <div className="rule-conflict-box">
+      <strong>Rule choices need review</strong>
+      {Object.entries(ruleConflicts).map(([field, choices]) => (
+        <div key={field} className="rule-conflict-row">
+          <span>{RULE_OUTPUT_FIELDS.find(([value]) => value === field)?.[1] || field}:</span>
+          {choices.map((choice) => (
+            <button
+              type="button"
+              className="secondary"
+              key={`${choice.ruleId}-${choice.value}`}
+              onClick={() => updateIntakeField(field, choice.value)}
+            >
+              Use {choice.value} ({choice.ruleName})
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  )}
+
 <button
   className="secondary"
   onClick={() => listingPhotoInputRef.current.click()}
@@ -3774,9 +4937,7 @@ onClick={() => {
               <label>Title</label>
               <input
                 value={bookData.title || ""}
-                onChange={(e) =>
-                  setBookData({ ...bookData, title: e.target.value })
-                }
+                onChange={(e) => updateIntakeField("title", e.target.value)}
               />
 
               <label>Curriculum</label>
@@ -3787,10 +4948,7 @@ onClick={() => {
                   : "Other"
               }
               onChange={(e) =>
-                setBookData({
-                  ...bookData,
-                  curriculum: e.target.value === "Other" ? "" : e.target.value,
-                })
+                updateIntakeField("curriculum", e.target.value === "Other" ? "" : e.target.value)
               }
             >
               <option value="">Choose curriculum</option>
@@ -3807,9 +4965,7 @@ onClick={() => {
                 <input
                   placeholder="Add new curriculum"
                   value={bookData.curriculum || ""}
-                  onChange={(e) =>
-                    setBookData({ ...bookData, curriculum: e.target.value })
-                  }
+                  onChange={(e) => updateIntakeField("curriculum", e.target.value)}
                 />
 
                 <p className="helper-text">
@@ -3818,27 +4974,21 @@ onClick={() => {
               </>
             )}
 
+            {ruleSources.curriculum && (
+              <p className="rule-source">{getIntakeSourceLabel(ruleSources.curriculum)}</p>
+            )}
+
 <label>Publisher</label>
 <input
   value={bookData.publisher || ""}
-  onChange={(e) =>
-    setBookData({
-      ...bookData,
-      publisher: e.target.value,
-    })
-  }
+  onChange={(e) => updateIntakeField("publisher", e.target.value)}
 />
 
 
               <label>Subject</label>
               <select
               value={bookData.subject || ""}
-              onChange={(e) =>
-                  setBookData({
-                    ...bookData,
-                    subject: e.target.value,
-                  })
-                }
+              onChange={(e) => updateIntakeField("subject", e.target.value)}
             >
               <option value="">Choose subject</option>
               {subjectOptions.map((option) => (
@@ -3847,6 +4997,9 @@ onClick={() => {
                 </option>
               ))}
             </select>
+            {ruleSources.subject && (
+              <p className="rule-source">{getIntakeSourceLabel(ruleSources.subject)}</p>
+            )}
 
            
               <label>Grade Level</label>
@@ -3857,10 +5010,7 @@ onClick={() => {
                   : "Other"
               }
               onChange={(e) =>
-                setBookData({
-                  ...bookData,
-                  grade_level: e.target.value === "Other" ? "" : e.target.value,
-                })
+                updateIntakeField("grade_level", e.target.value === "Other" ? "" : e.target.value)
               }
             >
               <option value="">Choose grade level</option>
@@ -3870,6 +5020,9 @@ onClick={() => {
                 </option>
               ))}
             </select>
+            {ruleSources.grade_level && (
+              <p className="rule-source">{getIntakeSourceLabel(ruleSources.grade_level)}</p>
+            )}
 
           
               <label>Edition</label>
@@ -3883,9 +5036,7 @@ onClick={() => {
               <label>ISBN</label>
               <input
                 value={bookData.isbn || ""}
-                onChange={(e) =>
-                  setBookData({ ...bookData, isbn: e.target.value })
-                }
+                onChange={(e) => updateIntakeField("isbn", e.target.value)}
               />
 
               <label>Category</label>
@@ -3896,12 +5047,10 @@ onClick={() => {
                     (item) => item.name === e.target.value
                   );
 
-                 setBookData({
-                ...bookData,
-                category: selected?.name || "",
-                suggested_price: selected?.default_price || "",
-                final_price: selected?.default_price || "",
-              });
+                 updateIntakeField("category", selected?.name || "", {
+                   suggested_price: selected?.default_price || "",
+                   final_price: selected?.default_price || "",
+                 });
                 }}
               >
                 <option value="">Choose a category</option>
@@ -3912,6 +5061,9 @@ onClick={() => {
                   </option>
                 ))}
               </select>
+              {ruleSources.category && (
+                <p className="rule-source">{getIntakeSourceLabel(ruleSources.category)}</p>
+              )}
 
                 {bookData.category && (
                   <p>
@@ -3929,10 +5081,11 @@ onClick={() => {
                 type="number"
                 step="0.01"
                 value={bookData.final_price || ""}
-                onChange={(e) =>
-                  setBookData({ ...bookData, final_price: e.target.value })
-                }
+                onChange={(e) => updateIntakeField("final_price", e.target.value)}
               />
+              {ruleSources.final_price && (
+                <p className="rule-source">{getIntakeSourceLabel(ruleSources.final_price)}</p>
+              )}
 
               <label>Quantity</label>
               <input
@@ -4053,12 +5206,6 @@ onClick={() => {
   </div>
 </div>
 
-
-<input
-  placeholder="Search title, curriculum, subject, grade, ISBN, SKU..."
-  value={searchTerm}
-  onChange={(e) => setSearchTerm(e.target.value)}
-/>
 
           {editData && (
             <section className="card">
@@ -4406,6 +5553,14 @@ onClick={() => {
             <aside className="inventory-sidebar">
               <h3>Filters</h3>
 
+              <label>Search</label>
+              <input
+                type="search"
+                placeholder="Title, ISBN, SKU..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+              />
+
               <label>Curriculum</label>
               <select
                 value={curriculumFilter}
@@ -4485,6 +5640,18 @@ onClick={() => {
                 onChange={(e) => setInventoryDateTo(e.target.value)}
               />
 
+              <label>Sort By</label>
+              <select
+                value={inventorySortBy}
+                onChange={(e) => setInventorySortBy(e.target.value)}
+              >
+                <option value="newest">Newest Added</option>
+                <option value="oldest">Oldest Added</option>
+                <option value="title">Title A-Z</option>
+                <option value="quantityLow">Quantity Low-High</option>
+                <option value="quantityHigh">Quantity High-Low</option>
+              </select>
+
               {(searchTerm ||
                 curriculumFilter ||
                 subjectFilter ||
@@ -4492,7 +5659,8 @@ onClick={() => {
                 gradeFilter ||
                 locationFilter ||
                 inventoryDateFrom ||
-                inventoryDateTo) && (
+                inventoryDateTo ||
+                inventorySortBy !== "newest") && (
                 <button
                   type="button"
                   className="filter-reset"
@@ -4505,6 +5673,7 @@ onClick={() => {
                     setLocationFilter("");
                     setInventoryDateFrom("");
                     setInventoryDateTo("");
+                    setInventorySortBy("newest");
                   }}
                 >
                   Reset Filters
@@ -4714,8 +5883,32 @@ onClick={() => {
       )}
 
       {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "options" && (
-        <section className="card">
-          <h2>Options</h2>
+        <section className="card options-page-card">
+          <div className="options-heading">
+            <div>
+              <h2>Options</h2>
+              <p>Choose a section to manage bookstore settings.</p>
+            </div>
+          </div>
+
+          <div className="options-layout">
+            <nav className="options-nav" aria-label="Options sections">
+              <button type="button" className={optionsSection === "lists" ? "active" : ""} onClick={() => setOptionsSection("lists")}>Lists & Pricing</button>
+              <button type="button" className={optionsSection === "locations" ? "active" : ""} onClick={() => setOptionsSection("locations")}>Locations</button>
+              {isAdmin && <button type="button" className={optionsSection === "rules" ? "active" : ""} onClick={() => setOptionsSection("rules")}>Intake Rules</button>}
+              {isAdmin && (
+                <button type="button" className={optionsSection === "review" ? "active" : ""} onClick={() => setOptionsSection("review")}>
+                  <span>Review Queue</span>
+                  {(automaticRuleSuggestions.length + inventoryIsbnInconsistencies.length) > 0 && (
+                    <span className="options-nav-badge">{automaticRuleSuggestions.length + inventoryIsbnInconsistencies.length}</span>
+                  )}
+                </button>
+              )}
+            </nav>
+
+            <div className="options-content">
+
+          {optionsSection === "lists" && (<>
 
           <section className="options-section">
             <h3>Inventory Lists</h3>
@@ -4815,6 +6008,454 @@ onClick={() => {
             </div>
           </section>
 
+          </>)}
+
+          {isAdmin && (optionsSection === "rules" || optionsSection === "review") && (
+            <section className="options-section intake-rules-section">
+              <h3>{optionsSection === "review" ? "Review Queue" : "Intake Rules"}</h3>
+              {optionsSection === "rules" && <p>Approved rules run after ISBN or cover analysis. More specific rules win; manual intake changes are never replaced.</p>}
+
+              {optionsSection === "review" && (
+              <section className="suggested-rules-panel">
+                <h3>Suggested Rules</h3>
+                <p>
+                  Suggestions appear after at least three matching intake records reach 90% consistency.
+                  Every suggestion requires administrator approval.
+                </p>
+                <div className="inventory-analysis-summary">
+                  <div>
+                    <strong>{items.length}</strong>
+                    <span>inventory titles analyzed</span>
+                  </div>
+                  <div>
+                    <strong>{inventoryIsbnInconsistencies.length}</strong>
+                    <span>ISBN groups need review</span>
+                  </div>
+                </div>
+
+                {inventoryIsbnInconsistencies.length > 0 && (
+                  <details className="isbn-inconsistencies">
+                    <summary>Review same-ISBN inconsistencies</summary>
+                    {inventoryIsbnInconsistencies.map((issue) => (
+                      <div className="isbn-issue-row" key={issue.isbn}>
+                        <div>
+                          <strong>{issue.title}</strong>
+                          <p>ISBN {issue.isbn} · {issue.record_count} inventory records</p>
+                          <p>
+                            {Object.entries(issue.differences).map(([field, values]) => {
+                              const label = RULE_OUTPUT_FIELDS.find(([key]) => key === field)?.[1] || field;
+                              const displayValues = field === "final_price"
+                                ? values.map((value) => `$${value}`)
+                                : values;
+                              return `${label}: ${displayValues.join(" / ")}`;
+                            }).join(" · ")}
+                          </p>
+                        </div>
+                        <div className="isbn-issue-actions">
+                          <button
+                            type="button"
+                            className="secondary"
+                            onClick={() => setExpandedIsbnReview((current) =>
+                              current === issue.isbn ? "" : issue.isbn
+                            )}
+                          >
+                            {expandedIsbnReview === issue.isbn ? "Hide Items" : "Review Items"}
+                          </button>
+                          <button type="button" className="primary" onClick={() => openIsbnMerge(issue)}>
+                            Merge Entries
+                          </button>
+                          <button type="button" className="secondary" onClick={() => dismissIsbnInconsistency(issue)}>
+                            Dismiss Match
+                          </button>
+                        </div>
+
+                        {expandedIsbnReview === issue.isbn && (
+                          <div className="isbn-comparison-grid">
+                            {getIsbnMergeCandidates(issue).map((item) => (
+                              <article className="isbn-comparison-card" key={item.id}>
+                                <BookCoverImage src={item.image_url} alt={item.title} />
+                                <div>
+                                  <h3>{item.title}</h3>
+                                  <p><strong>SKU:</strong> {item.sku || "Not set"}</p>
+                                  <p><strong>Status:</strong> {item.status || "Available"}</p>
+                                  <p><strong>Quantity:</strong> {item.quantity || 0}</p>
+                                  <p><strong>Price:</strong> ${Number(item.final_price || 0).toFixed(2)}</p>
+                                  <p><strong>Curriculum:</strong> {item.curriculum || "Not set"}</p>
+                                  <p><strong>Subject:</strong> {item.subject || "Not set"}</p>
+                                  <p><strong>Grade:</strong> {item.grade_level || "Not set"}</p>
+                                  <p><strong>Category:</strong> {item.category || "Not set"}</p>
+                                  <p><strong>Edition:</strong> {item.edition || "Not set"}</p>
+                                  <p><strong>Location:</strong> {item.location || "Not set"}</p>
+                                  <p><strong>Square:</strong> {item.square_item_id ? "Connected" : "Not connected"}</p>
+                                  <button
+                                    type="button"
+                                    className="secondary"
+                                    onClick={() => openIsbnMerge(issue, item.id)}
+                                  >
+                                    Keep This Record
+                                  </button>
+                                </div>
+                              </article>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </details>
+                )}
+
+                {isbnMergeIssue && isbnMergeDraft && (
+                  <section ref={isbnMergePanelRef} className="isbn-merge-panel">
+                    <div className="isbn-merge-heading">
+                      <div>
+                        <h3>Merge ISBN {isbnMergeIssue.isbn}</h3>
+                        <p>
+                          Choose the surviving SKU and confirm the values all copies should use.
+                        </p>
+                      </div>
+                      <button type="button" className="secondary" onClick={closeIsbnMerge} disabled={isbnMergeLoading}>
+                        Cancel
+                      </button>
+                    </div>
+
+                    <label>Surviving Inventory Record</label>
+                    <select ref={isbnMergeKeeperRef} value={isbnMergeKeeperId} onChange={(e) => changeIsbnMergeKeeper(e.target.value)}>
+                      {getIsbnMergeCandidates(isbnMergeIssue).map((item) => (
+                        <option key={item.id} value={String(item.id)}>
+                          {item.sku} · {item.title} · ${Number(item.final_price || 0).toFixed(2)} · Qty {item.quantity}
+                        </option>
+                      ))}
+                    </select>
+
+                    <div className="isbn-merge-grid">
+                      <div>
+                        <label>Title</label>
+                        <input value={isbnMergeDraft.title} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, title: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label>Publisher</label>
+                        <input value={isbnMergeDraft.publisher} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, publisher: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label>Curriculum</label>
+                        <select value={isbnMergeDraft.curriculum} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, curriculum: e.target.value }))}>
+                          <option value="">Not set</option>
+                          {curriculumOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label>Subject</label>
+                        <select value={isbnMergeDraft.subject} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, subject: e.target.value }))}>
+                          <option value="">Not set</option>
+                          {subjectOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label>Grade Level</label>
+                        <select value={isbnMergeDraft.grade_level} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, grade_level: e.target.value }))}>
+                          <option value="">Not set</option>
+                          {gradeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label>Category</label>
+                        <select value={isbnMergeDraft.category} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, category: e.target.value }))}>
+                          <option value="">Not set</option>
+                          {categoryOptions.map((option) => <option key={option.name} value={option.name}>{option.name}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label>Edition</label>
+                        <input value={isbnMergeDraft.edition} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, edition: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label>Location</label>
+                        <select value={isbnMergeDraft.location} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, location: e.target.value }))}>
+                          <option value="">Not set</option>
+                          {activeLocationNames.map((option) => <option key={option} value={option}>{option}</option>)}
+                        </select>
+                      </div>
+                      <div>
+                        <label>Final Price</label>
+                        <input type="number" min="0" step="0.01" value={isbnMergeDraft.final_price} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, final_price: e.target.value }))} />
+                      </div>
+                      <div>
+                        <label>Combined Quantity</label>
+                        <input value={isbnMergeDraft.quantity} readOnly />
+                      </div>
+                    </div>
+
+                    <label className="checkbox-label">
+                      <input type="checkbox" checked={isbnMergePrintLabels} onChange={(e) => setIsbnMergePrintLabels(e.target.checked)} />
+                      Print replacement labels for all {isbnMergeDraft.quantity} copies after merging
+                    </label>
+
+                    <button type="button" className="primary" onClick={mergeDuplicateIsbnEntries} disabled={isbnMergeLoading}>
+                      {isbnMergeLoading ? "Merging..." : "Confirm Merge"}
+                    </button>
+                    {isbnMergeMessage && <p className="status-message">{isbnMergeMessage}</p>}
+                  </section>
+                )}
+                {automaticRuleSuggestions.length === 0 && (
+                  <p className="helper-text">No new suggestions yet. More intake history may be needed.</p>
+                )}
+                {automaticRuleSuggestions.map((suggestion) => (
+                  <article className="suggested-rule-card" key={suggestion.key}>
+                    <div>
+                      <h3>
+                        {RULE_INPUT_FIELDS.find(([field]) => field === suggestion.input_field)?.[1] || suggestion.input_field}
+                        {suggestion.input_field === "title" ? " equals “" : " contains “"}{suggestion.input_value}{"”"}
+                      </h3>
+                      <p className="rule-summary">
+                        Fill {Object.entries(suggestion.actions).map(([field, value]) => {
+                          const label = RULE_OUTPUT_FIELDS.find(([key]) => key === field)?.[1] || field;
+                          return `${label}: ${field === "final_price" ? `$${Number(value).toFixed(2)}` : value}`;
+                        }).join(", ")}
+                      </p>
+                      <p>
+                        Based on {suggestion.sample_count} records from {suggestion.evidence_source.toLowerCase()} · {Math.round(suggestion.confidence * 100)}% minimum agreement
+                      </p>
+                    </div>
+                    <div className="rule-card-actions">
+                      <button type="button" className="primary" onClick={() => approveRuleSuggestion(suggestion)}>
+                        Review & Approve
+                      </button>
+                      <button type="button" className="secondary" onClick={() => reviewRuleSuggestion(suggestion, "deferred")}>
+                        Wait for More Data
+                      </button>
+                      <button type="button" className="secondary" onClick={() => reviewRuleSuggestion(suggestion, "dismissed")}>
+                        Dismiss
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </section>
+              )}
+
+              {optionsSection === "rules" && (<>
+              <section
+                ref={intakeRuleEditorRef}
+                className={`intake-rule-editor ${reviewingSuggestionKey ? "reviewing-suggestion" : ""}`}
+              >
+                <h3>{editingIntakeRuleId ? "Edit Rule" : "Create Rule"}</h3>
+
+                {reviewingSuggestionKey && (
+                  <p className="rule-review-banner">
+                    Suggested rule loaded. Review the details below, then select Create Rule to approve it.
+                  </p>
+                )}
+
+                <label>Rule Name</label>
+                <input
+                  ref={intakeRuleNameRef}
+                  value={intakeRuleDraft.name}
+                  onChange={(e) => setIntakeRuleDraft((current) => ({ ...current, name: e.target.value }))}
+                  placeholder="Example: Math-U-See materials"
+                />
+
+                <label>Description</label>
+                <input
+                  value={intakeRuleDraft.description}
+                  onChange={(e) => setIntakeRuleDraft((current) => ({ ...current, description: e.target.value }))}
+                  placeholder="Optional explanation"
+                />
+
+                <div className="rule-settings-row">
+                  <div>
+                    <label>Conditions</label>
+                    <select
+                      value={intakeRuleDraft.match_mode}
+                      onChange={(e) => setIntakeRuleDraft((current) => ({ ...current, match_mode: e.target.value }))}
+                    >
+                      <option value="all">Match all conditions</option>
+                      <option value="any">Match any condition</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label>Priority</label>
+                    <input
+                      type="number"
+                      value={intakeRuleDraft.priority}
+                      onChange={(e) => setIntakeRuleDraft((current) => ({ ...current, priority: e.target.value }))}
+                    />
+                  </div>
+                </div>
+
+                {intakeRuleDraft.conditions.map((condition, index) => (
+                  <div className="rule-condition-row" key={index}>
+                    <select
+                      aria-label={`Condition ${index + 1} field`}
+                      value={condition.field}
+                      onChange={(e) => setIntakeRuleDraft((current) => ({
+                        ...current,
+                        conditions: current.conditions.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, field: e.target.value } : item
+                        ),
+                      }))}
+                    >
+                      {RULE_INPUT_FIELDS.map(([value, label]) => (
+                        <option key={value} value={value}>{label}</option>
+                      ))}
+                    </select>
+                    <select
+                      aria-label={`Condition ${index + 1} comparison`}
+                      value={condition.operator}
+                      onChange={(e) => setIntakeRuleDraft((current) => ({
+                        ...current,
+                        conditions: current.conditions.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, operator: e.target.value } : item
+                        ),
+                      }))}
+                    >
+                      <option value="equals">Equals</option>
+                      <option value="contains">Contains</option>
+                    </select>
+                    <input
+                      aria-label={`Condition ${index + 1} value`}
+                      value={condition.value}
+                      onChange={(e) => setIntakeRuleDraft((current) => ({
+                        ...current,
+                        conditions: current.conditions.map((item, itemIndex) =>
+                          itemIndex === index ? { ...item, value: e.target.value } : item
+                        ),
+                      }))}
+                      placeholder="Value to match"
+                    />
+                    <button
+                      type="button"
+                      className="secondary"
+                      disabled={intakeRuleDraft.conditions.length === 1}
+                      onClick={() => setIntakeRuleDraft((current) => ({
+                        ...current,
+                        conditions: current.conditions.filter((_, itemIndex) => itemIndex !== index),
+                      }))}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => setIntakeRuleDraft((current) => ({
+                    ...current,
+                    conditions: [...current.conditions, { field: "title", operator: "contains", value: "" }],
+                  }))}
+                >
+                  Add Condition
+                </button>
+
+                <h3 className="rule-results-heading">Fill These Fields</h3>
+                <div className="rule-actions-grid">
+                  {RULE_OUTPUT_FIELDS.map(([field, label]) => {
+                    if (field === "final_price") {
+                      return (
+                        <div key={field}>
+                          <label>{label}</label>
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            value={intakeRuleDraft.actions[field] || ""}
+                            onChange={(e) => setIntakeRuleDraft((current) => ({
+                              ...current,
+                              actions: { ...current.actions, [field]: e.target.value },
+                            }))}
+                            placeholder="No change"
+                          />
+                        </div>
+                      );
+                    }
+                    const choices = field === "curriculum"
+                      ? curriculumOptions
+                      : field === "subject"
+                        ? subjectOptions
+                        : field === "grade_level"
+                          ? gradeOptions
+                          : categoryOptions.map((item) => item.name);
+                    return (
+                      <div key={field}>
+                        <label>{label}</label>
+                        <select
+                          value={intakeRuleDraft.actions[field] || ""}
+                          onChange={(e) => setIntakeRuleDraft((current) => ({
+                            ...current,
+                            actions: { ...current.actions, [field]: e.target.value },
+                          }))}
+                        >
+                          <option value="">No change</option>
+                          {choices.map((choice) => (
+                            <option key={choice} value={choice}>{choice}</option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    checked={intakeRuleDraft.active}
+                    onChange={(e) => setIntakeRuleDraft((current) => ({ ...current, active: e.target.checked }))}
+                  />
+                  Rule is active
+                </label>
+
+                <div className="rule-editor-actions">
+                  <button type="button" className="primary" onClick={saveIntakeRule}>
+                    {editingIntakeRuleId ? "Save Rule" : "Create Rule"}
+                  </button>
+                  {(editingIntakeRuleId || reviewingSuggestionKey) && (
+                    <button type="button" className="secondary" onClick={resetIntakeRuleDraft}>
+                      Cancel
+                    </button>
+                  )}
+                </div>
+                {intakeRuleMessage && <p className="status-message">{intakeRuleMessage}</p>}
+              </section>
+
+              <div className="intake-rule-list">
+                {intakeRules.length === 0 && <p>No intake rules have been created.</p>}
+                {intakeRules.map((rule) => {
+                  const performance = getIntakeRulePerformance(rule.id);
+                  return (
+                  <article className={`intake-rule-card ${rule.active ? "" : "inactive"}`} key={rule.id}>
+                    <div>
+                      <h3>{rule.name}</h3>
+                      <p>{rule.description || `${rule.match_mode === "all" ? "All" : "Any"} conditions must match.`}</p>
+                      <p className="rule-summary">
+                        {(rule.conditions || []).map((condition) =>
+                          `${RULE_INPUT_FIELDS.find(([value]) => value === condition.field)?.[1] || condition.field} ${condition.operator} “${condition.value}”`
+                        ).join(rule.match_mode === "all" ? " AND " : " OR ")}
+                        {" → "}
+                        {Object.entries(rule.actions || {}).map(([field, value]) =>
+                          `${RULE_OUTPUT_FIELDS.find(([key]) => key === field)?.[1] || field}: ${value}`
+                        ).join(", ")}
+                      </p>
+                      <p className="rule-performance">
+                        {performance.applied === 0
+                          ? "No tracked uses yet"
+                          : `Applied ${performance.applied} times · Accepted ${performance.accepted} · Corrected ${performance.corrected} · ${performance.acceptanceRate}% acceptance`}
+                      </p>
+                    </div>
+                    <div className="rule-card-actions">
+                      <button type="button" className="secondary" onClick={() => editIntakeRule(rule)}>Edit</button>
+                      <button type="button" className="secondary" onClick={() => toggleIntakeRule(rule)}>
+                        {rule.active ? "Disable" : "Enable"}
+                      </button>
+                      <button type="button" className="danger" onClick={() => deleteIntakeRule(rule)}>Delete</button>
+                    </div>
+                  </article>
+                  );
+                })}
+              </div>
+              </>)}
+            </section>
+          )}
+
+          {optionsSection === "locations" && (
           <section className="options-section">
             <h3>Locations</h3>
 
@@ -5002,6 +6643,9 @@ onClick={() => {
             ))}
           </section>
           </section>
+          )}
+            </div>
+          </div>
         </section>
       )}
 
@@ -5107,12 +6751,30 @@ onClick={() => {
 
       {!authLoading && !shouldShowPasswordSetup && isAdmin && view === "users" && renderUserManagement()}
 
+      {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "requests" && renderCustomerRequests()}
+
+      {!authLoading && !shouldShowPasswordSetup && view === "curricula" && (
+        <CurriculumCatalog
+          inventory={items}
+          isAuthenticated={isAuthenticated}
+          userId={session?.user?.id}
+          authFetch={authFetch}
+        />
+      )}
+
       {!authLoading && !shouldShowPasswordSetup && view === "catalog" && (
   <section className="card">
-    <h2>Public Catalog Preview</h2>
-    <p>
-      These are the items families would see in the public searchable catalog.
-    </p>
+    <div className="public-catalog-heading">
+      <div>
+        <h2>Public Catalog</h2>
+        <p>Browse available books or ask us to watch for something you need.</p>
+      </div>
+      <button type="button" className="primary" onClick={() => openPublicRequestForItem()}>
+        Request a Book
+      </button>
+    </div>
+
+    {renderPublicRequestForm()}
 
 {selectedCatalogItem && (
   <section className="catalog-detail">
@@ -5144,6 +6806,9 @@ onClick={() => {
     <p><strong>Available:</strong> {selectedCatalogItem.quantity || 1}</p>
 
     <p className="catalog-note">Available in store</p>
+    <button type="button" className="secondary" onClick={() => openPublicRequestForItem(selectedCatalogItem)}>
+      Request Another Copy
+    </button>
   </section>
 )}
 
@@ -5152,12 +6817,6 @@ onClick={() => {
 
 <div className="catalog-layout">
   <section className="catalog-main">
-    <input
-      placeholder="Search title, curriculum, subject, grade..."
-      value={searchTerm}
-      onChange={(e) => setSearchTerm(e.target.value)}
-    />
-
     <div className="catalog-results-header">
       <p>{filteredCatalogItems.length} matching item(s)</p>
     </div>
@@ -5197,6 +6856,17 @@ onClick={() => {
 
   <aside className="catalog-sidebar">
     <h3>Filters</h3>
+
+    <label>Search</label>
+    <input
+      type="search"
+      placeholder="Title, curriculum, subject..."
+      value={pendingSearchTerm}
+      onChange={(e) => setPendingSearchTerm(e.target.value)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") applyCatalogFilters();
+      }}
+    />
 
     <label>Curriculum</label>
     <select
