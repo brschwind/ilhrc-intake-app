@@ -12,6 +12,13 @@ import {
 } from "./intakeRules";
 import { findIsbnInconsistencies, generateRuleSuggestions } from "./ruleSuggestions";
 import CurriculumCatalog from "./CurriculumCatalog";
+import {
+  getKnownPublisherProduct,
+  identifyBookBarcode,
+  inferPublisherItemNumber,
+  normalizePublisher,
+  normalizePublisherItemNumber,
+} from "./barcodeIdentification";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -2335,14 +2342,22 @@ async function handleCoverPhoto(event) {
   const file = event.target.files?.[0];
   if (!file) return;
 
+  const pendingIdentifier = bookData?.publisher_item_number || bookData?.publisher_barcode
+    ? {
+        ...(bookData.publisher ? { publisher: bookData.publisher } : {}),
+        publisher_item_number: bookData.publisher_item_number || "",
+        publisher_barcode: bookData.publisher_barcode || "",
+      }
+    : null;
+
   setCoverPhoto(URL.createObjectURL(file));
-  setBookData(null);
+  setBookData((current) => pendingIdentifier ? current : null);
   clearRuleFeedback();
 
   const optimizedFile = await shrinkImageFile(file);
   setCoverFile(optimizedFile);
 
-  analyzePhotoWithFile(optimizedFile);
+  analyzePhotoWithFile(optimizedFile, pendingIdentifier);
 }
 
 function startManualEntry() {
@@ -2364,6 +2379,8 @@ function startManualEntry() {
     grade_level: "",
     edition: "",
     isbn: "",
+    publisher_barcode: "",
+    publisher_item_number: "",
     category: "",
     suggested_price: "",
     final_price: "",
@@ -2620,6 +2637,121 @@ setBookData(await applyRulesToImportedBook({
   }
 }
 
+async function findPublisherRecord(table, { publisher, publisherItemNumber, publisherBarcode }) {
+  if (publisherBarcode) {
+    const { data, error } = await supabase
+      .from(table)
+      .select("*")
+      .eq("publisher_barcode", publisherBarcode)
+      .limit(1);
+    if (error) throw error;
+    if (data?.[0]) return data[0];
+  }
+
+  if (!publisher || !publisherItemNumber) return null;
+  const { data, error } = await supabase
+    .from(table)
+    .select("*")
+    .eq("publisher_item_number", publisherItemNumber);
+  if (error) throw error;
+  return (data || []).find((candidate) =>
+    normalizePublisher(candidate.publisher) === normalizePublisher(publisher)
+  ) || null;
+}
+
+async function lookupBookByPublisherIdentifier(identification, currentBook = {}) {
+  const publisher = String(identification.publisher || currentBook.publisher || "").trim();
+  const publisherItemNumber = normalizePublisherItemNumber(
+    identification.publisherItemNumber || currentBook.publisher_item_number
+  );
+  const publisherBarcode = String(
+    identification.publisherBarcode || currentBook.publisher_barcode || ""
+  ).trim();
+  setAnalysisStatus("Looking up publisher item...");
+
+  try {
+    const lookup = { publisher, publisherItemNumber, publisherBarcode };
+    const remembered = await findPublisherRecord("items", lookup);
+    const curriculumMaterial = remembered
+      ? null
+      : await findPublisherRecord("curriculum_materials", lookup);
+    const matched = remembered || curriculumMaterial;
+    const matchedPublisher = matched?.publisher || publisher;
+    const matchedNumber = matched?.publisher_item_number || publisherItemNumber;
+    const knownProduct = getKnownPublisherProduct(matchedPublisher, matchedNumber);
+    const importedBook = {
+      ...currentBook,
+      title: matched?.title || knownProduct?.title || currentBook.title || "",
+      curriculum: remembered?.curriculum || currentBook.curriculum || matchedPublisher || "",
+      publisher: matchedPublisher || currentBook.publisher || "",
+      subject: remembered?.subject || currentBook.subject || "",
+      grade_level: remembered?.grade_level || currentBook.grade_level || "",
+      edition: remembered?.edition || curriculumMaterial?.edition_label || knownProduct?.edition || currentBook.edition || "",
+      isbn: matched?.isbn || currentBook.isbn || "",
+      publisher_barcode: publisherBarcode || matched?.publisher_barcode || "",
+      publisher_item_number: matchedNumber || "",
+      category: remembered?.category || currentBook.category || "",
+      suggested_price: remembered?.final_price ?? currentBook.suggested_price ?? "",
+      final_price: remembered?.final_price ?? currentBook.final_price ?? "",
+      quantity: 1,
+      weight_ounces: remembered?.weight_ounces ?? currentBook.weight_ounces ?? "",
+      status: "Available",
+      notes: remembered?.notes || currentBook.notes || "",
+      confidence: remembered
+        ? "Remembered from an earlier publisher-item intake"
+        : curriculumMaterial
+          ? "Matched to a Curriculum List material"
+          : knownProduct
+            ? "Matched to the supplied publisher item list"
+            : "New publisher item — use cover analysis and complete the details once",
+      public_visible: true,
+      image_url: remembered?.image_url || currentBook.image_url || "",
+    };
+
+    setBookData(await applyRulesToImportedBook(
+      importedBook,
+      remembered ? "publisher_inventory" : curriculumMaterial ? "curriculum_material" : "publisher_barcode"
+    ));
+    setAnalysisStatus(
+      matched || knownProduct
+        ? "Publisher item found!"
+        : "New publisher item. Analyze the cover, then review and save it once."
+    );
+    if (matched || knownProduct) setTimeout(() => setAnalysisStatus(""), 1800);
+  } catch (error) {
+    setAnalysisStatus("");
+    alert("Publisher item lookup failed: " + error.message);
+  }
+}
+
+async function lookupEnteredPublisherItem() {
+  if (!bookData?.publisher?.trim() || !bookData?.publisher_item_number?.trim()) {
+    alert("Enter both the publisher and publisher item number before looking it up.");
+    return;
+  }
+  await lookupBookByPublisherIdentifier({
+    publisher: bookData.publisher,
+    publisherItemNumber: bookData.publisher_item_number,
+    publisherBarcode: bookData.publisher_barcode,
+  }, bookData);
+}
+
+async function lookupBookByBarcode(value) {
+  const identification = identifyBookBarcode(value);
+
+  if (identification.type === "isbn") {
+    await lookupBookByIsbn(identification.isbn);
+    return;
+  }
+
+  if (identification.type === "publisher") {
+    await lookupBookByPublisherIdentifier(identification);
+    return;
+  }
+
+  await lookupBookByPublisherIdentifier({ publisherBarcode: identification.raw });
+}
+
 async function scanIsbnBarcode() {
   setIsScanningBarcode(true);
 
@@ -2631,9 +2763,9 @@ async function scanIsbnBarcode() {
       "barcode-video"
     );
 
-const scannedIsbn = result.getText();
+const scannedValue = result.getText();
 
-await lookupBookByIsbn(scannedIsbn);
+await lookupBookByBarcode(scannedValue);
   } catch (error) {
     alert("Barcode scan failed: " + error.message);
   } finally {
@@ -2678,7 +2810,7 @@ function improveDetectedBookData(data) {
   };
 }
 
-async function analyzePhotoWithFile(file) {
+async function analyzePhotoWithFile(file, pendingIdentifier = null) {
   setAnalysisStatus("Preparing image...");
 
   try {
@@ -2705,9 +2837,14 @@ async function analyzePhotoWithFile(file) {
     setAnalysisStatus("Filling book details...");
     const improvedData = improveDetectedBookData(data);
     const suggested = suggestPricingCategory(improvedData);
+    const detectedPublisher = pendingIdentifier?.publisher || improvedData.publisher || improvedData.curriculum || "";
+    const inferredPublisherItemNumber = pendingIdentifier?.publisher_item_number ||
+      inferPublisherItemNumber(detectedPublisher, pendingIdentifier?.publisher_barcode);
 
 setBookData(await applyRulesToImportedBook({
   ...improvedData,
+  ...(pendingIdentifier || {}),
+  ...(inferredPublisherItemNumber ? { publisher_item_number: inferredPublisherItemNumber } : {}),
   category: improvedData.category || suggested?.name || "",
   weight_ounces: getWeightFromBookData(improvedData) ?? "",
   weight_note:
@@ -2961,11 +3098,13 @@ async function saveItem() {
   const itemDraft = {
     title: bookData.title || "",
     curriculum: bookData.curriculum || "",
-    publisher: bookData.publisher || "",
+    publisher: String(bookData.publisher || "").trim(),
     subject: bookData.subject || "",
     grade_level: bookData.grade_level || bookData.grade || "",
     edition: bookData.edition || "",
     isbn: bookData.isbn || "",
+    publisher_barcode: bookData.publisher_barcode || "",
+    publisher_item_number: normalizePublisherItemNumber(bookData.publisher_item_number),
     category: bookData.category || "",
     location: cleanLocationName(currentLocation),
     suggested_price: bookData.suggested_price || null,
@@ -2985,14 +3124,62 @@ async function saveItem() {
     public_visible: true,
   };
 
+if (itemDraft.publisher_item_number && !itemDraft.publisher) {
+  alert("Choose a publisher before saving a publisher item number.");
+  return;
+}
+
+if ((itemDraft.publisher_item_number || itemDraft.publisher_barcode) && !itemDraft.title.trim()) {
+  alert("Enter the title before saving this new publisher item. The app will remember it for future scans.");
+  return;
+}
+
 let existingItem = null;
 let duplicateMatchReason = "";
 let exactIsbnMatchDeclined = false;
+let exactPublisherMatchDeclined = false;
+
+if ((itemDraft.publisher && itemDraft.publisher_item_number) || itemDraft.publisher_barcode) {
+  const publisherQuery = supabase.from("items").select("*");
+  const { data: identifierMatches, error: identifierSearchError } = itemDraft.publisher_item_number
+    ? await publisherQuery.eq("publisher_item_number", itemDraft.publisher_item_number)
+    : await publisherQuery.eq("publisher_barcode", itemDraft.publisher_barcode);
+
+  if (identifierSearchError) {
+    alert("Could not check publisher-item duplicates: " + identifierSearchError.message);
+    return;
+  }
+
+  const candidate = (identifierMatches || []).find((item) =>
+    ["Available", "Hold"].includes(item.status || "Available") &&
+    (!itemDraft.publisher_item_number || normalizePublisher(item.publisher) === normalizePublisher(itemDraft.publisher))
+  );
+
+  if (candidate) {
+    const identifierLabel = candidate.publisher_item_number
+      ? `${candidate.publisher || "Publisher"} item: ${candidate.publisher_item_number}`
+      : `Publisher barcode: ${candidate.publisher_barcode}`;
+    const addQuantity = confirm(
+      `Matching publisher item found:\n\n${candidate.title}\n${identifierLabel}\n` +
+      `SKU: ${candidate.sku}\nCurrent quantity: ${candidate.quantity || 0}\n` +
+      `Price: $${Number(candidate.final_price || 0).toFixed(2)}\n\n` +
+      `Select OK to add ${itemDraft.quantity || 1} copy/copies to this listing.\n` +
+      `Select Cancel to create a separate listing instead.`
+    );
+    if (addQuantity) {
+      existingItem = candidate;
+      duplicateMatchReason = "exact_publisher_item";
+    } else {
+      exactPublisherMatchDeclined = true;
+    }
+  }
+}
+
 const normalizedDraftIsbn = String(itemDraft.isbn || "")
   .toLowerCase()
   .replace(/[^0-9x]/g, "");
 
-if (normalizedDraftIsbn.length >= 10) {
+if (!existingItem && normalizedDraftIsbn.length >= 10) {
   const { data: isbnCandidates, error: isbnSearchError } = await supabase
     .from("items")
     .select("*")
@@ -3031,7 +3218,7 @@ if (normalizedDraftIsbn.length >= 10) {
   }
 }
 
-if (!existingItem && !exactIsbnMatchDeclined) {
+if (!existingItem && !exactIsbnMatchDeclined && !exactPublisherMatchDeclined) {
   const { data: possibleMatches, error: searchError } = await supabase
     .from("items")
     .select("*")
@@ -3537,6 +3724,8 @@ async function updateItem() {
       grade_level: editData.grade_level || "",
       edition: editData.edition || "",
       isbn: editData.isbn || "",
+      publisher_barcode: editData.publisher_barcode || "",
+      publisher_item_number: normalizePublisherItemNumber(editData.publisher_item_number),
       category: editData.category || "",
       location: cleanLocationName(editData.location),
       final_price:
@@ -3571,6 +3760,8 @@ async function updateItem() {
       "grade_level",
       "edition",
       "isbn",
+      "publisher_barcode",
+      "publisher_item_number",
       "category",
       "location",
       "final_price",
@@ -3747,6 +3938,8 @@ const filteredItems = items.filter((item) => {
     ${item.subject || ""}
     ${item.grade_level || ""}
     ${item.isbn || ""}
+    ${item.publisher_barcode || ""}
+    ${item.publisher_item_number || ""}
     ${item.sku || ""}
     ${item.category || ""}
   `.toLowerCase();
@@ -4835,7 +5028,7 @@ onClick={() => {
 
     <div className="intake-actions">
       <button className="secondary" onClick={scanIsbnBarcode}>
-        {isScanningBarcode ? "Scanning..." : "Scan ISBN Barcode"}
+        {isScanningBarcode ? "Scanning..." : "Scan Book Barcode"}
       </button>
 
       <label htmlFor="cover-upload" className="secondary file-upload-button">
@@ -4983,6 +5176,32 @@ onClick={() => {
   value={bookData.publisher || ""}
   onChange={(e) => updateIntakeField("publisher", e.target.value)}
 />
+
+<div className="identifier-box">
+  <label>Publisher Item Number <span className="optional-label">Optional</span></label>
+  <input
+    value={bookData.publisher_item_number || ""}
+    onChange={(e) => setBookData({
+      ...bookData,
+      publisher_item_number: e.target.value,
+    })}
+  />
+  {bookData.publisher_barcode && (
+    <>
+      <label>Scanned Publisher Barcode</label>
+      <input
+        value={bookData.publisher_barcode}
+        onChange={(e) => setBookData({ ...bookData, publisher_barcode: e.target.value })}
+      />
+    </>
+  )}
+  <button className="secondary identifier-lookup" type="button" onClick={lookupEnteredPublisherItem}>
+    Look Up Publisher Item
+  </button>
+  <p className="helper-text">
+    Optional. Used with the publisher to recognize future copies; ISBN remains separate.
+  </p>
+</div>
 
 
               <label>Subject</label>
@@ -5164,7 +5383,7 @@ onClick={() => {
 
               {bookData.confidence && (
                 <p>
-                  <strong>AI Confidence:</strong> {bookData.confidence}
+                  <strong>{typeof bookData.confidence === "number" ? "AI Confidence" : "Data Source"}:</strong> {bookData.confidence}
                 </p>
               )}
 
@@ -5286,6 +5505,29 @@ onClick={() => {
     }
   />
 )}
+
+<label>Publisher</label>
+<input
+  value={editData.publisher || ""}
+  onChange={(e) => setEditData({ ...editData, publisher: e.target.value })}
+/>
+
+<div className="identifier-box">
+  <label>Publisher Item Number <span className="optional-label">Optional</span></label>
+  <input
+    value={editData.publisher_item_number || ""}
+    onChange={(e) => setEditData({ ...editData, publisher_item_number: e.target.value })}
+  />
+  {editData.publisher_barcode && (
+    <>
+      <label>Scanned Publisher Barcode</label>
+      <input
+        value={editData.publisher_barcode}
+        onChange={(e) => setEditData({ ...editData, publisher_barcode: e.target.value })}
+      />
+    </>
+  )}
+</div>
 
 <label>Subject</label>
 <select
@@ -5520,6 +5762,12 @@ onClick={() => {
               <div>
                 <h3>{item.title}</h3>
                 <p><strong>SKU:</strong> {item.sku}</p>
+                {item.publisher_item_number && (
+                  <p>
+                    <strong>{item.publisher || "Publisher"} Item:</strong> {item.publisher_item_number}
+                    {item.publisher_barcode && ` · Barcode ${item.publisher_barcode}`}
+                  </p>
+                )}
 
 <p><strong>Publisher:</strong> {item.publisher || "Unknown"}</p>
 
@@ -5556,7 +5804,7 @@ onClick={() => {
               <label>Search</label>
               <input
                 type="search"
-                placeholder="Title, ISBN, SKU..."
+                placeholder="Title, ISBN, publisher item, SKU..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
               />

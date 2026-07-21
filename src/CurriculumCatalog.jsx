@@ -4,6 +4,7 @@ import {
   findCurriculumInventoryMatch,
   getCurriculumMatchLabel,
   normalizeIsbn,
+  normalizePublisherIdentifier,
 } from "./curriculumMatching";
 import {
   CURRICULUM_IMPORT_TEMPLATE,
@@ -28,6 +29,8 @@ const EMPTY_MATERIAL = {
   title: "",
   author: "",
   publisher: "",
+  publisher_item_number: "",
+  publisher_barcode: "",
   isbn: "",
   acceptable_isbns: "",
   edition_label: "",
@@ -286,6 +289,8 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     setSaving(true);
     setMessage("");
     const cleanIsbn = normalizeIsbn(materialDraft.isbn);
+    const cleanPublisher = materialDraft.publisher.trim();
+    const cleanPublisherItemNumber = materialDraft.publisher_item_number.trim();
     let material = null;
     if (cleanIsbn) {
       const { data } = await supabase
@@ -295,11 +300,22 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
         .maybeSingle();
       material = data;
     }
+    if (!material && cleanPublisher && cleanPublisherItemNumber) {
+      const { data } = await supabase
+        .from("curriculum_materials")
+        .select("*")
+        .eq("publisher_item_number", cleanPublisherItemNumber);
+      material = (data || []).find((candidate) =>
+        normalizePublisherIdentifier(candidate.publisher) === normalizePublisherIdentifier(cleanPublisher)
+      ) || null;
+    }
     if (!material) {
       const { data, error } = await supabase.from("curriculum_materials").insert([{
         title: materialDraft.title.trim(),
         author: materialDraft.author.trim() || null,
-        publisher: materialDraft.publisher.trim() || null,
+        publisher: cleanPublisher || null,
+        publisher_item_number: cleanPublisherItemNumber || null,
+        publisher_barcode: materialDraft.publisher_barcode.trim() || null,
         isbn: cleanIsbn || null,
         acceptable_isbns: materialDraft.acceptable_isbns.split(",").map(normalizeIsbn).filter(Boolean),
         edition_label: materialDraft.edition_label.trim() || null,
@@ -540,6 +556,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
 
     for (const row of bulkPreview.rows) {
       const item = row.data;
+      const materialPublisher = item.publisher || bulkPackageDraft.publisher_name;
       let material;
       if (item.isbn) {
         const { data } = await supabase
@@ -549,6 +566,14 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
           .limit(1)
           .maybeSingle();
         material = data;
+      } else if (materialPublisher && item.publisher_item_number) {
+        const { data } = await supabase
+          .from("curriculum_materials")
+          .select("*")
+          .eq("publisher_item_number", item.publisher_item_number);
+        material = (data || []).find((candidate) =>
+          normalizePublisherIdentifier(candidate.publisher) === normalizePublisherIdentifier(materialPublisher)
+        ) || null;
       } else {
         const { data } = await supabase
           .from("curriculum_materials")
@@ -563,7 +588,9 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
         const { data, error } = await supabase.from("curriculum_materials").insert([{
           title: item.title,
           author: item.author || null,
-          publisher: item.publisher || null,
+          publisher: materialPublisher || null,
+          publisher_item_number: item.publisher_item_number || null,
+          publisher_barcode: item.publisher_barcode || null,
           isbn: item.isbn || null,
           acceptable_isbns: item.acceptable_isbns,
           edition_label: item.edition_label || null,
@@ -671,7 +698,12 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                       <h4>{material.title}</h4>
                       <span className={`match-badge match-${match.status}`}>{getCurriculumMatchLabel(match.status)}</span>
                     </div>
-                    <p>{[material.author, material.edition_label, material.isbn && `ISBN ${material.isbn}`].filter(Boolean).join(" · ")}</p>
+                    <p>{[
+                      material.author,
+                      material.edition_label,
+                      material.isbn && `ISBN ${material.isbn}`,
+                      material.publisher_item_number && `${material.publisher || "Publisher"} item ${material.publisher_item_number}`,
+                    ].filter(Boolean).join(" · ")}</p>
                     <p className="curriculum-meta">
                       {entry.requirement_type !== "required" && `${entry.requirement_type} · `}
                       {MATERIAL_TYPE_LABELS[material.material_type]}
@@ -720,6 +752,9 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                   <div className="curriculum-form-grid">
                     <label>Title<input required value={materialDraft.title} onChange={(e) => setMaterialDraft({ ...materialDraft, title: e.target.value })} /></label>
                     <label>Author<input value={materialDraft.author} onChange={(e) => setMaterialDraft({ ...materialDraft, author: e.target.value })} /></label>
+                    <label>Publisher<input value={materialDraft.publisher} onChange={(e) => setMaterialDraft({ ...materialDraft, publisher: e.target.value })} /></label>
+                    <label>Publisher item number<input value={materialDraft.publisher_item_number} onChange={(e) => setMaterialDraft({ ...materialDraft, publisher_item_number: e.target.value })} /></label>
+                    <label>Publisher barcode<input value={materialDraft.publisher_barcode} onChange={(e) => setMaterialDraft({ ...materialDraft, publisher_barcode: e.target.value })} /></label>
                     <label>ISBN<input value={materialDraft.isbn} onChange={(e) => setMaterialDraft({ ...materialDraft, isbn: e.target.value })} /></label>
                     <label>Approved alternate ISBNs<input placeholder="Separate with commas" value={materialDraft.acceptable_isbns} onChange={(e) => setMaterialDraft({ ...materialDraft, acceptable_isbns: e.target.value })} /></label>
                     <label>Edition<input value={materialDraft.edition_label} onChange={(e) => setMaterialDraft({ ...materialDraft, edition_label: e.target.value })} /></label>
@@ -857,7 +892,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                       <tbody>
                         {bulkPreview.rows.map((row) => (
                           <tr className={row.errors.length ? "has-error" : ""} key={row.rowNumber}>
-                            <td><input aria-label={`Title row ${row.rowNumber}`} value={row.data.title} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "title", e.target.value)} /><input aria-label={`ISBN row ${row.rowNumber}`} placeholder="ISBN" value={row.data.isbn} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "isbn", e.target.value)} /></td>
+                            <td><input aria-label={`Title row ${row.rowNumber}`} value={row.data.title} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "title", e.target.value)} /><input aria-label={`ISBN row ${row.rowNumber}`} placeholder="ISBN" value={row.data.isbn} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "isbn", e.target.value)} /><input aria-label={`Publisher item row ${row.rowNumber}`} placeholder="Publisher item number" value={row.data.publisher_item_number} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "publisher_item_number", e.target.value)} /></td>
                             <td><input aria-label={`Section row ${row.rowNumber}`} value={row.data.group_label} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "group_label", e.target.value)} /></td>
                             <td><select aria-label={`Material type row ${row.rowNumber}`} value={row.data.material_type} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "material_type", e.target.value)}>{Object.entries(MATERIAL_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
                             <td><select aria-label={`Requirement row ${row.rowNumber}`} value={row.data.requirement_type} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "requirement_type", e.target.value)}><option value="required">Required</option><option value="optional">Optional</option><option value="choice">Choose one</option></select></td>

@@ -632,6 +632,27 @@ button:disabled {
   color: var(--brown-dark);
 }
 
+.identifier-box {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.identifier-box label:first-child {
+  margin-top: 0;
+}
+
+.identifier-box .identifier-lookup {
+  margin-top: 10px;
+}
+
+.optional-label {
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
 .options-section {
   margin-top: 0;
   text-align: left;

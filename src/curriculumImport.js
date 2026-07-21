@@ -1,9 +1,15 @@
-import { findCurriculumInventoryMatch, normalizeIsbn } from "./curriculumMatching.js";
+import {
+  findCurriculumInventoryMatch,
+  normalizeIsbn,
+  normalizePublisherItemNumber,
+} from "./curriculumMatching.js";
 
 export const CURRICULUM_IMPORT_COLUMNS = [
   "title",
   "author",
   "publisher",
+  "publisher_item_number",
+  "publisher_barcode",
   "isbn",
   "acceptable_isbns",
   "edition_label",
@@ -40,6 +46,11 @@ const AUDIENCES = new Set(["family", "student", "teacher", "age_band"]);
 const HEADER_ALIASES = {
   approved_alternate_isbns: "acceptable_isbns",
   alternate_isbns: "acceptable_isbns",
+  item_number: "publisher_item_number",
+  publisher_item_no: "publisher_item_number",
+  product_number: "publisher_item_number",
+  product_code: "publisher_item_number",
+  barcode: "publisher_barcode",
   affiliate_retailer: "affiliate_label",
   edition: "edition_label",
   material: "material_type",
@@ -142,6 +153,8 @@ export function prepareCurriculumImport(text, inventory = []) {
       title: source.title || "",
       author: source.author || "",
       publisher: source.publisher || "",
+      publisher_item_number: normalizePublisherItemNumber(source.publisher_item_number),
+      publisher_barcode: String(source.publisher_barcode || "").replace(/\s+/g, ""),
       isbn,
       acceptable_isbns: acceptableIsbns,
       edition_label: source.edition_label || "",
@@ -167,12 +180,19 @@ export function prepareCurriculumImport(text, inventory = []) {
     if (!AUDIENCES.has(data.audience)) errors.push(`Unknown audience: ${data.audience}.`);
     if (!Number.isInteger(quantity) || quantity < 1) errors.push("Quantity must be a whole number of at least 1.");
     if (!isValidUrl(data.affiliate_url)) errors.push("Affiliate URL must begin with http:// or https://.");
-    if (!isbn) warnings.push("No ISBN; matching will rely on the title.");
+    if (data.publisher_item_number && !data.publisher) {
+      warnings.push("Add a publisher so the publisher item number can be matched safely.");
+    }
+    if (!isbn) warnings.push("No ISBN; matching will use the publisher item number or title.");
     if (data.material_type === "workbook" || data.material_type === "test") {
       warnings.push("Consumable material; staff should verify that used copies are usable.");
     }
 
-    const duplicateKey = isbn ? `isbn:${isbn}` : `title:${data.title.toLowerCase()}|${data.edition_label.toLowerCase()}`;
+    const duplicateKey = isbn
+      ? `isbn:${isbn}`
+      : data.publisher && data.publisher_item_number
+        ? `publisher:${data.publisher.toLowerCase()}|${data.publisher_item_number.toUpperCase()}`
+        : `title:${data.title.toLowerCase()}|${data.edition_label.toLowerCase()}`;
     if (seen.has(duplicateKey)) errors.push(`Duplicates row ${seen.get(duplicateKey)}.`);
     else seen.set(duplicateKey, rowNumber);
 
