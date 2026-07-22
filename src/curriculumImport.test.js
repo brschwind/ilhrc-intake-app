@@ -32,10 +32,19 @@ test("curriculum import flags invalid values and duplicate ISBNs", () => {
 });
 
 test("curriculum import accepts friendly column aliases", () => {
-  const preview = prepareCurriculumImport("Title,Section,Edition,Affiliate Retailer\nBook One,History,Third,Publisher\n");
+  const preview = prepareCurriculumImport("Title,Section,Edition,Affiliate Retailer,Publisher,Item Number\nBook One,History,Third,Retailer,Abeka,195278\n");
   assert.equal(preview.rows[0].data.group_label, "History");
   assert.equal(preview.rows[0].data.edition_label, "Third");
-  assert.equal(preview.rows[0].data.affiliate_label, "Publisher");
+  assert.equal(preview.rows[0].data.affiliate_label, "Retailer");
+  assert.equal(preview.rows[0].data.publisher_item_number, "195278");
+});
+
+test("curriculum import matches inventory by publisher item number", () => {
+  const preview = prepareCurriculumImport(
+    "title,publisher,publisher_item_number\nStepping Stones,Abeka,195278\n",
+    [{ title: "Stepping Stones", publisher: "A Beka", publisher_item_number: "195278", quantity: 2 }]
+  );
+  assert.equal(preview.rows[0].match.status, "publisher");
 });
 
 test("AI material records can be converted into the same CSV preview pipeline", () => {

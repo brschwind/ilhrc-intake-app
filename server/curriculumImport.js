@@ -37,7 +37,8 @@ const curriculumAnalysisSchema = {
         type: "object",
         additionalProperties: false,
         required: [
-          "title", "author", "publisher", "isbn", "acceptable_isbns", "edition_label",
+          "title", "author", "publisher", "publisher_item_number", "publisher_barcode",
+          "isbn", "acceptable_isbns", "edition_label",
           "material_type", "affiliate_url", "affiliate_label", "group_label",
           "requirement_type", "compatibility_mode", "audience", "quantity", "notes",
           "confidence", "review_reason",
@@ -46,6 +47,8 @@ const curriculumAnalysisSchema = {
           title: { type: "string" },
           author: { type: "string" },
           publisher: { type: "string" },
+          publisher_item_number: { type: "string" },
+          publisher_barcode: { type: "string" },
           isbn: { type: "string" },
           acceptable_isbns: { type: "array", items: { type: "string" }, maxItems: 10 },
           edition_label: { type: "string" },
@@ -205,7 +208,7 @@ Goal: Extract one curriculum package and its complete material list from the sup
 Success criteria:
 - Identify the publisher, package name, grade or level, subject, edition, and package type.
 - List every clearly included or required book, teacher item, student item, digital item, test, workbook, or supply.
-- Preserve exact titles, ISBNs, editions, and product URLs when the source provides them.
+- Preserve exact titles, ISBNs, publisher item numbers, barcodes, editions, and product URLs when the source provides them.
 - Distinguish required, optional, and choose-one materials.
 - Put uncertainty in review_reason and package-wide concerns in warnings.
 
@@ -242,6 +245,8 @@ function normalizeAnalysisResult(result, sourceUrl, checkedOn) {
       title: clean(item.title, 500),
       author: clean(item.author, 300),
       publisher: clean(item.publisher, 300),
+      publisher_item_number: clean(item.publisher_item_number, 100),
+      publisher_barcode: clean(item.publisher_barcode, 200).replace(/\s+/g, ""),
       isbn: normalizeIsbn(item.isbn),
       acceptable_isbns: (Array.isArray(item.acceptable_isbns) ? item.acceptable_isbns : []).map(normalizeIsbn).filter(Boolean).slice(0, 10),
       edition_label: clean(item.edition_label, 200),

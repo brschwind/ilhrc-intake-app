@@ -34,10 +34,20 @@ test("publisher URL validation allows public HTTPS and rejects private DNS", asy
 test("analysis normalization keeps drafts and removes formatted ISBN punctuation", () => {
   const normalized = normalizeAnalysisResult({
     package: { publisher_name: "Publisher", name: "Grade Two", package_type: "grade" },
-    materials: [{ title: "Book", isbn: "978-1-60826-010-2", quantity: 1, confidence: 0.9 }],
+    materials: [{
+      title: "Book",
+      publisher: "Abeka",
+      publisher_item_number: "195278",
+      publisher_barcode: "1952 7806",
+      isbn: "978-1-60826-010-2",
+      quantity: 1,
+      confidence: 0.9,
+    }],
     warnings: [],
   }, "https://publisher.example", "2026-07-19");
   assert.equal(normalized.package.status, "draft");
   assert.equal(normalized.package.source_url, "https://publisher.example");
   assert.equal(normalized.materials[0].isbn, "9781608260102");
+  assert.equal(normalized.materials[0].publisher_item_number, "195278");
+  assert.equal(normalized.materials[0].publisher_barcode, "19527806");
 });

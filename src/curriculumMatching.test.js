@@ -23,6 +23,20 @@ test("uses an explicitly approved alternate ISBN", () => {
   assert.equal(findCurriculumInventoryMatch(material, inventory).status, "approved");
 });
 
+test("matches a publisher item number only for the same publisher", () => {
+  const material = {
+    title: "Stepping Stones",
+    publisher: "Abeka",
+    publisher_item_number: "195278",
+  };
+  const inventory = [
+    { title: "Other", publisher: "Another Publisher", publisher_item_number: "195278", quantity: 1 },
+    { title: "Stepping Stones", publisher: "A Beka", publisher_item_number: "195278", quantity: 1 },
+  ];
+  assert.equal(findCurriculumInventoryMatch(material, inventory).status, "publisher");
+  assert.equal(findCurriculumInventoryMatch(material, inventory).item, inventory[1]);
+});
+
 test("returns a possible match for the same title when ISBN is unavailable", () => {
   const material = { title: "  The Story Book! ", author: "A. Writer", isbn: "111" };
   const inventory = [{ title: "The Story Book", author: "A Writer", quantity: 1 }];
