@@ -241,6 +241,8 @@ export default function App() {
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
 
   const listingPhotoInputRef = useRef(null);
+  const inventoryEditorRef = useRef(null);
+  const inventoryEditorTitleRef = useRef(null);
   const intakeRuleEditorRef = useRef(null);
   const intakeRuleNameRef = useRef(null);
   const isbnMergePanelRef = useRef(null);
@@ -347,6 +349,7 @@ export default function App() {
   const isAdmin = profile?.role === "admin";
   const isInternalView = INTERNAL_VIEWS.has(view);
   const shouldShowPasswordSetup = Boolean(session && passwordSetupRequired);
+  const showStaffShell = isAuthenticated && !shouldShowPasswordSetup;
 
   useEffect(() => {
     let mounted = true;
@@ -1062,6 +1065,7 @@ function resetIntakeRuleDraft() {
 
 function editIntakeRule(rule) {
   setEditingIntakeRuleId(rule.id);
+  setReviewingSuggestionKey(null);
   setIntakeRuleDraft({
     name: rule.name || "",
     description: rule.description || "",
@@ -1072,6 +1076,10 @@ function editIntakeRule(rule) {
     actions: { ...EMPTY_INTAKE_RULE.actions, ...(rule.actions || {}) },
   });
   setIntakeRuleMessage("");
+  window.setTimeout(() => {
+    intakeRuleEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    intakeRuleNameRef.current?.focus({ preventScroll: true });
+  }, 0);
 }
 
 async function saveIntakeRule() {
@@ -1143,6 +1151,7 @@ function approveRuleSuggestion(suggestion) {
     actions: { ...EMPTY_INTAKE_RULE.actions, ...suggestion.actions },
   });
   setIntakeRuleMessage("Review the suggested rule, then select Create Rule to approve it.");
+  setOptionsSection("rules");
   window.setTimeout(() => {
     intakeRuleEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     intakeRuleNameRef.current?.focus({ preventScroll: true });
@@ -3471,6 +3480,12 @@ try {
       final_price: item.final_price ?? "",
       quantity: item.quantity ?? 1,
     });
+    setEditCoverFile(null);
+    setEditCoverPreview(null);
+    window.setTimeout(() => {
+      inventoryEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      inventoryEditorTitleRef.current?.focus({ preventScroll: true });
+    }, 0);
   }
 
   function cancelEditing() {
@@ -4810,8 +4825,169 @@ function renderUserManagement() {
 }
 
   return (
-    <main className="app">
-      <h1>{view === "catalog" || view === "curricula" ? "IL HRC Used Books" : "IL HRC Book Intake"}</h1>
+    <main className={`app ${showStaffShell ? "staff-app" : "public-app"}`}>
+      {showStaffShell && (
+        <aside className="staff-sidebar" aria-label="Staff navigation">
+          <div className="staff-sidebar-brand">
+            <img
+              className="staff-brand-logo"
+              src="/ilhrc-logo.png"
+              alt="Illinois Homeschool Resource Center"
+            />
+          </div>
+
+          <nav className="staff-sidebar-nav">
+            <button
+              type="button"
+              className={`staff-nav-link ${view === "add" ? "active" : ""}`}
+              aria-current={view === "add" ? "page" : undefined}
+              onClick={() => {
+                setView("add");
+                cancelEditing();
+              }}
+            >
+              <span className="staff-nav-dot" aria-hidden="true" />
+              Add Item
+            </button>
+
+            <button
+              type="button"
+              className={`staff-nav-link ${view === "inventory" ? "active" : ""}`}
+              aria-current={view === "inventory" ? "page" : undefined}
+              onClick={() => {
+                setView("inventory");
+                cancelEditing();
+                loadItems();
+              }}
+            >
+              <span className="staff-nav-dot" aria-hidden="true" />
+              Inventory
+            </button>
+
+            <button
+              type="button"
+              className={`staff-nav-link staff-nav-subitem ${view === "labels" ? "active" : ""}`}
+              aria-current={view === "labels" ? "page" : undefined}
+              onClick={() => {
+                setView("labels");
+                cancelEditing();
+                loadItems();
+              }}
+            >
+              <span className="staff-nav-dot" aria-hidden="true" />
+              Print Labels
+            </button>
+
+            <button
+              type="button"
+              className={`staff-nav-link ${view === "requests" ? "active" : ""}`}
+              aria-current={view === "requests" ? "page" : undefined}
+              onClick={() => {
+                setView("requests");
+                cancelEditing();
+                loadItems();
+              }}
+            >
+              <span className="staff-nav-dot" aria-hidden="true" />
+              <span>Customer Requests</span>
+              {customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length > 0 && (
+                <span className="nav-count-badge">{customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length}</span>
+              )}
+            </button>
+
+            {isAdmin && (
+              <button
+                type="button"
+                className={`staff-nav-link ${view === "users" ? "active" : ""}`}
+                aria-current={view === "users" ? "page" : undefined}
+                onClick={() => {
+                  setView("users");
+                  cancelEditing();
+                }}
+              >
+                <span className="staff-nav-dot" aria-hidden="true" />
+                Team Management
+              </button>
+            )}
+
+            <button
+              type="button"
+              className={`staff-nav-link ${view === "curricula" ? "active" : ""}`}
+              aria-current={view === "curricula" ? "page" : undefined}
+              onClick={() => {
+                setView("curricula");
+                cancelEditing();
+                loadItems();
+              }}
+            >
+              <span className="staff-nav-dot" aria-hidden="true" />
+              Curriculum Lists
+            </button>
+          </nav>
+
+          <div className="staff-sidebar-settings">
+            <button
+              type="button"
+              className={`staff-nav-link ${view === "options" ? "active" : ""}`}
+              aria-current={view === "options" ? "page" : undefined}
+              onClick={() => {
+                setView("options");
+                cancelEditing();
+                loadItems();
+                loadOptionLists();
+              }}
+            >
+              <span className="staff-nav-dot" aria-hidden="true" />
+              Settings
+            </button>
+          </div>
+        </aside>
+      )}
+
+      {showStaffShell && (
+        <header className="staff-topbar">
+          <span className="staff-workspace-label">Staff Workspace</span>
+          <div className="staff-account-menu">
+            <div className="staff-account-identity">
+              <strong>{profile?.full_name || profile?.email || "Signed in"}</strong>
+              <span>{profile?.role || "team"}</span>
+            </div>
+            <button
+              className="staff-topbar-action"
+              type="button"
+              onClick={() => {
+                setChangePasswordOpen((current) => !current);
+                setChangePasswordError("");
+                setChangePasswordMessage("");
+              }}
+            >
+              Account
+            </button>
+            <button className="staff-topbar-action staff-logout-action" type="button" onClick={handleLogout}>
+              Log Out
+            </button>
+            <button
+              className="staff-topbar-action public-catalog-link"
+              type="button"
+              onClick={() => {
+                setView("catalog");
+                cancelEditing();
+                setSelectedCatalogItem(null);
+                loadItems();
+              }}
+            >
+              Public Catalog
+            </button>
+          </div>
+        </header>
+      )}
+
+      {!showStaffShell && (
+        <h1 className="public-brand">
+          <img src="/ilhrc-logo.png" alt="" aria-hidden="true" />
+          <span>{view === "curricula" ? "Curriculum Lists" : view === "catalog" ? "Used Books" : "Book Intake"}</span>
+        </h1>
+      )}
 
       {authLoading && (
         <section className="card">
@@ -4819,7 +4995,7 @@ function renderUserManagement() {
         </section>
       )}
 
-      {!authLoading && (
+      {!authLoading && !showStaffShell && (
         <div className="account-bar">
           {isAuthenticated ? (
             <>
@@ -4891,103 +5067,6 @@ function renderUserManagement() {
         isAuthenticated &&
         renderChangePasswordPanel()}
 
-{!authLoading && !shouldShowPasswordSetup && isAuthenticated && (
-  <div className="nav-buttons">        <button
-          className={view === "add" ? "primary" : "secondary"}
-          onClick={() => {
-            setView("add");
-            cancelEditing();
-          }}
-        >
-          <label>Add Item</label>
-        </button>
-
-        <button
-          className={view === "inventory" ? "primary" : "secondary"}
-          onClick={() => {
-            setView("inventory");
-            cancelEditing();
-            loadItems();
-          }}
-        >
-          Inventory
-        </button>
-
-<button
-  className={view === "labels" ? "primary" : "secondary"}
-  onClick={() => {
-    setView("labels");
-    cancelEditing();
-    loadItems();
-  }}
->
-  Print Labels
-</button>
-
-        <button
-          className={view === "requests" ? "primary" : "secondary"}
-          onClick={() => {
-            setView("requests");
-            cancelEditing();
-            loadItems();
-          }}
-        >
-          Customer Requests
-          {customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length > 0 && (
-            <span className="nav-count-badge">{customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length}</span>
-          )}
-        </button>
-
-        <button
-  className={view === "options" ? "primary" : "secondary"}
-  onClick={() => {
-    setView("options");
-    cancelEditing();
-    loadItems();
-    loadOptionLists();
-  }}
->
-  Options
-</button>
-
-        {isAdmin && (
-          <button
-            className={view === "users" ? "primary" : "secondary"}
-            onClick={() => {
-              setView("users");
-              cancelEditing();
-            }}
-          >
-            Team Management
-          </button>
-        )}
-
-        <button
-  className={view === "catalog" ? "primary" : "secondary"}
-onClick={() => {
-  setView("catalog");
-  cancelEditing();
-  setSelectedCatalogItem(null);
-  loadItems();
-}}
->
-  Public Catalog
-</button>
-
-        <button
-          className={view === "curricula" ? "primary" : "secondary"}
-          onClick={() => {
-            setView("curricula");
-            cancelEditing();
-            loadItems();
-          }}
-        >
-          Curriculum Lists
-        </button>
-
-      </div>
-)}
-
       {!authLoading && !shouldShowPasswordSetup && !isAuthenticated && !staffSignInOpen && (
         <nav className="public-nav" aria-label="Public pages">
           <button className={view === "catalog" ? "primary" : "secondary"} type="button" onClick={() => setView("catalog")}>
@@ -5005,7 +5084,11 @@ onClick={() => {
 
    {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "add" && (
   <>
-    <p>Use the cover photo and ISBN/barcode when available.</p>
+    <section className="staff-page-heading">
+      <span>Book Intake</span>
+      <h2>Add Item</h2>
+      <p>Use the cover photo and ISBN/barcode when available.</p>
+    </section>
 
     <div className="location-box">
       <label>Current Location</label>
@@ -5021,7 +5104,7 @@ onClick={() => {
         ))}
       </select>
       <p className="helper-text">
-        Manage locations from Options. This selection is saved with each book until you change it.
+        Manage locations from Settings. This selection is saved with each book until you change it.
       </p>
     </div>
 
@@ -5427,7 +5510,7 @@ onClick={() => {
 
 
           {editData && (
-            <section className="card">
+            <section ref={inventoryEditorRef} className="card inventory-editor">
               <h2>Edit Item</h2>
 
               <label>Cover Photo</label>
@@ -5467,6 +5550,7 @@ onClick={() => {
 
               <label>Title</label>
               <input
+                ref={inventoryEditorTitleRef}
                 value={editData.title || ""}
                 onChange={(e) =>
                   setEditData({ ...editData, title: e.target.value })
@@ -6134,7 +6218,7 @@ onClick={() => {
         <section className="card options-page-card">
           <div className="options-heading">
             <div>
-              <h2>Options</h2>
+              <h2>Settings</h2>
               <p>Choose a section to manage bookstore settings.</p>
             </div>
           </div>
@@ -7011,9 +7095,10 @@ onClick={() => {
       )}
 
       {!authLoading && !shouldShowPasswordSetup && view === "catalog" && (
-  <section className="card">
+  <section className="card public-catalog">
     <div className="public-catalog-heading">
       <div>
+        <span className="public-eyebrow">Illinois Homeschool Resource Center</span>
         <h2>Public Catalog</h2>
         <p>Browse available books or ask us to watch for something you need.</p>
       </div>
