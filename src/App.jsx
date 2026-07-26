@@ -64,6 +64,13 @@ const EMPTY_CUSTOMER_REQUEST = {
   customer_name: "", email: "", phone: "", preferred_contact: "email",
   isbn: "", title: "", author: "", curriculum: "", subject: "", grade_level: "", notes: "",
 };
+const EMPTY_BOOK_RESERVATION = {
+  customer_name: "",
+  email: "",
+  phone: "",
+  preferred_contact: "email",
+  website: "",
+};
 
 function StaffNavIcon({ name }) {
   const paths = {
@@ -301,6 +308,7 @@ export default function App() {
   const inventoryEditorTitleRef = useRef(null);
   const inventorySearchInputRef = useRef(null);
   const catalogSearchInputRef = useRef(null);
+  const reservationPanelRef = useRef(null);
   const intakeRuleEditorRef = useRef(null);
   const intakeRuleNameRef = useRef(null);
   const isbnMergePanelRef = useRef(null);
@@ -402,6 +410,13 @@ export default function App() {
   const [publicRequestDraft, setPublicRequestDraft] = useState({ ...EMPTY_CUSTOMER_REQUEST, website: "" });
   const [publicRequestMessage, setPublicRequestMessage] = useState("");
   const [publicRequestSubmitting, setPublicRequestSubmitting] = useState(false);
+  const [bookReservations, setBookReservations] = useState([]);
+  const [reservationFilter, setReservationFilter] = useState("active");
+  const [reservationItem, setReservationItem] = useState(null);
+  const [reservationDraft, setReservationDraft] = useState(EMPTY_BOOK_RESERVATION);
+  const [reservationMessage, setReservationMessage] = useState("");
+  const [reservationResult, setReservationResult] = useState(null);
+  const [reservationSubmitting, setReservationSubmitting] = useState(false);
 
   const isAuthenticated = Boolean(session && profile && profile.is_active !== false);
   const isAdmin = profile?.role === "admin";
@@ -470,6 +485,12 @@ export default function App() {
       catalogSearchInputRef.current?.focus();
     }
   }, [catalogToolsPanel]);
+
+  useEffect(() => {
+    if (reservationItem) {
+      reservationPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+  }, [reservationItem]);
 
   useEffect(() => {
     if (authLoading || profileLoading || shouldShowPasswordSetup) return;
@@ -4154,6 +4175,15 @@ const activeCatalogFilterCount = [
   sortBy !== "newest" ? sortBy : "",
 ].filter(Boolean).length;
 
+const staffRequestAttentionCount =
+  customerRequestMatches.filter((match) =>
+    ["pending", "still_waiting"].includes(match.status)
+  ).length +
+  bookReservations.filter((reservation) =>
+    ["pending", "ready"].includes(reservation.status) &&
+    new Date(reservation.expires_at).getTime() > Date.now()
+  ).length;
+
 const catalogCurriculumOptions = [
   ...new Set(
     items
@@ -4572,23 +4602,29 @@ function openPublicRequestForItem(item = null) {
     grade_level: item?.grade_level || current.grade_level,
   }));
   setPublicRequestMessage("");
+  setReservationItem(null);
+  setReservationResult(null);
   setPublicRequestOpen(true);
 }
 
 async function loadCustomerRequestData() {
-  const [requestsResult, matchesResult] = await Promise.all([
+  await supabase.rpc("expire_book_reservations");
+
+  const [requestsResult, matchesResult, reservationsResult] = await Promise.all([
     supabase.from("customer_requests").select("*").order("created_at", { ascending: false }),
     supabase.from("customer_request_matches").select("*").order("created_at", { ascending: false }),
+    supabase.from("book_reservations").select("*").order("created_at", { ascending: false }),
   ]);
 
-  if (requestsResult.error || matchesResult.error) {
+  if (requestsResult.error || matchesResult.error || reservationsResult.error) {
     setCustomerRequestMessage(
-      "Could not load customer requests. Make sure the customer requests migration has been run."
+      "Could not load customer requests or reservations. Make sure all Supabase migrations have been run."
     );
     return;
   }
   setCustomerRequests(requestsResult.data || []);
   setCustomerRequestMatches(matchesResult.data || []);
+  setBookReservations(reservationsResult.data || []);
 }
 
 async function createCustomerRequest(event) {
@@ -4659,6 +4695,162 @@ async function updateCustomerMatchStatus(match, status) {
   await loadCustomerRequestData();
 }
 
+async function updateBookReservationStatus(reservation, status) {
+  if (
+    status === "picked_up" &&
+    !confirm("Mark this reservation picked up? This will remove one copy from inventory.")
+  ) return;
+  if (
+    status === "cancelled" &&
+    !confirm("Cancel this reservation and return the copy to catalog availability?")
+  ) return;
+
+  setCustomerRequestMessage("");
+  const { error } = await supabase.rpc("update_book_reservation_status", {
+    p_reservation_id: reservation.id,
+    p_status: status,
+  });
+  if (error) {
+    setCustomerRequestMessage("Could not update reservation: " + error.message);
+    return;
+  }
+  if (status === "picked_up") await loadItems();
+  await loadCustomerRequestData();
+}
+
+async function extendBookReservation(reservation) {
+  setCustomerRequestMessage("");
+  const { error } = await supabase.rpc("extend_book_reservation", {
+    p_reservation_id: reservation.id,
+    p_days: 7,
+  });
+  if (error) {
+    setCustomerRequestMessage("Could not extend reservation: " + error.message);
+    return;
+  }
+  await loadCustomerRequestData();
+}
+
+function openBookReservation(item) {
+  setReservationItem(item);
+  setReservationDraft(EMPTY_BOOK_RESERVATION);
+  setReservationMessage("");
+  setReservationResult(null);
+  setPublicRequestOpen(false);
+}
+
+function closeBookReservation() {
+  setReservationItem(null);
+  setReservationDraft(EMPTY_BOOK_RESERVATION);
+  setReservationMessage("");
+  setReservationResult(null);
+}
+
+async function submitBookReservation(event) {
+  event.preventDefault();
+  if (!reservationItem || reservationSubmitting) return;
+
+  setReservationSubmitting(true);
+  setReservationMessage("");
+  const { data, error } = await supabase.rpc("submit_book_reservation", {
+    p_item_id: String(reservationItem.id),
+    p_customer_name: reservationDraft.customer_name,
+    p_email: reservationDraft.email,
+    p_phone: reservationDraft.phone,
+    p_preferred_contact: reservationDraft.preferred_contact,
+    p_website: reservationDraft.website,
+  });
+  setReservationSubmitting(false);
+
+  if (error) {
+    setReservationMessage(error.message || "We could not reserve this book. Please try again.");
+    return;
+  }
+  if (!data) {
+    setReservationMessage("We could not reserve this book. Please try again.");
+    return;
+  }
+
+  setReservationResult(data);
+  setReservationDraft(EMPTY_BOOK_RESERVATION);
+  await loadItems();
+}
+
+function renderBookReservationForm() {
+  if (!reservationItem) return null;
+
+  return (
+    <section ref={reservationPanelRef} className="public-request-panel reservation-panel">
+      <div className="public-request-heading">
+        <div>
+          <span className="public-eyebrow">Pickup reservation</span>
+          <h2>{reservationResult ? "Your Book Is Reserved" : `Reserve ${reservationItem.title}`}</h2>
+          {!reservationResult && (
+            <p>We’ll hold one copy for pickup at IL HRC for 14 days. Payment is due when you pick it up.</p>
+          )}
+        </div>
+        <button type="button" className="secondary" onClick={closeBookReservation}>Close</button>
+      </div>
+
+      {reservationResult ? (
+        <div className="reservation-confirmation">
+          <p className="status-message">Your reservation is confirmed.</p>
+          <p>
+            Please pick up <strong>{reservationResult.title || reservationItem.title}</strong> at IL HRC by{" "}
+            <strong>{new Date(reservationResult.expires_at).toLocaleDateString()}</strong>.
+          </p>
+          <p>Reservation reference: <strong>{String(reservationResult.id).slice(0, 8).toUpperCase()}</strong></p>
+          <p className="helper-text">Bring your name or reservation reference when you visit. IL HRC staff may contact you about pickup.</p>
+        </div>
+      ) : (
+        <form onSubmit={submitBookReservation}>
+          {reservationMessage && <p className="warning-text">{reservationMessage}</p>}
+          <div className="reservation-book-summary">
+            <BookCoverImage src={reservationItem.image_url} alt={reservationItem.title} width={120} height={160} eager />
+            <div>
+              <h3>{reservationItem.title}</h3>
+              <p>{[reservationItem.curriculum, reservationItem.subject, reservationItem.grade_level].filter(Boolean).join(" · ")}</p>
+              <p><strong>${Number(reservationItem.final_price || 0).toFixed(2)}</strong> · Pickup only</p>
+            </div>
+          </div>
+          <div className="customer-form-grid">
+            <div>
+              <label>Your Name</label>
+              <input required value={reservationDraft.customer_name} onChange={(e) => setReservationDraft((current) => ({ ...current, customer_name: e.target.value }))} />
+            </div>
+            <div>
+              <label>Email</label>
+              <input type="email" value={reservationDraft.email} onChange={(e) => setReservationDraft((current) => ({ ...current, email: e.target.value }))} />
+            </div>
+            <div>
+              <label>Phone</label>
+              <input value={reservationDraft.phone} onChange={(e) => setReservationDraft((current) => ({ ...current, phone: e.target.value }))} />
+            </div>
+            <div>
+              <label>How should we contact you?</label>
+              <select value={reservationDraft.preferred_contact} onChange={(e) => setReservationDraft((current) => ({ ...current, preferred_contact: e.target.value }))}>
+                <option value="email">Email</option>
+                <option value="phone">Phone</option>
+                <option value="either">Either</option>
+              </select>
+            </div>
+          </div>
+          <div className="request-honeypot" aria-hidden="true">
+            <label>Website</label>
+            <input tabIndex="-1" autoComplete="off" value={reservationDraft.website} onChange={(e) => setReservationDraft((current) => ({ ...current, website: e.target.value }))} />
+          </div>
+          <p className="helper-text">
+            Enter an email address or phone number. Your contact information is used only to manage this reservation.
+          </p>
+          <button type="submit" className="primary" disabled={reservationSubmitting}>
+            {reservationSubmitting ? "Reserving..." : "Confirm Reservation"}
+          </button>
+        </form>
+      )}
+    </section>
+  );
+}
+
 function renderPublicRequestForm() {
   if (!publicRequestOpen) return null;
   return (
@@ -4701,16 +4893,88 @@ function renderCustomerRequests() {
   );
   const requestById = Object.fromEntries(customerRequests.map((request) => [request.id, request]));
   const itemById = Object.fromEntries(items.map((item) => [String(item.id), item]));
+  const activeReservations = bookReservations.filter((reservation) =>
+    ["pending", "ready"].includes(reservation.status) &&
+    new Date(reservation.expires_at).getTime() > Date.now()
+  );
+  const visibleReservations = bookReservations.filter((reservation) => {
+    if (reservationFilter === "active") {
+      return ["pending", "ready"].includes(reservation.status) &&
+        new Date(reservation.expires_at).getTime() > Date.now();
+    }
+    return reservationFilter === "all" || reservation.status === reservationFilter;
+  });
 
   return (
     <section className="card customer-requests-page">
       <div className="customer-requests-heading">
-        <div><h2>Customer Requests</h2><p>New requests check current inventory immediately. New arrivals are checked here or by the nightly processor.</p></div>
+        <div><h2>Requests & Reservations</h2><p>Manage pickup reservations and review possible matches for books customers want.</p></div>
         <button type="button" className="primary" onClick={runCustomerRequestCheck} disabled={customerRequestLoading}>
           {customerRequestLoading ? "Checking..." : "Check Now"}
         </button>
       </div>
       {customerRequestMessage && <p className="status-message">{customerRequestMessage}</p>}
+
+      <section className="reservation-staff-section">
+        <div className="customer-list-heading">
+          <div>
+            <h3>
+              Pickup Reservations{" "}
+              {activeReservations.length > 0 && (
+                <span className="options-nav-badge">{activeReservations.length}</span>
+              )}
+            </h3>
+            <p>Each active reservation holds one copy out of the public catalog until pickup or expiration.</p>
+          </div>
+          <select value={reservationFilter} onChange={(e) => setReservationFilter(e.target.value)}>
+            <option value="active">Active</option>
+            <option value="pending">Pending</option>
+            <option value="ready">Ready</option>
+            <option value="expired">Expired</option>
+            <option value="picked_up">Picked Up</option>
+            <option value="cancelled">Cancelled</option>
+            <option value="all">All</option>
+          </select>
+        </div>
+
+        {visibleReservations.length === 0 && <p>No reservations in this section.</p>}
+        <div className="reservation-staff-list">
+          {visibleReservations.map((reservation) => {
+            const item = itemById[String(reservation.item_id)];
+            const isActive = ["pending", "ready"].includes(reservation.status) &&
+              new Date(reservation.expires_at).getTime() > Date.now();
+            return (
+              <article className="reservation-staff-card" key={reservation.id}>
+                <div>
+                  <span className={`reservation-status ${reservation.status}`}>{reservation.status.replace("_", " ")}</span>
+                  <h3>{item?.title || "Reserved book"}</h3>
+                  <p><strong>{reservation.customer_name}</strong> · {reservation.preferred_contact}</p>
+                  <p>{[reservation.email, reservation.phone].filter(Boolean).join(" · ")}</p>
+                  <p>
+                    {item?.sku && `SKU ${item.sku} · `}
+                    Expires {new Date(reservation.expires_at).toLocaleDateString()}
+                  </p>
+                  <p className="helper-text">Reference {String(reservation.id).slice(0, 8).toUpperCase()}</p>
+                </div>
+                <div className="reservation-staff-actions">
+                  {reservation.status === "pending" && isActive && (
+                    <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "ready")}>Mark Ready</button>
+                  )}
+                  {reservation.status === "ready" && isActive && (
+                    <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "picked_up")}>Picked Up</button>
+                  )}
+                  {(isActive || reservation.status === "expired") && (
+                    <button type="button" className="secondary" onClick={() => extendBookReservation(reservation)}>Extend 7 Days</button>
+                  )}
+                  {isActive && (
+                    <button type="button" className="secondary" onClick={() => updateBookReservationStatus(reservation, "cancelled")}>Cancel</button>
+                  )}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
 
       <section className="customer-match-section">
         <h3>Matches to Review {pendingMatches.length > 0 && <span className="options-nav-badge">{pendingMatches.length}</span>}</h3>
@@ -4984,9 +5248,9 @@ function renderUserManagement() {
               }}
             >
               <span className="staff-nav-dot" aria-hidden="true" />
-              <span>Customer Requests</span>
-              {customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length > 0 && (
-                <span className="nav-count-badge">{customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length}</span>
+              <span>Requests & Reservations</span>
+              {staffRequestAttentionCount > 0 && (
+                <span className="nav-count-badge">{staffRequestAttentionCount}</span>
               )}
             </button>
 
@@ -5105,9 +5369,9 @@ function renderUserManagement() {
           >
             <span className="staff-mobile-nav-icon-wrap">
               <StaffNavIcon name="requests" />
-              {customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length > 0 && (
+              {staffRequestAttentionCount > 0 && (
                 <span className="staff-mobile-nav-badge">
-                  {customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length}
+                  {staffRequestAttentionCount}
                 </span>
               )}
             </span>
@@ -5155,68 +5419,93 @@ function renderUserManagement() {
       )}
 
       {!showStaffShell && (
-        <h1 className="public-brand">
-          <img src="/ilhrc-logo.png" alt="" aria-hidden="true" />
-          <span>{view === "curricula" ? "Curriculum Lists" : view === "catalog" ? "Used Books" : "Book Intake"}</span>
-        </h1>
+        <header className="public-site-header">
+          <div className="public-brand">
+            <img src="/ilhrc-logo.png" alt="" aria-hidden="true" />
+            <span>Illinois Homeschool Resource Center</span>
+          </div>
+
+          {!authLoading && (
+            <div className="public-header-controls">
+              {!session ? (
+                <>
+                  <nav className="public-nav" aria-label="Public pages">
+                    <button
+                      className={view === "catalog" ? "active" : ""}
+                      type="button"
+                      onClick={() => {
+                        setView("catalog");
+                        setSelectedCatalogItem(null);
+                      }}
+                    >
+                      Browse Books
+                    </button>
+                    <button
+                      className={view === "curricula" ? "active" : ""}
+                      type="button"
+                      onClick={() => setView("curricula")}
+                    >
+                      Curriculum Lists
+                    </button>
+                    <button
+                      className="public-header-request"
+                      type="button"
+                      onClick={() => {
+                        setView("catalog");
+                        setSelectedCatalogItem(null);
+                        openPublicRequestForItem();
+                      }}
+                    >
+                      Request a Book
+                    </button>
+                  </nav>
+                  <button
+                    className="secondary staff-sign-in-button"
+                    type="button"
+                    onClick={() => {
+                      setStaffSignInOpen(true);
+                      setAuthMessage("");
+                    }}
+                  >
+                    Staff Sign In
+                  </button>
+                </>
+              ) : (
+                <div className="account-bar">
+                  <span>
+                    {isAuthenticated
+                      ? `${profile?.full_name || profile?.email || "Signed in"} / ${profile?.role || "profile loading"}`
+                      : "Account access not verified"}
+                  </span>
+                  <div className="account-actions">
+                    {isAuthenticated && !shouldShowPasswordSetup && (
+                      <button
+                        className="secondary"
+                        type="button"
+                        onClick={() => {
+                          setChangePasswordOpen((current) => !current);
+                          setChangePasswordError("");
+                          setChangePasswordMessage("");
+                        }}
+                      >
+                        Change Password
+                      </button>
+                    )}
+                    <button className="secondary" type="button" onClick={handleLogout}>
+                      Log Out
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </header>
       )}
 
       {authLoading && (
         <section className="card">
           <p>Checking account access...</p>
         </section>
-      )}
-
-      {!authLoading && !showStaffShell && (
-        <div className="account-bar">
-          {isAuthenticated ? (
-            <>
-              <span>
-                {profile?.full_name || profile?.email || "Signed in"} /{" "}
-                {profile?.role || "profile loading"}
-              </span>
-              <div className="account-actions">
-                {!shouldShowPasswordSetup && (
-                  <button
-                    className="secondary"
-                    type="button"
-                    onClick={() => {
-                      setChangePasswordOpen((current) => !current);
-                      setChangePasswordError("");
-                      setChangePasswordMessage("");
-                    }}
-                  >
-                    Change Password
-                  </button>
-                )}
-                <button className="secondary" type="button" onClick={handleLogout}>
-                  Log Out
-                </button>
-              </div>
-            </>
-          ) : session ? (
-            <>
-              <span>Account access not verified</span>
-              <button className="secondary" type="button" onClick={handleLogout}>
-                Log Out
-              </button>
-            </>
-          ) : (
-            <>
-              <span>Public catalog access</span>
-              <button
-                className="secondary staff-sign-in-button"
-                type="button"
-                onClick={() => {
-                  setStaffSignInOpen(true);
-                  setAuthMessage("");
-                }}
-              >
-                Staff Sign In
-              </button>
-            </>
-          )}
-        </div>
       )}
 
       {!authLoading && shouldShowPasswordSetup && renderPasswordSetupPanel()}
@@ -5238,17 +5527,6 @@ function renderUserManagement() {
         !shouldShowPasswordSetup &&
         isAuthenticated &&
         renderChangePasswordPanel()}
-
-      {!authLoading && !shouldShowPasswordSetup && !isAuthenticated && !staffSignInOpen && (
-        <nav className="public-nav" aria-label="Public pages">
-          <button className={view === "catalog" ? "primary" : "secondary"} type="button" onClick={() => setView("catalog")}>
-            Browse Books
-          </button>
-          <button className={view === "curricula" ? "primary" : "secondary"} type="button" onClick={() => setView("curricula")}>
-            Curriculum Lists
-          </button>
-        </nav>
-      )}
 
       {!authLoading && authMessage && isAuthenticated && (
         <p className="warning-text">{authMessage}</p>
@@ -7329,16 +7607,18 @@ function renderUserManagement() {
   <section className="card public-catalog">
     <div className="public-catalog-heading">
       <div>
-        <span className="public-eyebrow">Illinois Homeschool Resource Center</span>
-        <h2>Public Catalog</h2>
-        <p>Browse available books or ask us to watch for something you need.</p>
+        <h2>Find a Book</h2>
+        <p>Browse available books, reserve one for pickup, or ask us to watch for something specific.</p>
       </div>
-      <button type="button" className="primary" onClick={() => openPublicRequestForItem()}>
-        Request a Book
-      </button>
+      {showStaffShell && (
+        <button type="button" className="primary" onClick={() => openPublicRequestForItem()}>
+          Request a Book
+        </button>
+      )}
     </div>
 
     {renderPublicRequestForm()}
+    {renderBookReservationForm()}
 
 {selectedCatalogItem && (
   <section className="catalog-detail">
@@ -7370,8 +7650,8 @@ function renderUserManagement() {
     <p><strong>Available:</strong> {selectedCatalogItem.quantity || 1}</p>
 
     <p className="catalog-note">Available in store</p>
-    <button type="button" className="secondary" onClick={() => openPublicRequestForItem(selectedCatalogItem)}>
-      Request Another Copy
+    <button type="button" className="primary reservation-button" onClick={() => openBookReservation(selectedCatalogItem)}>
+      Reserve for Pickup
     </button>
   </section>
 )}
@@ -7437,6 +7717,13 @@ function renderUserManagement() {
             </p>
 
             <p className="catalog-note">Available in store</p>
+            <button
+              type="button"
+              className="primary reservation-button"
+              onClick={() => openBookReservation(item)}
+            >
+              Reserve
+            </button>
             <button
             className="secondary"
             onClick={() => setSelectedCatalogItem(item)}
