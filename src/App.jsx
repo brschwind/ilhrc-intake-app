@@ -65,6 +65,49 @@ const EMPTY_CUSTOMER_REQUEST = {
   isbn: "", title: "", author: "", curriculum: "", subject: "", grade_level: "", notes: "",
 };
 
+function StaffNavIcon({ name }) {
+  const paths = {
+    add: (
+      <>
+        <path d="M12 5v14M5 12h14" />
+        <circle cx="12" cy="12" r="9" />
+      </>
+    ),
+    inventory: (
+      <>
+        <path d="m4 7 8-4 8 4-8 4-8-4Z" />
+        <path d="m4 7 8 4 8-4v10l-8 4-8-4V7Z" />
+        <path d="M12 11v10" />
+      </>
+    ),
+    team: (
+      <>
+        <circle cx="9" cy="8" r="3" />
+        <circle cx="17" cy="9" r="2.5" />
+        <path d="M3.5 19c.4-3.5 2.2-5.5 5.5-5.5s5.1 2 5.5 5.5M14 14.3c.8-.5 1.7-.8 2.8-.8 2.7 0 4.2 1.8 4.5 4.8" />
+      </>
+    ),
+    lists: (
+      <>
+        <path d="M9 6h11M9 12h11M9 18h11" />
+        <path d="M4 6h.01M4 12h.01M4 18h.01" />
+      </>
+    ),
+    requests: (
+      <>
+        <path d="M5 4h14v16H5z" />
+        <path d="M8 8h8M8 12h5M8 16h3" />
+      </>
+    ),
+  };
+
+  return (
+    <svg className="staff-mobile-nav-icon" viewBox="0 0 24 24" aria-hidden="true">
+      {paths[name]}
+    </svg>
+  );
+}
+
 function getAuthUrlType() {
   const searchParams = new URLSearchParams(window.location.search);
   const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
@@ -4942,6 +4985,83 @@ function renderUserManagement() {
             </button>
           </div>
         </aside>
+      )}
+
+      {showStaffShell && (
+        <nav className="staff-mobile-nav" aria-label="Primary staff navigation">
+          <button
+            type="button"
+            className={view === "add" ? "active" : ""}
+            aria-current={view === "add" ? "page" : undefined}
+            onClick={() => {
+              setView("add");
+              cancelEditing();
+            }}
+          >
+            <StaffNavIcon name="add" />
+            <span>Add</span>
+          </button>
+          <button
+            type="button"
+            className={view === "inventory" ? "active" : ""}
+            aria-current={view === "inventory" ? "page" : undefined}
+            onClick={() => {
+              setView("inventory");
+              cancelEditing();
+              loadItems();
+            }}
+          >
+            <StaffNavIcon name="inventory" />
+            <span>Inventory</span>
+          </button>
+          <button
+            type="button"
+            className={view === "users" ? "active" : ""}
+            aria-current={view === "users" ? "page" : undefined}
+            aria-label={isAdmin ? "Team" : "Team, admin access required"}
+            disabled={!isAdmin}
+            onClick={() => {
+              setView("users");
+              cancelEditing();
+            }}
+          >
+            <StaffNavIcon name="team" />
+            <span>Team</span>
+          </button>
+          <button
+            type="button"
+            className={view === "curricula" ? "active" : ""}
+            aria-current={view === "curricula" ? "page" : undefined}
+            onClick={() => {
+              setView("curricula");
+              cancelEditing();
+              loadItems();
+            }}
+          >
+            <StaffNavIcon name="lists" />
+            <span>Lists</span>
+          </button>
+          <button
+            type="button"
+            className={view === "requests" ? "active" : ""}
+            aria-current={view === "requests" ? "page" : undefined}
+            onClick={() => {
+              setView("requests");
+              cancelEditing();
+              loadItems();
+            }}
+          >
+            <span className="staff-mobile-nav-icon-wrap">
+              <StaffNavIcon name="requests" />
+              {customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length > 0 && (
+                <span className="staff-mobile-nav-badge">
+                  {customerRequestMatches.filter((match) => ["pending", "still_waiting"].includes(match.status)).length}
+                </span>
+              )}
+            </span>
+            <span>Requests</span>
+          </button>
+        </nav>
       )}
 
       {showStaffShell && (
