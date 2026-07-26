@@ -293,12 +293,14 @@ export default function App() {
   const [sortBy, setSortBy] = useState("newest");
   const [inventorySortBy, setInventorySortBy] = useState("newest");
   const [inventoryToolsPanel, setInventoryToolsPanel] = useState("");
+  const [catalogToolsPanel, setCatalogToolsPanel] = useState("");
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
 
   const listingPhotoInputRef = useRef(null);
   const inventoryEditorRef = useRef(null);
   const inventoryEditorTitleRef = useRef(null);
   const inventorySearchInputRef = useRef(null);
+  const catalogSearchInputRef = useRef(null);
   const intakeRuleEditorRef = useRef(null);
   const intakeRuleNameRef = useRef(null);
   const isbnMergePanelRef = useRef(null);
@@ -462,6 +464,12 @@ export default function App() {
       inventorySearchInputRef.current?.focus();
     }
   }, [inventoryToolsPanel]);
+
+  useEffect(() => {
+    if (catalogToolsPanel === "search") {
+      catalogSearchInputRef.current?.focus();
+    }
+  }, [catalogToolsPanel]);
 
   useEffect(() => {
     if (authLoading || profileLoading || shouldShowPasswordSetup) return;
@@ -4138,6 +4146,14 @@ const filteredCatalogItems = publicItems
     return 0;
   });
 
+const activeCatalogFilterCount = [
+  curriculumFilter,
+  subjectFilter,
+  categoryFilter,
+  gradeFilter,
+  sortBy !== "newest" ? sortBy : "",
+].filter(Boolean).length;
+
 const catalogCurriculumOptions = [
   ...new Set(
     items
@@ -4253,6 +4269,7 @@ function applyCatalogFilters() {
   setSubjectFilter(pendingSubjectFilter);
   setCategoryFilter(pendingCategoryFilter);
   setGradeFilter(pendingGradeFilter);
+  setCatalogToolsPanel("");
 }
 
 function clearCatalogFilters() {
@@ -4268,6 +4285,13 @@ function clearCatalogFilters() {
   setCategoryFilter("");
   setGradeFilter("");
   setLocationFilter("");
+  setSortBy("newest");
+  setCatalogToolsPanel("");
+}
+
+function clearCatalogSearch() {
+  setPendingSearchTerm("");
+  setSearchTerm("");
 }
 
 function renderManagedTextOptionPanel(optionType) {
@@ -7355,6 +7379,39 @@ function renderUserManagement() {
 {!selectedCatalogItem && (
   <>
 
+<div className="catalog-mobile-tools" aria-label="Catalog tools">
+  <button
+    type="button"
+    className={catalogToolsPanel === "search" ? "active" : ""}
+    aria-expanded={catalogToolsPanel === "search"}
+    aria-controls="catalog-tools-panel"
+    onClick={() =>
+      setCatalogToolsPanel((current) => current === "search" ? "" : "search")
+    }
+  >
+    <StaffNavIcon name="search" />
+    <span>Search</span>
+    {searchTerm && <span className="inventory-tool-indicator" aria-label="Search active" />}
+  </button>
+  <button
+    type="button"
+    className={catalogToolsPanel === "filters" ? "active" : ""}
+    aria-expanded={catalogToolsPanel === "filters"}
+    aria-controls="catalog-tools-panel"
+    onClick={() =>
+      setCatalogToolsPanel((current) => current === "filters" ? "" : "filters")
+    }
+  >
+    <StaffNavIcon name="filters" />
+    <span>Filters</span>
+    {activeCatalogFilterCount > 0 && (
+      <span className="inventory-tool-count" aria-label={`${activeCatalogFilterCount} active filters`}>
+        {activeCatalogFilterCount}
+      </span>
+    )}
+  </button>
+</div>
+
 <div className="catalog-layout">
   <section className="catalog-main">
     <div className="catalog-results-header">
@@ -7394,20 +7451,46 @@ function renderUserManagement() {
     {filteredCatalogItems.length === 0 && <p>No matching catalog items found.</p>}
   </section>
 
-  <aside className="catalog-sidebar">
-    <h3>Filters</h3>
+  <aside
+    id="catalog-tools-panel"
+    className={`catalog-sidebar catalog-tools-${catalogToolsPanel || "closed"}`}
+  >
+    <div className="catalog-sidebar-heading">
+      <h3>{catalogToolsPanel === "search" ? "Search Catalog" : "Filters"}</h3>
+      <button
+        type="button"
+        aria-label="Close catalog tools"
+        onClick={() => setCatalogToolsPanel("")}
+      >
+        ×
+      </button>
+    </div>
 
-    <label>Search</label>
-    <input
-      type="search"
-      placeholder="Title, curriculum, subject..."
-      value={pendingSearchTerm}
-      onChange={(e) => setPendingSearchTerm(e.target.value)}
-      onKeyDown={(e) => {
-        if (e.key === "Enter") applyCatalogFilters();
-      }}
-    />
+    <div className="catalog-search-controls">
+      <label>Search</label>
+      <input
+        ref={catalogSearchInputRef}
+        type="search"
+        placeholder="Title, curriculum, subject..."
+        value={pendingSearchTerm}
+        onChange={(e) => setPendingSearchTerm(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") applyCatalogFilters();
+        }}
+      />
+      <div className="catalog-search-actions">
+        <button type="button" className="primary" onClick={applyCatalogFilters}>
+          Search
+        </button>
+        {(pendingSearchTerm || searchTerm) && (
+          <button type="button" className="secondary" onClick={clearCatalogSearch}>
+            Clear Search
+          </button>
+        )}
+      </div>
+    </div>
 
+    <div className="catalog-filter-controls">
     <label>Curriculum</label>
     <select
       value={pendingCurriculumFilter}
@@ -7476,6 +7559,7 @@ function renderUserManagement() {
     <button className="secondary" onClick={clearCatalogFilters}>
       Clear Filters
     </button>
+    </div>
   </aside>
 </div>
     </>

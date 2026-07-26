@@ -581,11 +581,14 @@ button:disabled {
   color: var(--brown);
 }
 
-.inventory-mobile-tools {
+.inventory-mobile-tools,
+.catalog-mobile-tools {
   display: none;
 }
 
-.inventory-sidebar-heading button {
+.inventory-sidebar-heading button,
+.catalog-sidebar-heading button,
+.catalog-search-actions {
   display: none;
 }
 
@@ -1620,18 +1623,15 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .catalog-sidebar {
-    position: static;
-    order: -1;
-  }
-
-  .inventory-mobile-tools {
+  .inventory-mobile-tools,
+  .catalog-mobile-tools {
     display: flex;
     gap: 8px;
     margin: 12px 0 4px;
   }
 
-  .inventory-mobile-tools button {
+  .inventory-mobile-tools button,
+  .catalog-mobile-tools button {
     position: relative;
     display: inline-flex;
     min-height: 40px;
@@ -1648,12 +1648,14 @@ button:disabled {
     cursor: pointer;
   }
 
-  .inventory-mobile-tools button.active {
+  .inventory-mobile-tools button.active,
+  .catalog-mobile-tools button.active {
     border-color: var(--sage);
     background: var(--sage-light);
   }
 
-  .inventory-mobile-tools .staff-mobile-nav-icon {
+  .inventory-mobile-tools .staff-mobile-nav-icon,
+  .catalog-mobile-tools .staff-mobile-nav-icon {
     width: 18px;
     height: 18px;
     fill: none;
@@ -1724,6 +1726,60 @@ button:disabled {
 
   .inventory-sidebar.inventory-tools-search .inventory-filter-controls,
   .inventory-sidebar.inventory-tools-filters .inventory-search-controls {
+    display: none;
+  }
+
+  .catalog-sidebar {
+    position: static;
+    order: -1;
+    display: none;
+    padding: 12px;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+  }
+
+  .catalog-sidebar:not(.catalog-tools-closed) {
+    display: block;
+  }
+
+  .catalog-sidebar-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .catalog-sidebar-heading h3 {
+    margin: 0;
+  }
+
+  .catalog-sidebar-heading button {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    padding: 0;
+    place-items: center;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 1.35rem;
+    cursor: pointer;
+  }
+
+  .catalog-search-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .catalog-search-actions .primary,
+  .catalog-search-actions .secondary {
+    flex: 1;
+  }
+
+  .catalog-sidebar.catalog-tools-search .catalog-filter-controls,
+  .catalog-sidebar.catalog-tools-filters .catalog-search-controls {
     display: none;
   }
 
@@ -2795,6 +2851,10 @@ button:disabled {
   .public-catalog .catalog-sidebar {
     position: static;
     order: -1;
+  }
+
+  .public-catalog .catalog-sidebar-heading h3 {
+    margin-bottom: 0;
   }
 }
 
