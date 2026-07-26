@@ -581,6 +581,14 @@ button:disabled {
   color: var(--brown);
 }
 
+.inventory-mobile-tools {
+  display: none;
+}
+
+.inventory-sidebar-heading button {
+  display: none;
+}
+
 .inventory-sidebar label,
 .catalog-sidebar label {
   display: block;
@@ -1612,10 +1620,111 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 
-  .inventory-sidebar,
   .catalog-sidebar {
     position: static;
     order: -1;
+  }
+
+  .inventory-mobile-tools {
+    display: flex;
+    gap: 8px;
+    margin: 12px 0 4px;
+  }
+
+  .inventory-mobile-tools button {
+    position: relative;
+    display: inline-flex;
+    min-height: 40px;
+    margin: 0;
+    padding: 7px 13px;
+    align-items: center;
+    gap: 7px;
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    background: var(--surface);
+    color: var(--sage-dark);
+    font-size: 0.82rem;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .inventory-mobile-tools button.active {
+    border-color: var(--sage);
+    background: var(--sage-light);
+  }
+
+  .inventory-mobile-tools .staff-mobile-nav-icon {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .inventory-tool-indicator {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--sage-dark);
+  }
+
+  .inventory-tool-count {
+    display: grid;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 4px;
+    place-items: center;
+    box-sizing: border-box;
+    border-radius: 999px;
+    background: var(--sage-dark);
+    color: white;
+    font-size: 0.65rem;
+  }
+
+  .inventory-sidebar {
+    position: static;
+    order: -1;
+    display: none;
+    padding: 12px;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+  }
+
+  .inventory-sidebar:not(.inventory-tools-closed) {
+    display: block;
+  }
+
+  .inventory-sidebar-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .inventory-sidebar-heading h3 {
+    margin: 0;
+  }
+
+  .inventory-sidebar-heading button {
+    display: grid;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    padding: 0;
+    place-items: center;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 1.35rem;
+    cursor: pointer;
+  }
+
+  .inventory-sidebar.inventory-tools-search .inventory-filter-controls,
+  .inventory-sidebar.inventory-tools-filters .inventory-search-controls {
+    display: none;
   }
 
   .bulk-edit-bar {
@@ -1848,6 +1957,30 @@ button:disabled {
 
   .card {
     padding: 14px;
+  }
+
+  .stats-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 6px;
+    margin: 9px 0;
+  }
+
+  .stat-card {
+    min-width: 0;
+    padding: 7px 8px;
+  }
+
+  .stat-card strong {
+    font-size: 0.64rem;
+    line-height: 1.15;
+  }
+
+  .stat-card span {
+    margin-top: 2px;
+    overflow: hidden;
+    font-size: 0.94rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .nav-buttons {

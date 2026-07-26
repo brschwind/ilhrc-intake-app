@@ -99,6 +99,17 @@ function StaffNavIcon({ name }) {
         <path d="M8 8h8M8 12h5M8 16h3" />
       </>
     ),
+    search: (
+      <>
+        <circle cx="11" cy="11" r="7" />
+        <path d="m16 16 5 5" />
+      </>
+    ),
+    filters: (
+      <>
+        <path d="M4 6h16M7 12h10M10 18h4" />
+      </>
+    ),
   };
 
   return (
@@ -281,11 +292,13 @@ export default function App() {
 
   const [sortBy, setSortBy] = useState("newest");
   const [inventorySortBy, setInventorySortBy] = useState("newest");
+  const [inventoryToolsPanel, setInventoryToolsPanel] = useState("");
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
 
   const listingPhotoInputRef = useRef(null);
   const inventoryEditorRef = useRef(null);
   const inventoryEditorTitleRef = useRef(null);
+  const inventorySearchInputRef = useRef(null);
   const intakeRuleEditorRef = useRef(null);
   const intakeRuleNameRef = useRef(null);
   const isbnMergePanelRef = useRef(null);
@@ -443,6 +456,12 @@ export default function App() {
   useEffect(() => {
     window.location.hash = view === "catalog" || view === "curricula" ? view : "";
   }, [view]);
+
+  useEffect(() => {
+    if (inventoryToolsPanel === "search") {
+      inventorySearchInputRef.current?.focus();
+    }
+  }, [inventoryToolsPanel]);
 
   useEffect(() => {
     if (authLoading || profileLoading || shouldShowPasswordSetup) return;
@@ -4052,7 +4071,16 @@ const filteredItems = items.filter((item) => {
   return new Date(b.created_at || 0) - new Date(a.created_at || 0);
 });
 
-
+const activeInventoryFilterCount = [
+  curriculumFilter,
+  subjectFilter,
+  categoryFilter,
+  gradeFilter,
+  locationFilter,
+  inventoryDateFrom,
+  inventoryDateTo,
+  inventorySortBy !== "newest" ? inventorySortBy : "",
+].filter(Boolean).length;
 
 const publicItems = items.filter(
   (item) =>
@@ -5940,6 +5968,39 @@ function renderUserManagement() {
             </section>
           )}
 
+          <div className="inventory-mobile-tools" aria-label="Inventory tools">
+            <button
+              type="button"
+              className={inventoryToolsPanel === "search" ? "active" : ""}
+              aria-expanded={inventoryToolsPanel === "search"}
+              aria-controls="inventory-tools-panel"
+              onClick={() =>
+                setInventoryToolsPanel((current) => current === "search" ? "" : "search")
+              }
+            >
+              <StaffNavIcon name="search" />
+              <span>Search</span>
+              {searchTerm && <span className="inventory-tool-indicator" aria-label="Search active" />}
+            </button>
+            <button
+              type="button"
+              className={inventoryToolsPanel === "filters" ? "active" : ""}
+              aria-expanded={inventoryToolsPanel === "filters"}
+              aria-controls="inventory-tools-panel"
+              onClick={() =>
+                setInventoryToolsPanel((current) => current === "filters" ? "" : "filters")
+              }
+            >
+              <StaffNavIcon name="filters" />
+              <span>Filters</span>
+              {activeInventoryFilterCount > 0 && (
+                <span className="inventory-tool-count" aria-label={`${activeInventoryFilterCount} active filters`}>
+                  {activeInventoryFilterCount}
+                </span>
+              )}
+            </button>
+          </div>
+
           <div className="inventory-layout">
             <section className="inventory-main">
               <div className="inventory-results-header">
@@ -6002,17 +6063,42 @@ function renderUserManagement() {
           </div>
             </section>
 
-            <aside className="inventory-sidebar">
-              <h3>Filters</h3>
+            <aside
+              id="inventory-tools-panel"
+              className={`inventory-sidebar inventory-tools-${inventoryToolsPanel || "closed"}`}
+            >
+              <div className="inventory-sidebar-heading">
+                <h3>{inventoryToolsPanel === "search" ? "Search Inventory" : "Filters"}</h3>
+                <button
+                  type="button"
+                  aria-label="Close inventory tools"
+                  onClick={() => setInventoryToolsPanel("")}
+                >
+                  ×
+                </button>
+              </div>
 
-              <label>Search</label>
-              <input
-                type="search"
-                placeholder="Title, ISBN, publisher item, SKU..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              />
+              <div className="inventory-search-controls">
+                <label>Search</label>
+                <input
+                  ref={inventorySearchInputRef}
+                  type="search"
+                  placeholder="Title, ISBN, publisher item, SKU..."
+                  value={searchTerm}
+                  onChange={(e) => setSearchTerm(e.target.value)}
+                />
+                {searchTerm && (
+                  <button
+                    type="button"
+                    className="filter-reset"
+                    onClick={() => setSearchTerm("")}
+                  >
+                    Clear Search
+                  </button>
+                )}
+              </div>
 
+              <div className="inventory-filter-controls">
               <label>Curriculum</label>
               <select
                 value={curriculumFilter}
@@ -6328,6 +6414,7 @@ function renderUserManagement() {
                     )}
                   </>
                 )}
+              </div>
               </div>
             </aside>
           </div>
