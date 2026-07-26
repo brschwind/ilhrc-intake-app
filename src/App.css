@@ -998,6 +998,63 @@ button:disabled {
   background: var(--sage-light);
 }
 
+.reservation-staff-section {
+  margin: 18px 0 24px;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface-soft);
+}
+
+.reservation-staff-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.reservation-staff-card {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 13px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.reservation-staff-card h3,
+.reservation-staff-card p {
+  margin: 3px 0;
+}
+
+.reservation-staff-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+
+.reservation-staff-actions button {
+  margin-top: 0;
+}
+
+.reservation-status {
+  display: inline-block;
+  margin-bottom: 4px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: var(--surface-soft);
+  color: var(--muted);
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.reservation-status.pending { background: #fff2ce; color: #785c12; }
+.reservation-status.ready { background: #dcefe3; color: #285c3d; }
+.reservation-status.picked_up { background: #e6e8e7; color: #3f4943; }
+.reservation-status.cancelled,
+.reservation-status.expired { background: #f4e3e1; color: var(--danger); }
+
 .customer-match-card,
 .customer-request-card {
   margin-top: 10px;
@@ -1114,6 +1171,41 @@ button:disabled {
 
 .public-request-panel textarea {
   min-height: 76px;
+}
+
+.reservation-panel {
+  scroll-margin-top: 18px;
+}
+
+.reservation-book-summary {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 14px;
+  margin-bottom: 14px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.reservation-book-summary img {
+  width: 88px;
+  height: 118px;
+  object-fit: contain;
+}
+
+.reservation-book-summary h3,
+.reservation-book-summary p,
+.reservation-confirmation p {
+  margin: 3px 0 7px;
+}
+
+.catalog-grid .reservation-button {
+  width: 100%;
+  margin-top: 10px;
+}
+
+.catalog-detail .reservation-button {
+  margin-right: 8px;
 }
 
 .request-honeypot {
@@ -1590,6 +1682,15 @@ button:disabled {
   .customer-match-card,
   .customer-request-card {
     display: block;
+  }
+
+  .reservation-staff-card {
+    display: block;
+  }
+
+  .reservation-staff-actions {
+    justify-content: flex-start;
+    margin-top: 10px;
   }
 
   .customer-match-actions {
@@ -2611,70 +2712,69 @@ button:disabled {
 
 /* Airy public catalog */
 .public-app {
-  display: grid;
   max-width: 1280px;
   padding: 26px 32px 56px;
-  grid-template-columns: minmax(220px, 1fr) auto;
-  column-gap: 28px;
-  align-items: start;
 }
 
-.public-app > * {
-  grid-column: 1 / -1;
-}
-
-.public-app > .public-brand {
-  grid-column: 1;
+.public-site-header {
+  display: flex;
+  min-height: 88px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 28px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--border);
 }
 
 .public-brand {
   display: flex;
-  min-height: 94px;
-  margin: 0;
+  min-width: 0;
   align-items: center;
-  gap: 18px;
+  gap: 13px;
   color: var(--text);
 }
 
 .public-brand img {
-  width: 88px;
-  height: 88px;
+  width: 64px;
+  height: 64px;
   object-fit: contain;
 }
 
 .public-brand span {
-  font-size: 1.35rem;
+  max-width: 220px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.05rem;
+  line-height: 1.15;
   letter-spacing: 0.01em;
 }
 
-.public-app > .account-bar {
-  grid-column: 2;
-  min-height: 94px;
+.public-header-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 14px;
+}
+
+.public-header-controls .account-bar {
   margin: 0;
-  padding: 0;
+}
+
+.public-header-controls .staff-sign-in-button {
+  min-height: 38px;
+  margin: 0;
+  padding: 8px 13px;
   border: 0;
   background: transparent;
-}
-
-.public-app > .account-bar > span {
   color: var(--muted);
-  font-size: 0.76rem;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  text-transform: uppercase;
-}
-
-.public-app .staff-sign-in-button {
-  border-color: var(--border);
-  background: var(--surface);
 }
 
 .public-app .public-nav {
+  display: flex;
+  align-items: center;
   justify-content: flex-end;
   gap: 2px;
-  margin: 0 0 34px;
-  padding: 0 0 14px;
-  border-bottom: 1px solid var(--border);
+  margin: 0;
 }
 
 .public-app .public-nav button {
@@ -2682,26 +2782,35 @@ button:disabled {
   margin: 0;
   padding: 8px 14px;
   border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
+  border-radius: 5px;
   background: transparent;
   color: var(--muted);
 }
 
 .public-app .public-nav button:hover {
-  border-bottom-color: var(--border-strong);
-  background: transparent;
+  background: var(--sage-light);
   color: var(--text);
 }
 
-.public-app .public-nav button.primary {
-  border-bottom-color: var(--sage-dark);
+.public-app .public-nav button.active {
+  background: var(--sage-light);
   color: var(--sage-dark);
+}
+
+.public-app .public-nav .public-header-request {
+  margin-left: 4px;
+  background: var(--sage-dark);
+  color: white;
+}
+
+.public-app .public-nav .public-header-request:hover {
+  background: var(--sage);
+  color: white;
 }
 
 .public-catalog.card {
   margin-top: 0;
-  padding: 28px 0 0;
+  padding: 34px 0 0;
   border: 0;
   background: transparent;
   box-shadow: none;
@@ -2844,6 +2953,17 @@ button:disabled {
 }
 
 @media (max-width: 850px) {
+  .public-site-header {
+    min-height: 0;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .public-header-controls {
+    width: 100%;
+  }
+
   .public-catalog .catalog-layout {
     grid-template-columns: 1fr;
   }
@@ -2860,34 +2980,62 @@ button:disabled {
 
 @media (max-width: 650px) {
   .public-app {
-    display: block;
     padding: 14px 12px 36px;
   }
 
+  .public-site-header {
+    min-height: 0;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 12px;
+    padding-bottom: 14px;
+  }
+
   .public-brand {
-    min-height: 78px;
-    gap: 10px;
+    gap: 8px;
   }
 
   .public-brand img {
-    width: 70px;
-    height: 70px;
+    width: 52px;
+    height: 52px;
   }
 
-  .public-app > .account-bar {
-    min-height: auto;
-    margin-bottom: 14px;
-    padding: 8px 0;
+  .public-brand span {
+    max-width: none;
+    font-size: 0.95rem;
+  }
+
+  .public-header-controls {
+    display: grid;
+    width: 100%;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
   }
 
   .public-app .public-nav {
-    align-items: stretch;
-    flex-direction: row;
-    margin-bottom: 20px;
+    display: contents;
+  }
+
+  .public-app .public-nav button,
+  .public-header-controls .staff-sign-in-button {
+    width: 100%;
+    min-height: 40px;
+    padding: 7px 8px;
+    border: 1px solid var(--border);
+    text-align: center;
+  }
+
+  .public-app .public-nav .public-header-request {
+    margin-left: 0;
+  }
+
+  .public-header-controls .account-bar {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 
   .public-catalog.card {
-    padding: 18px 0 0;
+    padding: 24px 0 0;
   }
 
   .public-catalog .public-catalog-heading {
