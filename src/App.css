@@ -2925,6 +2925,11 @@ button:disabled {
   color: var(--sage-dark);
 }
 
+.public-catalog .catalog-note.catalog-reserved {
+  background: #f4e3e1;
+  color: var(--danger);
+}
+
 .public-catalog .catalog-grid .catalog-item .secondary {
   border-radius: 5px;
 }

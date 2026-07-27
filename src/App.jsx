@@ -4114,8 +4114,29 @@ const activeInventoryFilterCount = [
 const publicItems = items.filter(
   (item) =>
     (item.status || "Available") === "Available" &&
-    item.public_visible !== false
+    item.public_visible !== false &&
+    (!isAuthenticated || Number(item.quantity || 0) > 0)
 );
+
+const activeReservationCountsByItem = bookReservations.reduce((counts, reservation) => {
+  if (
+    ["pending", "ready"].includes(reservation.status) &&
+    new Date(reservation.expires_at).getTime() > Date.now()
+  ) {
+    const itemId = String(reservation.item_id);
+    counts[itemId] = (counts[itemId] || 0) + 1;
+  }
+  return counts;
+}, {});
+
+function getCatalogAvailableQuantity(item) {
+  const listedQuantity = Number(item.quantity || 0);
+  if (!isAuthenticated) return listedQuantity;
+  return Math.max(
+    listedQuantity - (activeReservationCountsByItem[String(item.id)] || 0),
+    0
+  );
+}
 
 const filteredCatalogItems = publicItems
   .filter((item) => {
@@ -4774,6 +4795,7 @@ async function submitBookReservation(event) {
   setReservationResult(data);
   setReservationDraft(EMPTY_BOOK_RESERVATION);
   await loadItems();
+  if (isAuthenticated) await loadCustomerRequestData();
 }
 
 function renderBookReservationForm() {
@@ -7647,12 +7669,18 @@ function renderUserManagement() {
     <p><strong>Edition:</strong> {selectedCatalogItem.edition || "N/A"}</p>
     <p><strong>ISBN:</strong> {selectedCatalogItem.isbn || "N/A"}</p>
     <p><strong>Price:</strong> ${selectedCatalogItem.final_price}</p>
-    <p><strong>Available:</strong> {selectedCatalogItem.quantity || 1}</p>
+    <p><strong>Available:</strong> {getCatalogAvailableQuantity(selectedCatalogItem)}</p>
 
-    <p className="catalog-note">Available in store</p>
-    <button type="button" className="primary reservation-button" onClick={() => openBookReservation(selectedCatalogItem)}>
-      Reserve for Pickup
-    </button>
+    {getCatalogAvailableQuantity(selectedCatalogItem) > 0 ? (
+      <>
+        <p className="catalog-note">Available in store</p>
+        <button type="button" className="primary reservation-button" onClick={() => openBookReservation(selectedCatalogItem)}>
+          Reserve for Pickup
+        </button>
+      </>
+    ) : (
+      <p className="catalog-note catalog-reserved">Reserved</p>
+    )}
   </section>
 )}
 
@@ -7716,14 +7744,20 @@ function renderUserManagement() {
               <strong>${item.final_price}</strong>
             </p>
 
-            <p className="catalog-note">Available in store</p>
-            <button
-              type="button"
-              className="primary reservation-button"
-              onClick={() => openBookReservation(item)}
-            >
-              Reserve
-            </button>
+            {getCatalogAvailableQuantity(item) > 0 ? (
+              <>
+                <p className="catalog-note">Available in store</p>
+                <button
+                  type="button"
+                  className="primary reservation-button"
+                  onClick={() => openBookReservation(item)}
+                >
+                  Reserve
+                </button>
+              </>
+            ) : (
+              <p className="catalog-note catalog-reserved">Reserved</p>
+            )}
             <button
             className="secondary"
             onClick={() => setSelectedCatalogItem(item)}
