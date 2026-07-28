@@ -19,6 +19,10 @@ import {
   normalizePublisher,
   normalizePublisherItemNumber,
 } from "./barcodeIdentification";
+import {
+  buildDuplicateLabelQueueUpdate,
+  getQueuedLabelQuantity,
+} from "./labelQueue";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -3357,12 +3361,15 @@ if (!existingItem && !exactIsbnMatchDeclined && !exactPublisherMatchDeclined) {
 
   if (existingItem) {
 
+    const receivedQuantity = Number(itemDraft.quantity || 1);
     const newQuantity =
-      Number(existingItem.quantity || 0) + Number(itemDraft.quantity || 1);
+      Number(existingItem.quantity || 0) + receivedQuantity;
+    const queuedAt = new Date().toISOString();
 
     const duplicateUpdates = {
       quantity: newQuantity,
-      updated_at: new Date().toISOString(),
+      updated_at: queuedAt,
+      ...buildDuplicateLabelQueueUpdate(existingItem, receivedQuantity, queuedAt),
     };
 
     if (
@@ -3433,18 +3440,11 @@ try {
 
     await recordIntakeHistory(existingItem.id, itemDraft, true);
 
-    const receivedQuantity = Number(itemDraft.quantity || 1);
-    generateLabels([
-      {
-        ...existingItem,
-        ...duplicateUpdates,
-        quantity: receivedQuantity,
-      },
-    ]);
+    await loadItems();
 
     alert(
       `Existing listing updated to quantity ${newQuantity}. ` +
-        `${receivedQuantity} new label${receivedQuantity === 1 ? " was" : "s were"} generated.`
+        `${receivedQuantity} new label${receivedQuantity === 1 ? " was" : "s were"} added to the print queue.`
     );
 } else {
   setAnalysisStatus("Saving new item...");
@@ -3489,6 +3489,9 @@ try {
     ...itemDraft,
     sku: newSku,
     image_url: imageUrl || bookData.image_url || "",
+    label_printed: false,
+    pending_label_quantity: Number(itemDraft.quantity || 1),
+    label_queued_at: new Date().toISOString(),
   };
 
   const squareResponse = await authFetch(
@@ -3907,6 +3910,8 @@ async function markLabelsPrinted() {
     .from("items")
     .update({
       label_printed: true,
+      pending_label_quantity: 0,
+      label_queued_at: null,
       updated_at: new Date().toISOString(),
     })
     .in("id", ids);
@@ -3930,7 +3935,7 @@ function generateLabels(itemsToPrint) {
   let firstLabel = true;
 
   itemsToPrint.forEach((item) => {
-    const quantity = Number(item.quantity || 1);
+    const quantity = Number(item.label_quantity ?? item.quantity ?? 1);
 
     for (let i = 0; i < quantity; i++) {
       if (!firstLabel) {
@@ -4032,9 +4037,13 @@ const staleTemporaryItems = items.filter((item) => {
 const labelItems = items.filter(
   (item) =>
     item.label_printed !== true &&
-    Number(item.quantity || 0) > 0 &&
+    getQueuedLabelQuantity(item) > 0 &&
     locationMatches(item.location, labelLocationFilter) &&
-    dateAddedMatches(item, labelDateFrom, labelDateTo)
+    dateAddedMatches(
+      { ...item, created_at: item.label_queued_at || item.created_at },
+      labelDateFrom,
+      labelDateTo
+    )
 );
 
 const filteredItems = items.filter((item) => {
@@ -7572,7 +7581,12 @@ function renderUserManagement() {
           <button
   className="primary"
   onClick={() => {
-    generateLabels(labelItems);
+    generateLabels(
+      labelItems.map((item) => ({
+        ...item,
+        label_quantity: getQueuedLabelQuantity(item),
+      }))
+    );
   }}
 >
   Generate Labels
@@ -7603,9 +7617,9 @@ function renderUserManagement() {
                 <h3>{item.title}</h3>
                 <p><strong>SKU:</strong> {item.sku}</p>
                 <p><strong>Price:</strong> ${item.final_price}</p>
-                <p><strong>Quantity:</strong> {item.quantity}</p>
+                <p><strong>Labels queued:</strong> {getQueuedLabelQuantity(item)}</p>
                 <p><strong>Category:</strong> {item.category}</p>
-                <p><strong>Added:</strong> {formatDateAdded(item.created_at)}</p>
+                <p><strong>Queued:</strong> {formatDateAdded(item.label_queued_at || item.created_at)}</p>
               </div>
             </div>
           ))}
