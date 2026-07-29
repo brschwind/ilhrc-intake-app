@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   buildBundleContentsNote,
+  getBundleComponentQuantity,
   getBundleComponentRows,
   getBundleIndividualValue,
   getBundlePieceCount,
@@ -28,5 +29,20 @@ test("bundle component rows use text ids and physical quantities", () => {
   assert.deepEqual(getBundleComponentRows("bundle-1", components), [
     { bundle_item_id: "bundle-1", component_item_id: "11", piece_quantity: 1 },
     { bundle_item_id: "bundle-1", component_item_id: "12", piece_quantity: 2 },
+  ]);
+});
+
+test("retroactive bundles can reserve fewer copies than an inventory listing holds", () => {
+  const retroComponents = [
+    { ...components[0], quantity: 4, bundle_quantity: 1 },
+    { ...components[1], quantity: 3, bundle_quantity: 2 },
+  ];
+
+  assert.equal(getBundleComponentQuantity(retroComponents[0]), 1);
+  assert.equal(getBundlePieceCount(retroComponents), 3);
+  assert.equal(getBundleIndividualValue(retroComponents), 29);
+  assert.deepEqual(getBundleComponentRows("bundle-2", retroComponents), [
+    { bundle_item_id: "bundle-2", component_item_id: "11", piece_quantity: 1 },
+    { bundle_item_id: "bundle-2", component_item_id: "12", piece_quantity: 2 },
   ]);
 });

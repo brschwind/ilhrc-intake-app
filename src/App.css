@@ -649,6 +649,48 @@ button:disabled {
   gap: 8px;
 }
 
+.inventory-bundle-panel {
+  margin-bottom: 18px;
+}
+
+.inventory-bundle-components {
+  margin-top: 14px;
+  border: 1px solid var(--border);
+  background: white;
+}
+
+.inventory-bundle-component {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 130px auto;
+  align-items: end;
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.inventory-bundle-component:last-child {
+  border-bottom: 0;
+}
+
+.inventory-bundle-component small {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.inventory-bundle-component label {
+  margin: 0;
+}
+
+.inventory-bundle-component input {
+  width: 100%;
+  min-height: 38px;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  background: white;
+}
+
 .bundle-review {
   margin-top: 16px;
   padding: 16px;
@@ -2115,6 +2157,11 @@ button:disabled {
   .bulk-actions {
     grid-column: span 1;
     justify-content: flex-start;
+  }
+
+  .inventory-bundle-component {
+    grid-template-columns: 1fr;
+    align-items: stretch;
   }
 
   .rule-condition-row,
