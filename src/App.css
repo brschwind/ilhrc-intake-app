@@ -828,6 +828,15 @@ button:disabled {
   background: var(--surface-soft);
 }
 
+.inventory-sidebar {
+  top: 96px;
+  max-height: calc(100vh - 108px);
+  box-sizing: border-box;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+
 .inventory-sidebar h3,
 .catalog-sidebar h3 {
   color: var(--brown);
@@ -972,7 +981,7 @@ button:disabled {
   flex-shrink: 0;
 }
 
-.item-select {
+.card .item-select {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -983,8 +992,16 @@ button:disabled {
   cursor: pointer;
 }
 
+.item-select span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 16px;
+  line-height: 1;
+}
+
 .inventory-grid .inventory-item .item-select input[type="checkbox"] {
   position: static;
+  display: block;
   margin: 0;
 }
 
@@ -1043,6 +1060,11 @@ button:disabled {
   flex-wrap: wrap;
   font-size: 0.84rem;
   color: var(--muted);
+}
+
+.selection-bundle-action {
+  width: 100%;
+  margin-top: 0;
 }
 
 .text-button,
@@ -2042,9 +2064,12 @@ button:disabled {
     position: static;
     order: -1;
     display: none;
+    max-height: none;
     padding: 12px;
     border-radius: 8px;
     box-shadow: var(--shadow);
+    overflow: visible;
+    scrollbar-gutter: auto;
   }
 
   .inventory-sidebar:not(.inventory-tools-closed) {

@@ -7549,7 +7549,7 @@ function renderUserManagement() {
                     checked={selectedItemIds.includes(item.id)}
                     onChange={() => toggleSelectedItem(item.id)}
                   />
-                  Select
+                  <span>Select</span>
                 </label>
               )}
               <BookCoverImage src={item.image_url} alt={item.title} />
@@ -7806,6 +7806,17 @@ function renderUserManagement() {
                       </button>
                     </div>
 
+                    {selectedItemIds.length >= 2 && (
+                      <button
+                        type="button"
+                        className="primary selection-bundle-action"
+                        disabled={bundleActionLoading}
+                        onClick={startInventoryBundle}
+                      >
+                        Create Bundle from {selectedItemIds.length} Selected
+                      </button>
+                    )}
+
                     {selectedItemIds.length > 0 && (
                       <div className="bulk-edit-bar">
                         <div className="bulk-edit-field">
@@ -7895,17 +7906,6 @@ function renderUserManagement() {
                         </div>
 
                         <div className="bulk-actions">
-                          <button
-                            type="button"
-                            className="secondary"
-                            disabled={
-                              selectedItemIds.length < 2 || bundleActionLoading
-                            }
-                            onClick={startInventoryBundle}
-                          >
-                            Create Bundle from Selected
-                          </button>
-
                           <button
                             type="button"
                             className="primary"
