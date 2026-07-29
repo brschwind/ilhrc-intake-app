@@ -26,6 +26,7 @@ import {
 import {
   EMPTY_BUNDLE_DRAFT,
   buildBundleContentsNote,
+  getBundleComponentQuantity,
   getBundleComponentRows,
   getBundleIndividualValue,
   getBundlePieceCount,
@@ -3094,10 +3095,113 @@ setBookData(await applyRulesToImportedBook({
   }
 
   function startBundle() {
-    setBundleDraft({ ...EMPTY_BUNDLE_DRAFT, active: true });
+    setBundleDraft({ ...EMPTY_BUNDLE_DRAFT, active: true, source: "intake" });
     setBundleReviewOpen(false);
     setBundleCoverFile(null);
     setBundleCoverPreview("");
+  }
+
+  async function startInventoryBundle() {
+    if (bundleDraft.active && bundleDraft.components.length > 0) {
+      alert("Finish or cancel the active bundle before starting another one.");
+      return;
+    }
+
+    const selectedItems = items.filter((item) => selectedItemIds.includes(item.id));
+    if (selectedItems.length < 2) {
+      alert("Select at least two inventory listings to create a bundle.");
+      return;
+    }
+
+    const unavailableItem = selectedItems.find(
+      (item) =>
+        item.item_type === "bundle" ||
+        item.status !== "Available" ||
+        bundleParentByComponentId[String(item.id)] ||
+        Number(item.quantity || 0) < 1
+    );
+    if (unavailableItem) {
+      alert(
+        `"${unavailableItem.title}" is not available for a new bundle. Choose available individual listings only.`
+      );
+      return;
+    }
+
+    const { data: reservations, error: reservationError } = await supabase
+      .from("book_reservations")
+      .select("item_id")
+      .in("item_id", selectedItems.map((item) => String(item.id)))
+      .in("status", ["pending", "ready"])
+      .gt("expires_at", new Date().toISOString());
+
+    if (reservationError) {
+      alert("Could not check reservations: " + reservationError.message);
+      return;
+    }
+    if ((reservations || []).length > 0) {
+      const reservedIds = new Set(
+        reservations.map((reservation) => String(reservation.item_id))
+      );
+      const reservedItem = selectedItems.find((item) =>
+        reservedIds.has(String(item.id))
+      );
+      alert(
+        `Cancel or complete the active reservation for "${
+          reservedItem?.title || "a selected book"
+        }" first.`
+      );
+      return;
+    }
+
+    setBundleDraft({
+      ...EMPTY_BUNDLE_DRAFT,
+      active: true,
+      source: "inventory",
+      components: selectedItems.map((item) => ({
+        ...item,
+        bundle_quantity: 1,
+        from_inventory: true,
+      })),
+    });
+    setBundleReviewOpen(true);
+    setBundleCoverFile(null);
+    setBundleCoverPreview("");
+    setSelectedItemIds([]);
+    setIsSelectionMode(false);
+  }
+
+  function updateInventoryBundleQuantity(componentId, value) {
+    setBundleDraft((current) => ({
+      ...current,
+      components: current.components.map((component) =>
+        component.id === componentId
+          ? {
+              ...component,
+              bundle_quantity: Math.min(
+                Math.max(1, Number(value || 1)),
+                Math.max(1, Number(component.quantity || 1))
+              ),
+            }
+          : component
+      ),
+    }));
+  }
+
+  function removeInventoryBundleComponent(componentId) {
+    const component = bundleDraft.components.find(
+      (item) => item.id === componentId
+    );
+    if (component?.retro_materialized) {
+      removeBundleDraftComponent(component);
+      return;
+    }
+
+    setBundleDraft((current) => ({
+      ...current,
+      components: current.components.filter(
+        (component) => component.id !== componentId
+      ),
+    }));
   }
 
   function handleBundleCover(event) {
@@ -3147,6 +3251,21 @@ setBookData(await applyRulesToImportedBook({
       squareItemId = squareData.square_item_id;
       squareVariationId = squareData.square_variation_id;
       createdSquareItemId = squareData.square_item_id;
+    } else {
+      const inventoryResponse = await authFetch("/update-square-inventory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          square_variation_id: squareVariationId,
+          quantity: Math.max(1, Number(item.quantity || 1)),
+        }),
+      });
+      const inventoryData = await inventoryResponse.json().catch(() => ({}));
+      if (!inventoryResponse.ok || !inventoryData.success) {
+        throw new Error(
+          JSON.stringify(inventoryData.error || "Square inventory update failed.")
+        );
+      }
     }
 
     const queuedAt = new Date().toISOString();
@@ -3174,6 +3293,159 @@ setBookData(await applyRulesToImportedBook({
       }
       throw new Error(error.message);
     }
+  }
+
+  function buildRetroBundleComponent(item, quantity, sku) {
+    return {
+      title: item.title || "",
+      curriculum: item.curriculum || "",
+      publisher: item.publisher || "",
+      subject: item.subject || "",
+      grade_level: item.grade_level || "",
+      edition: item.edition || "",
+      isbn: item.isbn || "",
+      publisher_barcode: item.publisher_barcode || "",
+      category: item.category || "",
+      suggested_price: item.suggested_price ?? null,
+      final_price: item.final_price ?? null,
+      quantity,
+      status: "Bundled",
+      notes: item.notes || "",
+      ai_confidence: item.ai_confidence ?? null,
+      public_visible: false,
+      image_url: item.image_url || "",
+      sku,
+      item_type: "individual",
+      bundle_piece_count: 0,
+      label_printed: true,
+      pending_label_quantity: 0,
+      label_queued_at: null,
+      ...(item.publisher_item_number !== undefined
+        ? { publisher_item_number: item.publisher_item_number || "" }
+        : {}),
+      ...(item.location !== undefined ? { location: item.location || "" } : {}),
+      ...(item.weight_ounces !== undefined
+        ? { weight_ounces: item.weight_ounces ?? null }
+        : {}),
+    };
+  }
+
+  async function materializeInventoryBundleComponents(components) {
+    const materialized = [];
+    const rememberMaterializedComponent = (originalId, nextComponent) => {
+      setBundleDraft((current) => ({
+        ...current,
+        components: current.components.map((component) =>
+          component.id === originalId ? nextComponent : component
+        ),
+      }));
+    };
+
+    for (const component of components) {
+      if (!component.from_inventory || component.retro_materialized) {
+        materialized.push(component);
+        continue;
+      }
+
+      const { data: currentItem, error: loadError } = await supabase
+        .from("items")
+        .select("*")
+        .eq("id", component.id)
+        .single();
+      if (loadError) throw loadError;
+
+      const bundleQuantity = getBundleComponentQuantity(component);
+      const currentQuantity = Math.max(0, Number(currentItem.quantity || 0));
+      if (bundleQuantity > currentQuantity) {
+        throw new Error(`${currentItem.title} no longer has enough available copies.`);
+      }
+
+      if (bundleQuantity === currentQuantity) {
+        const materializedComponent = {
+          ...currentItem,
+          bundle_quantity: bundleQuantity,
+          retro_materialized: true,
+        };
+        materialized.push(materializedComponent);
+        rememberMaterializedComponent(component.id, materializedComponent);
+        continue;
+      }
+
+      const remainingQuantity = currentQuantity - bundleQuantity;
+      const componentSku = await generateSku("individual");
+      const { data: splitComponent, error: insertError } = await supabase
+        .from("items")
+        .insert([buildRetroBundleComponent(currentItem, bundleQuantity, componentSku)])
+        .select("*")
+        .single();
+      if (insertError) throw insertError;
+
+      let squareInventoryChanged = false;
+      try {
+        if (currentItem.square_variation_id) {
+          const inventoryResponse = await authFetch("/update-square-inventory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              square_variation_id: currentItem.square_variation_id,
+              quantity: remainingQuantity,
+            }),
+          });
+          const inventoryData = await inventoryResponse.json().catch(() => ({}));
+          if (!inventoryResponse.ok || !inventoryData.success) {
+            throw new Error(
+              JSON.stringify(inventoryData.error || "Square inventory update failed.")
+            );
+          }
+          squareInventoryChanged = true;
+        }
+
+        const remainingLabels = Math.min(
+          getQueuedLabelQuantity(currentItem),
+          remainingQuantity
+        );
+        const { error: updateError } = await supabase
+          .from("items")
+          .update({
+            quantity: remainingQuantity,
+            label_printed: remainingLabels === 0,
+            pending_label_quantity: remainingLabels,
+            label_queued_at:
+              remainingLabels > 0 ? currentItem.label_queued_at : null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", currentItem.id);
+        if (updateError) throw updateError;
+      } catch (error) {
+        if (squareInventoryChanged && currentItem.square_variation_id) {
+          await authFetch("/update-square-inventory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              square_variation_id: currentItem.square_variation_id,
+              quantity: currentQuantity,
+            }),
+          }).catch(() => null);
+        }
+        await supabase.from("items").delete().eq("id", splitComponent.id);
+        throw error;
+      }
+
+      await logAudit("inventory_item_split_for_bundle", "item", currentItem.id, {
+        component_item_id: splitComponent.id,
+        bundled_quantity: bundleQuantity,
+        remaining_quantity: remainingQuantity,
+      });
+      const materializedComponent = {
+        ...splitComponent,
+        bundle_quantity: bundleQuantity,
+        retro_materialized: true,
+      };
+      materialized.push(materializedComponent);
+      rememberMaterializedComponent(component.id, materializedComponent);
+    }
+
+    return materialized;
   }
 
   async function saveBundleComponent(itemDraft) {
@@ -3258,10 +3530,31 @@ setBookData(await applyRulesToImportedBook({
       return;
     }
 
+    if (
+      bundleDraft.source === "inventory" &&
+      bundleDraft.components.every(
+        (component) => component.from_inventory && !component.retro_materialized
+      )
+    ) {
+      setBundleDraft({ ...EMPTY_BUNDLE_DRAFT });
+      setBundleReviewOpen(false);
+      setBundleCoverFile(null);
+      setBundleCoverPreview("");
+      alert("Bundle cancelled. The selected inventory listings were not changed.");
+      return;
+    }
+
     setBundleActionLoading(true);
     setAnalysisStatus("Preparing individual listings...");
     try {
       for (const component of bundleDraft.components) {
+        if (
+          bundleDraft.source === "inventory" &&
+          component.from_inventory &&
+          !component.retro_materialized
+        ) {
+          continue;
+        }
         const { data: currentItem, error } = await supabase
           .from("items")
           .select("*")
@@ -3314,15 +3607,25 @@ setBookData(await applyRulesToImportedBook({
     setAnalysisStatus("Creating bundle listing...");
     let squareItemId = "";
     let bundleItemId = "";
+    let workingComponents = bundleDraft.components;
 
     try {
-      const componentIds = bundleDraft.components.map((item) => item.id);
+      if (bundleDraft.source === "inventory") {
+        workingComponents =
+          await materializeInventoryBundleComponents(workingComponents);
+        setBundleDraft((current) => ({
+          ...current,
+          components: workingComponents,
+        }));
+      }
+
+      const componentIds = workingComponents.map((item) => item.id);
       const { data: currentComponents, error: componentLoadError } = await supabase
         .from("items")
         .select("*")
         .in("id", componentIds);
       if (componentLoadError) throw componentLoadError;
-      if ((currentComponents || []).length !== bundleDraft.components.length) {
+      if ((currentComponents || []).length !== workingComponents.length) {
         throw new Error("One or more draft books could not be found.");
       }
 
@@ -3359,9 +3662,11 @@ setBookData(await applyRulesToImportedBook({
         generateSku("bundle"),
         uploadCoverImage(bundleCoverFile),
       ]);
-      const contents = buildBundleContentsNote(bundleDraft.components);
+      const contents = buildBundleContentsNote(workingComponents);
       const commonValue = (field) => {
-        const values = [...new Set(bundleDraft.components.map((item) => item[field] || ""))];
+        const values = [
+          ...new Set(workingComponents.map((item) => item[field] || "")),
+        ];
         return values.length === 1 ? values[0] : "";
       };
       const bundleItem = {
@@ -3382,7 +3687,7 @@ setBookData(await applyRulesToImportedBook({
         sku: newSku,
         image_url:
           uploadedBundleImage ||
-          bundleDraft.components.find((item) => item.image_url)?.image_url ||
+          workingComponents.find((item) => item.image_url)?.image_url ||
           "",
         public_visible: true,
         item_type: "bundle",
@@ -3409,14 +3714,14 @@ setBookData(await applyRulesToImportedBook({
 
       const { error: componentError } = await supabase
         .from("bundle_components")
-        .insert(getBundleComponentRows(insertedBundle.id, bundleDraft.components));
+        .insert(getBundleComponentRows(insertedBundle.id, workingComponents));
       if (componentError) throw componentError;
 
       await logAudit("inventory_bundle_created", "item", insertedBundle.id, {
         title: insertedBundle.title,
         sku: insertedBundle.sku,
         piece_count: pieceCount,
-        component_ids: bundleDraft.components.map((item) => item.id),
+        component_ids: workingComponents.map((item) => item.id),
       });
 
       setBundleDraft({ ...EMPTY_BUNDLE_DRAFT });
@@ -6160,31 +6465,18 @@ function renderUserManagement() {
       <p>Use the cover photo and ISBN/barcode when available.</p>
     </section>
 
-    <div className="location-box">
-      <label>Current Location</label>
-      <select
-        value={currentLocation}
-        onChange={(e) => setCurrentLocation(e.target.value)}
-      >
-        <option value="">Choose location</option>
-        {activeLocationNames.map((location) => (
-          <option key={location} value={location}>
-            {location}
-          </option>
-        ))}
-      </select>
-      <p className="helper-text">
-        Manage locations from Settings. This selection is saved with each book until you change it.
-      </p>
-    </div>
-
-
-    <section className={`bundle-intake-panel ${bundleDraft.active ? "active" : ""}`}>
+    <section
+      className={`bundle-intake-panel ${
+        bundleDraft.active && bundleDraft.source === "intake" ? "active" : ""
+      }`}
+    >
       <div className="bundle-intake-heading">
         <div>
           <strong>Bundle mode</strong>
           <p>
-            {bundleDraft.active
+            {bundleDraft.active && bundleDraft.source === "inventory"
+              ? "An inventory bundle is in progress. Return to Inventory to finish or cancel it."
+              : bundleDraft.active
               ? "Each saved book will remain in this set until you finish or cancel it."
               : "Create one sellable set while preserving every book's individual SKU and price."}
           </p>
@@ -6192,8 +6484,11 @@ function renderUserManagement() {
         <label className="bundle-toggle">
           <input
             type="checkbox"
-            checked={bundleDraft.active}
-            disabled={bundleActionLoading}
+            checked={bundleDraft.active && bundleDraft.source === "intake"}
+            disabled={
+              bundleActionLoading ||
+              (bundleDraft.active && bundleDraft.source === "inventory")
+            }
             onChange={(event) => {
               if (event.target.checked) {
                 startBundle();
@@ -6205,11 +6500,13 @@ function renderUserManagement() {
             }}
           />
           <span aria-hidden="true" />
-          <b>{bundleDraft.active ? "On" : "Off"}</b>
+          <b>
+            {bundleDraft.active && bundleDraft.source === "intake" ? "On" : "Off"}
+          </b>
         </label>
       </div>
 
-      {bundleDraft.active && (
+      {bundleDraft.active && bundleDraft.source === "intake" && (
         <>
           <label>Working set title</label>
           <input
@@ -6720,6 +7017,142 @@ function renderUserManagement() {
     <span>{soldCopies}</span>
   </div>
 </div>
+
+          {bundleDraft.active && bundleDraft.source === "inventory" && (
+            <section className="bundle-intake-panel active inventory-bundle-panel">
+              <div className="bundle-review-heading">
+                <div>
+                  <strong>Create bundle from inventory</strong>
+                  <p>
+                    Choose how many copies of each listing belong in the set. Any
+                    remaining copies stay available under their current SKU.
+                  </p>
+                </div>
+                <span className="bundle-badge">
+                  {getBundlePieceCount(bundleDraft.components)} pieces
+                </span>
+              </div>
+
+              <label>Set title</label>
+              <input
+                placeholder="Example: Grade 4 Literature Set"
+                value={bundleDraft.title}
+                onChange={(event) =>
+                  setBundleDraft((current) => ({
+                    ...current,
+                    title: event.target.value,
+                  }))
+                }
+              />
+
+              <div className="inventory-bundle-components">
+                {bundleDraft.components.map((component) => (
+                  <div className="inventory-bundle-component" key={component.id}>
+                    <div>
+                      <strong>{component.title || "Untitled"}</strong>
+                      <small>
+                        {component.sku} | $
+                        {Number(component.final_price || 0).toFixed(2)} |{" "}
+                        {component.quantity || 1} available
+                      </small>
+                    </div>
+                    <label>
+                      Pieces in set
+                      <input
+                        type="number"
+                        min="1"
+                        max={Math.max(1, Number(component.quantity || 1))}
+                        value={getBundleComponentQuantity(component)}
+                        onChange={(event) =>
+                          updateInventoryBundleQuantity(
+                            component.id,
+                            event.target.value
+                          )
+                        }
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => removeInventoryBundleComponent(component.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bundle-summary">
+                <span>
+                  <strong>{getBundlePieceCount(bundleDraft.components)}</strong>{" "}
+                  pieces
+                </span>
+                <span>
+                  <strong>
+                    ${getBundleIndividualValue(bundleDraft.components).toFixed(2)}
+                  </strong>{" "}
+                  individual value
+                </span>
+              </div>
+
+              <label>Bundle price</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder={getBundleIndividualValue(
+                  bundleDraft.components
+                ).toFixed(2)}
+                value={bundleDraft.price}
+                onChange={(event) =>
+                  setBundleDraft((current) => ({
+                    ...current,
+                    price: event.target.value,
+                  }))
+                }
+              />
+
+              <label>Photo of the complete set (optional)</label>
+              <input
+                type="file"
+                accept="image/*"
+                capture="environment"
+                onChange={handleBundleCover}
+              />
+              {bundleCoverPreview && (
+                <img
+                  className="bundle-cover-preview"
+                  src={bundleCoverPreview}
+                  alt="Bundle preview"
+                />
+              )}
+
+              <div className="bundle-actions">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={
+                    bundleActionLoading ||
+                    bundleDraft.components.length < 2 ||
+                    getBundlePieceCount(bundleDraft.components) < 2
+                  }
+                  onClick={finishBundle}
+                >
+                  {bundleActionLoading
+                    ? "Creating Bundle..."
+                    : "Create Bundle Listing"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={bundleActionLoading}
+                  onClick={cancelBundle}
+                >
+                  Cancel
+                </button>
+              </div>
+            </section>
+          )}
 
 
           {editData && (
@@ -7462,6 +7895,17 @@ function renderUserManagement() {
                         </div>
 
                         <div className="bulk-actions">
+                          <button
+                            type="button"
+                            className="secondary"
+                            disabled={
+                              selectedItemIds.length < 2 || bundleActionLoading
+                            }
+                            onClick={startInventoryBundle}
+                          >
+                            Create Bundle from Selected
+                          </button>
+
                           <button
                             type="button"
                             className="primary"
