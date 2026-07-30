@@ -77,6 +77,70 @@ function sendSafeError(res, status, message) {
   });
 }
 
+function sendInvitationError(res, error) {
+  const status = Number(error?.status) || 400;
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+
+  console.error("[team invitation failed]", {
+    status,
+    code: error?.code || null,
+    message: error?.message || "Supabase did not return an invited user.",
+  });
+
+  if (status === 429 || code.includes("rate") || message.includes("rate limit")) {
+    sendSafeError(
+      res,
+      429,
+      "The email sending limit has been reached. Please wait and try again, or configure custom SMTP in Supabase."
+    );
+    return;
+  }
+
+  if (
+    status === 409 ||
+    message.includes("already registered") ||
+    message.includes("already exists") ||
+    message.includes("duplicate")
+  ) {
+    sendSafeError(
+      res,
+      409,
+      "An account already exists for this email. Ask the team member to use Forgot password on the sign-in screen."
+    );
+    return;
+  }
+
+  if (message.includes("redirect") || message.includes("url")) {
+    sendSafeError(
+      res,
+      400,
+      "The invitation redirect URL is not configured correctly. Check the Supabase URL Configuration settings."
+    );
+    return;
+  }
+
+  if (
+    status >= 500 ||
+    message.includes("smtp") ||
+    message.includes("email") ||
+    message.includes("mail")
+  ) {
+    sendSafeError(
+      res,
+      502,
+      "Supabase could not send the invitation email. Check the Supabase email provider and authentication logs."
+    );
+    return;
+  }
+
+  sendSafeError(
+    res,
+    400,
+    "Could not send the invitation. Check the Supabase authentication logs for details."
+  );
+}
+
 function getSupabaseHostname() {
   try {
     return supabaseUrl ? new URL(supabaseUrl).hostname : "missing";
@@ -248,7 +312,7 @@ app.post("/admin/users/invite", requireAuth, requireAdmin, async (req, res) => {
   );
 
   if (error || !data?.user) {
-    sendSafeError(res, 400, "Could not send the invitation.");
+    sendInvitationError(res, error);
     return;
   }
 
