@@ -168,8 +168,70 @@ function sessionRequiresPasswordSetup(nextSession) {
   return getAuthUrlType() === "invite";
 }
 
-async function shrinkImageFile(file, maxSize = 1400, quality = 0.82) {
+function canvasToJpegFile(canvas, file, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("The browser could not prepare this photo."));
+          return;
+        }
+
+        const cleanName = file.name.replace(/\.[^.]+$/, "") || "book-cover";
+        resolve(new File([blob], `${cleanName}.jpg`, { type: "image/jpeg" }));
+      },
+      "image/jpeg",
+      quality
+    );
+  });
+}
+
+function drawImageToJpegFile(image, file, maxSize, quality) {
+  const width = image.width || image.naturalWidth;
+  const height = image.height || image.naturalHeight;
+  const scale = Math.min(1, maxSize / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("The browser could not prepare this photo.");
+
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvasToJpegFile(canvas, file, quality);
+}
+
+async function shrinkImageFile(
+  file,
+  maxSize = 1400,
+  quality = 0.82,
+  { requireReadableImage = false } = {}
+) {
   if (!file?.type?.startsWith("image/")) return file;
+
+  const browserReadyTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+  if (browserReadyTypes.has(file.type.toLowerCase()) && file.size < 900_000) {
+    return file;
+  }
+
+  if (typeof createImageBitmap === "function") {
+    let bitmap;
+
+    try {
+      bitmap = await createImageBitmap(file, {
+        imageOrientation: "from-image",
+        resizeWidth: maxSize,
+        resizeQuality: "high",
+      });
+
+      return await drawImageToJpegFile(bitmap, file, maxSize, quality);
+    } catch (error) {
+      console.warn("Low-memory image preparation failed; trying compatibility mode.", error);
+    } finally {
+      bitmap?.close?.();
+    }
+  }
 
   const imageUrl = URL.createObjectURL(file);
   const image = new Image();
@@ -181,25 +243,16 @@ async function shrinkImageFile(file, maxSize = 1400, quality = 0.82) {
       image.src = imageUrl;
     });
 
-    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
-    if (scale >= 1 && file.size < 900_000) return file;
+    return await drawImageToJpegFile(image, file, maxSize, quality);
+  } catch (error) {
+    if (requireReadableImage) {
+      throw new Error(
+        "This camera photo could not be read. Try turning off High efficiency pictures in Camera settings, or upload a screenshot of the photo.",
+        { cause: error }
+      );
+    }
 
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(image.width * scale);
-    canvas.height = Math.round(image.height * scale);
-
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", quality)
-    );
-
-    if (!blob) return file;
-
-    const cleanName = file.name.replace(/\.[^.]+$/, "") || "book-cover";
-    return new File([blob], `${cleanName}.jpg`, { type: "image/jpeg" });
-  } catch {
+    console.warn("Image preparation failed; using the original file.", error);
     return file;
   } finally {
     URL.revokeObjectURL(imageUrl);
@@ -349,6 +402,7 @@ export default function App() {
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
 
   const listingPhotoInputRef = useRef(null);
+  const handledCoverFilesRef = useRef(new WeakSet());
   const inventoryEditorRef = useRef(null);
   const inventoryEditorTitleRef = useRef(null);
   const inventorySearchInputRef = useRef(null);
@@ -2645,8 +2699,13 @@ async function applyBulkEdit() {
 
 
 async function handleCoverPhoto(event) {
-  const file = event.target.files?.[0];
+  const input = event.currentTarget;
+  const file = input.files?.[0];
   if (!file) return;
+  if (handledCoverFilesRef.current.has(file)) return;
+  handledCoverFilesRef.current.add(file);
+
+  setAnalysisStatus("Loading camera photo...");
 
   const pendingIdentifier = bookData?.publisher_item_number || bookData?.publisher_barcode
     ? {
@@ -2660,10 +2719,22 @@ async function handleCoverPhoto(event) {
   setBookData((current) => pendingIdentifier ? current : null);
   clearRuleFeedback();
 
-  const optimizedFile = await shrinkImageFile(file);
-  setCoverFile(optimizedFile);
+  try {
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
 
-  analyzePhotoWithFile(optimizedFile, pendingIdentifier);
+    setAnalysisStatus("Preparing camera photo...");
+    const optimizedFile = await shrinkImageFile(file, 1400, 0.82, {
+      requireReadableImage: true,
+    });
+    setCoverFile(optimizedFile);
+
+    await analyzePhotoWithFile(optimizedFile, pendingIdentifier);
+  } catch (error) {
+    setAnalysisStatus("");
+    alert(error.message || "The camera photo could not be processed. Please try again.");
+  } finally {
+    input.value = "";
+  }
 }
 
 function startManualEntry() {
@@ -6855,6 +6926,7 @@ function renderUserManagement() {
   type="file"
   accept="image/*"
   capture="environment"
+  onInput={handleCoverPhoto}
   onChange={handleCoverPhoto}
   className="visually-hidden-file"
 />
