@@ -1892,6 +1892,23 @@ button:disabled {
   max-width: 460px;
 }
 
+.auth-card .text-button {
+  width: auto;
+  min-height: 36px;
+  margin-top: 0;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: var(--sage-dark);
+  text-decoration: underline;
+  box-shadow: none;
+}
+
+.auth-card .text-button:hover {
+  background: transparent;
+  color: var(--text);
+}
+
 .user-invite-form {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

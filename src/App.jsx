@@ -296,10 +296,22 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
+  const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
+  const [forgotPasswordError, setForgotPasswordError] = useState("");
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(
+    () => getAuthUrlType() === "recovery"
+  );
+  const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState("");
+  const [recoveryPasswordLoading, setRecoveryPasswordLoading] = useState(false);
+  const [recoveryPasswordError, setRecoveryPasswordError] = useState("");
   const [users, setUsers] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [optionsSection, setOptionsSection] = useState("lists");
   const [userManagementMessage, setUserManagementMessage] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteForm, setInviteForm] = useState({
     email: "",
     full_name: "",
@@ -455,7 +467,9 @@ export default function App() {
   const isAdmin = profile?.role === "admin";
   const isInternalView = INTERNAL_VIEWS.has(view);
   const shouldShowPasswordSetup = Boolean(session && passwordSetupRequired);
-  const showStaffShell = isAuthenticated && !shouldShowPasswordSetup;
+  const shouldShowPasswordRecovery = Boolean(session && passwordRecoveryMode);
+  const showStaffShell =
+    isAuthenticated && !shouldShowPasswordSetup && !shouldShowPasswordRecovery;
 
   useEffect(() => {
     let mounted = true;
@@ -480,7 +494,12 @@ export default function App() {
     initializeAuth();
 
     const { data: listener } = supabase.auth.onAuthStateChange(
-      async (_event, nextSession) => {
+      async (event, nextSession) => {
+        if (event === "PASSWORD_RECOVERY") {
+          setPasswordRecoveryMode(true);
+          setRecoveryPasswordError("");
+        }
+
         setSession(nextSession);
         setPasswordSetupRequired(sessionRequiresPasswordSetup(nextSession));
 
@@ -491,6 +510,7 @@ export default function App() {
           setProfileLoading(false);
           setPasswordSetupRequired(false);
           setPasswordSetupSaved(false);
+          if (event !== "PASSWORD_RECOVERY") setPasswordRecoveryMode(false);
           setStaffSignInOpen(false);
           if (INTERNAL_VIEWS.has(view)) setView("catalog");
         }
@@ -504,8 +524,9 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (passwordRecoveryMode) return;
     window.location.hash = view === "catalog" || view === "curricula" ? view : "";
-  }, [view]);
+  }, [passwordRecoveryMode, view]);
 
   useEffect(() => {
     if (bundleDraft.active) {
@@ -720,6 +741,82 @@ export default function App() {
     setView("add");
   }
 
+  async function requestPasswordReset(event) {
+    event.preventDefault();
+    if (forgotPasswordLoading) return;
+
+    const email = loginEmail.trim();
+    if (!email || !email.includes("@")) {
+      setForgotPasswordError("Enter the account email address first.");
+      return;
+    }
+
+    setForgotPasswordLoading(true);
+    setForgotPasswordMessage("");
+    setForgotPasswordError("");
+
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
+    });
+
+    setForgotPasswordLoading(false);
+
+    if (error) {
+      const message = String(error.message || "").toLowerCase();
+      setForgotPasswordError(
+        error.status === 429 || message.includes("rate limit")
+          ? "Too many recovery emails were requested. Please wait before trying again."
+          : "Could not send the recovery email. Please contact an Admin."
+      );
+      return;
+    }
+
+    setForgotPasswordMessage(
+      "If an account exists for that email, a password reset link has been sent."
+    );
+  }
+
+  async function completePasswordRecovery(event) {
+    event.preventDefault();
+    if (recoveryPasswordLoading) return;
+
+    setRecoveryPasswordError("");
+    const validationError = validatePasswordPair(
+      recoveryPassword,
+      recoveryConfirmPassword
+    );
+
+    if (validationError) {
+      setRecoveryPasswordError(validationError);
+      return;
+    }
+
+    setRecoveryPasswordLoading(true);
+    const { error } = await supabase.auth.updateUser({
+      password: recoveryPassword,
+    });
+
+    if (error) {
+      setRecoveryPasswordLoading(false);
+      setRecoveryPasswordError(error.message || "Could not reset password.");
+      return;
+    }
+
+    await supabase.auth.signOut();
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setRecoveryPassword("");
+    setRecoveryConfirmPassword("");
+    setRecoveryPasswordLoading(false);
+    setPasswordRecoveryMode(false);
+    setSession(null);
+    setProfile(null);
+    setLoginPassword("");
+    setStaffSignInOpen(true);
+    setAuthMessage("Password reset. Sign in with your new password.");
+    setView("catalog");
+  }
+
   async function handleLogout() {
     await supabase.auth.signOut();
     setSession(null);
@@ -728,6 +825,10 @@ export default function App() {
     setPasswordSetupSaved(false);
     setSetupPassword("");
     setSetupConfirmPassword("");
+    setPasswordRecoveryMode(false);
+    setRecoveryPassword("");
+    setRecoveryConfirmPassword("");
+    setRecoveryPasswordError("");
     setChangePasswordOpen(false);
     setStaffSignInOpen(false);
     setView("catalog");
@@ -883,23 +984,34 @@ export default function App() {
 
   async function inviteUser(event) {
     event.preventDefault();
+    if (inviteLoading) return;
+
     setUserManagementMessage("");
+    setInviteLoading(true);
 
-    const response = await authFetch("/admin/users/invite", {
-      method: "POST",
-      body: JSON.stringify(inviteForm),
-    });
-    const data = await response.json().catch(() => ({}));
+    try {
+      const response = await authFetch("/admin/users/invite", {
+        method: "POST",
+        body: JSON.stringify(inviteForm),
+      });
+      const data = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
-      setUserManagementMessage(data.error || "Failed invitation.");
-      return;
+      if (!response.ok) {
+        setUserManagementMessage(data.error || "Failed invitation.");
+        return;
+      }
+
+      setInviteForm({ email: "", full_name: "", role: "team" });
+      setUserManagementMessage("Invitation sent.");
+      loadUsers();
+      loadAuditLogs();
+    } catch {
+      setUserManagementMessage(
+        "Could not reach the invitation service. Please try again."
+      );
+    } finally {
+      setInviteLoading(false);
     }
-
-    setInviteForm({ email: "", full_name: "", role: "team" });
-    setUserManagementMessage("Invitation sent.");
-    loadUsers();
-    loadAuditLogs();
   }
 
   async function updateUserProfile(user, updates) {
@@ -5397,7 +5509,7 @@ function renderLoginPanel() {
       <h2>Staff Sign In</h2>
       <p>Sign in with your IL HRC team account to use intake and inventory tools.</p>
 
-      <form onSubmit={handleLogin}>
+      <form onSubmit={forgotPasswordOpen ? requestPasswordReset : handleLogin}>
         <label>Email</label>
         <input
           type="email"
@@ -5406,19 +5518,107 @@ function renderLoginPanel() {
           onChange={(e) => setLoginEmail(e.target.value)}
         />
 
-        <label>Password</label>
-        <input
-          type="password"
-          value={loginPassword}
-          autoComplete="current-password"
-          onChange={(e) => setLoginPassword(e.target.value)}
-        />
+        {!forgotPasswordOpen && (
+          <>
+            <label>Password</label>
+            <input
+              type="password"
+              value={loginPassword}
+              autoComplete="current-password"
+              onChange={(e) => setLoginPassword(e.target.value)}
+            />
+          </>
+        )}
 
         {authMessage && <p className="warning-text">{authMessage}</p>}
+        {forgotPasswordMessage && (
+          <p className="status-message">{forgotPasswordMessage}</p>
+        )}
+        {forgotPasswordError && (
+          <p className="warning-text">{forgotPasswordError}</p>
+        )}
 
-        <button className="primary" type="submit" disabled={loginLoading}>
-          {loginLoading ? "Signing In..." : "Sign In"}
-        </button>
+        <div className="auth-actions">
+          <button
+            className="primary"
+            type="submit"
+            disabled={loginLoading || forgotPasswordLoading}
+          >
+            {forgotPasswordOpen
+              ? forgotPasswordLoading
+                ? "Sending..."
+                : "Send Reset Link"
+              : loginLoading
+                ? "Signing In..."
+                : "Sign In"}
+          </button>
+          <button
+            className="text-button"
+            type="button"
+            disabled={loginLoading || forgotPasswordLoading}
+            onClick={() => {
+              setForgotPasswordOpen((current) => !current);
+              setForgotPasswordMessage("");
+              setForgotPasswordError("");
+              setAuthMessage("");
+            }}
+          >
+            {forgotPasswordOpen ? "Back to sign in" : "Forgot password?"}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function renderPasswordRecoveryPanel() {
+  return (
+    <section className="card auth-card">
+      <h2>Reset Your Password</h2>
+      <p>Choose a new password for your IL HRC team account.</p>
+
+      <form onSubmit={completePasswordRecovery}>
+        <label>New Password</label>
+        <input
+          type="password"
+          value={recoveryPassword}
+          autoComplete="new-password"
+          onChange={(e) => setRecoveryPassword(e.target.value)}
+        />
+
+        <label>Confirm Password</label>
+        <input
+          type="password"
+          value={recoveryConfirmPassword}
+          autoComplete="new-password"
+          onChange={(e) => setRecoveryConfirmPassword(e.target.value)}
+        />
+
+        <p className="helper-text">
+          Use at least {PASSWORD_MIN_LENGTH} characters.
+        </p>
+
+        {recoveryPasswordError && (
+          <p className="warning-text">{recoveryPasswordError}</p>
+        )}
+
+        <div className="auth-actions">
+          <button
+            className="primary"
+            type="submit"
+            disabled={recoveryPasswordLoading}
+          >
+            {recoveryPasswordLoading ? "Saving..." : "Reset Password"}
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            disabled={recoveryPasswordLoading}
+            onClick={handleLogout}
+          >
+            Cancel
+          </button>
+        </div>
       </form>
     </section>
   );
@@ -6042,8 +6242,8 @@ function renderUserManagement() {
           <option value="admin">Admin</option>
         </select>
 
-        <button className="primary" type="submit">
-          Send Invitation
+        <button className="primary" type="submit" disabled={inviteLoading}>
+          {inviteLoading ? "Sending..." : "Send Invitation"}
         </button>
       </form>
 
@@ -6435,7 +6635,15 @@ function renderUserManagement() {
 
       {!authLoading && shouldShowPasswordSetup && renderPasswordSetupPanel()}
 
-      {!authLoading && !shouldShowPasswordSetup && profileLoading && (
+      {!authLoading &&
+        !shouldShowPasswordSetup &&
+        shouldShowPasswordRecovery &&
+        renderPasswordRecoveryPanel()}
+
+      {!authLoading &&
+        !shouldShowPasswordSetup &&
+        !shouldShowPasswordRecovery &&
+        profileLoading && (
         <section className="card">
           <p>Loading account profile...</p>
         </section>
@@ -6443,6 +6651,7 @@ function renderUserManagement() {
 
       {!authLoading &&
         !shouldShowPasswordSetup &&
+        !shouldShowPasswordRecovery &&
         !profileLoading &&
         !isAuthenticated &&
         staffSignInOpen &&
@@ -6450,6 +6659,7 @@ function renderUserManagement() {
 
       {!authLoading &&
         !shouldShowPasswordSetup &&
+        !shouldShowPasswordRecovery &&
         isAuthenticated &&
         renderChangePasswordPanel()}
 
