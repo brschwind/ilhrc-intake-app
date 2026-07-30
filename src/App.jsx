@@ -372,10 +372,15 @@ export default function App() {
   });
 
   const coverInputRef = useRef(null);
+  const coverCameraVideoRef = useRef(null);
+  const coverCameraStreamRef = useRef(null);
   const isbnInputRef = useRef(null);
 
   const [coverPhoto, setCoverPhoto] = useState(null);
   const [coverFile, setCoverFile] = useState(null);
+  const [coverCameraOpen, setCoverCameraOpen] = useState(false);
+  const [coverCameraReady, setCoverCameraReady] = useState(false);
+  const [coverCameraError, setCoverCameraError] = useState("");
   const [isbnPhoto, setIsbnPhoto] = useState(null);
   const [bookData, setBookData] = useState(null);
 
@@ -581,6 +586,22 @@ export default function App() {
     if (passwordRecoveryMode) return;
     window.location.hash = view === "catalog" || view === "curricula" ? view : "";
   }, [passwordRecoveryMode, view]);
+
+  useEffect(() => {
+    if (view === "add") return;
+
+    coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    coverCameraStreamRef.current = null;
+    setCoverCameraReady(false);
+    setCoverCameraOpen(false);
+  }, [view]);
+
+  useEffect(
+    () => () => {
+      coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    },
+    []
+  );
 
   useEffect(() => {
     if (bundleDraft.active) {
@@ -2698,13 +2719,7 @@ async function applyBulkEdit() {
 }
 
 
-async function handleCoverPhoto(event) {
-  const input = event.currentTarget;
-  const file = input.files?.[0];
-  if (!file) return;
-  if (handledCoverFilesRef.current.has(file)) return;
-  handledCoverFilesRef.current.add(file);
-
+async function processCoverPhoto(file) {
   setAnalysisStatus("Loading camera photo...");
 
   const pendingIdentifier = bookData?.publisher_item_number || bookData?.publisher_barcode
@@ -2732,8 +2747,122 @@ async function handleCoverPhoto(event) {
   } catch (error) {
     setAnalysisStatus("");
     alert(error.message || "The camera photo could not be processed. Please try again.");
+  }
+}
+
+async function handleCoverPhoto(event) {
+  const input = event.currentTarget;
+  const file = input.files?.[0];
+  if (!file) return;
+  if (handledCoverFilesRef.current.has(file)) return;
+  handledCoverFilesRef.current.add(file);
+
+  try {
+    stopCoverCamera();
+    await processCoverPhoto(file);
   } finally {
     input.value = "";
+  }
+}
+
+function stopCoverCamera() {
+  coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+  coverCameraStreamRef.current = null;
+
+  if (coverCameraVideoRef.current) {
+    coverCameraVideoRef.current.srcObject = null;
+  }
+
+  setCoverCameraReady(false);
+  setCoverCameraOpen(false);
+  setAnalysisStatus("");
+}
+
+async function startCoverCamera() {
+  coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+  coverCameraStreamRef.current = null;
+  setCoverCameraOpen(true);
+  setCoverCameraReady(false);
+  setCoverCameraError("");
+  setAnalysisStatus("Opening camera...");
+
+  await new Promise((resolve) => window.requestAnimationFrame(resolve));
+
+  if (!navigator.mediaDevices?.getUserMedia) {
+    setAnalysisStatus("");
+    setCoverCameraError(
+      "This browser cannot open the camera inside the app. Choose an existing photo below."
+    );
+    return;
+  }
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1280 },
+        height: { ideal: 960 },
+      },
+      audio: false,
+    });
+
+    coverCameraStreamRef.current = stream;
+
+    if (!coverCameraVideoRef.current) {
+      stream.getTracks().forEach((track) => track.stop());
+      throw new Error("The camera view could not be opened.");
+    }
+
+    coverCameraVideoRef.current.srcObject = stream;
+    await coverCameraVideoRef.current.play();
+    setCoverCameraReady(true);
+    setAnalysisStatus("");
+  } catch (error) {
+    coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+    coverCameraStreamRef.current = null;
+    setAnalysisStatus("");
+    setCoverCameraError(
+      error?.name === "NotAllowedError"
+        ? "Camera access was blocked. Allow camera access for this site, or choose an existing photo below."
+        : "The camera could not start. Choose an existing photo below."
+    );
+  }
+}
+
+async function captureCoverCameraPhoto() {
+  const video = coverCameraVideoRef.current;
+
+  if (!video?.videoWidth || !video?.videoHeight) {
+    setCoverCameraError("The camera is still starting. Wait a moment and try again.");
+    return;
+  }
+
+  setCoverCameraReady(false);
+  setAnalysisStatus("Capturing cover photo...");
+
+  try {
+    const scale = Math.min(1, 1400 / Math.max(video.videoWidth, video.videoHeight));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("The browser could not capture the photo.");
+
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+    const cameraFile = await canvasToJpegFile(
+      canvas,
+      new File([], `book-cover-${Date.now()}.jpg`, { type: "image/jpeg" }),
+      0.86
+    );
+
+    stopCoverCamera();
+    await processCoverPhoto(cameraFile);
+  } catch (error) {
+    setAnalysisStatus("");
+    setCoverCameraReady(true);
+    setCoverCameraError(error.message || "The photo could not be captured. Please try again.");
   }
 }
 
@@ -6905,9 +7034,9 @@ function renderUserManagement() {
         {isScanningBarcode ? "Scanning..." : "Scan Book Barcode"}
       </button>
 
-      <label htmlFor="cover-upload" className="secondary file-upload-button">
+      <button className="secondary" type="button" onClick={startCoverCamera}>
         Analyze Book Cover
-      </label>
+      </button>
 
       <button className="secondary" onClick={startManualEntry}>
         Manual Entry
@@ -6920,12 +7049,44 @@ function renderUserManagement() {
       hidden={!isScanningBarcode}
     />
 
+{coverCameraOpen && (
+  <section className="cover-camera-panel" aria-label="Book cover camera">
+    <video
+      ref={coverCameraVideoRef}
+      className="cover-camera-video"
+      autoPlay
+      muted
+      playsInline
+    />
+
+    {coverCameraError && (
+      <p className="warning-text">{coverCameraError}</p>
+    )}
+
+    <div className="cover-camera-actions">
+      <button
+        className="primary"
+        type="button"
+        disabled={!coverCameraReady}
+        onClick={captureCoverCameraPhoto}
+      >
+        {coverCameraReady ? "Take Cover Photo" : "Starting Camera..."}
+      </button>
+      <label htmlFor="cover-upload" className="secondary file-upload-button">
+        Choose Existing Photo
+      </label>
+      <button className="secondary" type="button" onClick={stopCoverCamera}>
+        Cancel
+      </button>
+    </div>
+  </section>
+)}
+
 <input
   id="cover-upload"
   ref={coverInputRef}
   type="file"
   accept="image/*"
-  capture="environment"
   onInput={handleCoverPhoto}
   onChange={handleCoverPhoto}
   className="visually-hidden-file"
