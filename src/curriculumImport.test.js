@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { curriculumMaterialsToCsv, parseCsv, prepareCurriculumImport } from "./curriculumImport.js";
+
+const curriculumCatalogSource = readFileSync(new URL("./CurriculumCatalog.jsx", import.meta.url), "utf8");
 
 test("CSV parser handles quoted commas and escaped quotation marks", () => {
   assert.deepEqual(parseCsv('title,notes\n"History, Part One","A ""classic"" text"\n'), [
@@ -45,6 +48,12 @@ test("curriculum import matches inventory by hidden publisher item number", () =
     [{ title: "Stepping Stones", publisher: "A Beka", publisher_item_number: "195278", quantity: 2 }]
   );
   assert.equal(preview.rows[0].match.status, "publisher");
+});
+
+test("curriculum review visibly exposes publisher item numbers", () => {
+  assert.match(curriculumCatalogSource, /placeholder="Publisher item #"/);
+  assert.match(curriculumCatalogSource, /publisher numbers/);
+  assert.match(curriculumCatalogSource, /material\.publisher_item_number/);
 });
 
 test("AI material records can be converted into the same CSV preview pipeline", () => {
