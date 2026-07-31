@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { supabase } from "./supabaseClient";
 import {
   findCurriculumInventoryMatch,
+  findCurriculumInventoryMatches,
   getCurriculumMatchLabel,
   normalizeIsbn,
   normalizePublisherIdentifier,
@@ -210,10 +211,14 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
   const publishers = [...new Set(packages.map((item) => item.publisher_name).filter(Boolean))].sort();
   const grades = [...new Set(packages.map((item) => item.grade_level).filter(Boolean))].sort();
   const checkedIds = new Set(checkedByPackage[selectedPackage?.id] || []);
-  const matchedItems = packageItems.map((entry) => ({
-    ...entry,
-    match: findCurriculumInventoryMatch(entry.material, inventory),
-  }));
+  const matchedItems = packageItems.map((entry) => {
+    const inventoryMatches = findCurriculumInventoryMatches(entry.material, inventory);
+    return {
+      ...entry,
+      inventoryMatches,
+      match: inventoryMatches[0] || findCurriculumInventoryMatch(entry.material, inventory),
+    };
+  });
   const availableCount = matchedItems.filter((entry) => entry.match.status !== "missing").length;
   const requiredCount = matchedItems.filter((entry) => entry.requirement_type === "required").length;
   const groupedItems = matchedItems.reduce((groups, entry) => {
@@ -706,7 +711,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
           <section className="curriculum-group" key={group}>
             <h3>{group}</h3>
             {entries.map((entry) => {
-              const { material, match } = entry;
+              const { material, match, inventoryMatches } = entry;
               const isChecked = checkedIds.has(entry.id);
               return (
                 <article className={`curriculum-row ${isChecked ? "is-checked" : ""}`} key={entry.id}>
@@ -717,7 +722,6 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                   <div className="curriculum-book-info">
                     <div className="curriculum-book-heading">
                       <h4>{material.title}</h4>
-                      <span className={`match-badge match-${match.status}`}>{getCurriculumMatchLabel(match.status)}</span>
                     </div>
                     <p>{[
                       material.author,
@@ -732,10 +736,22 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                       {entry.audience !== "family" && ` · Per ${entry.audience.replace("_", " ")}`}
                     </p>
                     {entry.notes && <p className="curriculum-note">{entry.notes}</p>}
-                    {match.item && (
-                      <p className="curriculum-store-copy">
-                        Store copy: {match.item.title} · ${Number(match.item.final_price || 0).toFixed(2)} · {match.item.quantity} available
-                      </p>
+                    {inventoryMatches.length > 0 && (
+                      <div className="curriculum-store-copies">
+                        <strong>{inventoryMatches.length} in-store {inventoryMatches.length === 1 ? "listing" : "listings"}</strong>
+                        <div className="curriculum-store-copy-grid">
+                          {inventoryMatches.map(({ item }) => (
+                            <article className="curriculum-store-copy-card" key={item.id || item.sku || `${item.title}-${item.final_price}`}>
+                              {item.image_url && <img src={item.image_url} alt="" />}
+                              <div>
+                                <strong>{item.title}</strong>
+                                <span>{[item.edition, item.sku && `SKU ${item.sku}`].filter(Boolean).join(" · ")}</span>
+                                <span>${Number(item.final_price || 0).toFixed(2)} · {item.quantity} available</span>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
                     )}
                     {match.status === "missing" && material.affiliate_url && (
                       <a className="affiliate-link no-print" href={material.affiliate_url} target="_blank" rel="sponsored noreferrer">
@@ -743,9 +759,10 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                       </a>
                     )}
                   </div>
-                  {isAuthenticated && staffMode && (
-                    <button className="text-danger no-print" type="button" onClick={() => removePackageItem(entry)}>Remove</button>
-                  )}
+                  <div className="curriculum-row-actions">
+                    <span className={`match-badge match-${match.status}`}>{getCurriculumMatchLabel(match.status)}</span>
+                    {isAuthenticated && staffMode && <button className="text-danger no-print" type="button" onClick={() => removePackageItem(entry)}>Remove</button>}
+                  </div>
                 </article>
               );
             })}

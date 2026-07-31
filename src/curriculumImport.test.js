@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { curriculumMaterialsToCsv, deduplicateCurriculumMaterials, parseCsv, prepareCurriculumImport } from "./curriculumImport.js";
 
 const curriculumCatalogSource = readFileSync(new URL("./CurriculumCatalog.jsx", import.meta.url), "utf8");
+const curriculumCatalogStyles = readFileSync(new URL("./App.css", import.meta.url), "utf8");
 
 test("CSV parser handles quoted commas and escaped quotation marks", () => {
   assert.deepEqual(parseCsv('title,notes\n"History, Part One","A ""classic"" text"\n'), [
@@ -69,6 +70,14 @@ test("repeated publisher materials are consolidated before review", () => {
 test("curriculum review offers one-click duplicate cleanup", () => {
   assert.match(curriculumCatalogSource, /Remove duplicate rows/);
   assert.match(curriculumCatalogSource, /removeBulkDuplicateRows/);
+});
+
+test("curriculum details show inline store listings and aligned staff actions", () => {
+  assert.match(curriculumCatalogSource, /curriculum-store-copy-grid/);
+  assert.match(curriculumCatalogSource, /item\.image_url/);
+  assert.match(curriculumCatalogSource, /SKU \$\{item\.sku\}/);
+  assert.match(curriculumCatalogSource, /curriculum-row-actions/);
+  assert.match(curriculumCatalogStyles, /\.curriculum-row-actions\s*\{[^}]*display:\s*flex/s);
 });
 
 test("AI material records can be converted into the same CSV preview pipeline", () => {
