@@ -4,6 +4,7 @@ const {
   curriculumAnalysisPrompt,
   htmlToCurriculumText,
   isPrivateIpAddress,
+  isCurriculumPackageOffer,
   normalizeAnalysisResult,
   validatePublicUrl,
 } = require("./curriculumImport");
@@ -18,6 +19,22 @@ test("analysis prompt requires exhaustive grade-catalog extraction", () => {
   assert.match(prompt, /Do not stop.*30 items/i);
   assert.match(prompt, /Grade N Materials/i);
   assert.match(prompt, /Deduplicate/i);
+  assert.match(prompt, /excluded_offers/);
+  assert.match(prompt, /bullet contents beneath a kit/i);
+});
+
+test("kit and enrollment product titles are recognized as package offers", () => {
+  for (const title of [
+    "Student Kit (Gr. 12)",
+    "Essential Parent Kit",
+    "Video Enrollment & Books—Video Streaming",
+    "Video Instruction—DVDs",
+    "Full-Grade Video & Books",
+  ]) {
+    assert.equal(isCurriculumPackageOffer(title), true, title);
+  }
+  assert.equal(isCurriculumPackageOffer("Handbook of Grammar and Composition"), false);
+  assert.equal(isCurriculumPackageOffer("English Literature Quiz/Test Book"), false);
 });
 
 test("HTML extraction preserves readable labels and absolute product links", () => {
@@ -73,4 +90,19 @@ test("analysis normalization carries the package publisher onto catalog material
   }, "", "2026-07-31");
   assert.equal(normalized.materials[0].publisher, "Abeka");
   assert.equal(normalized.materials[0].publisher_item_number, "195278");
+});
+
+test("analysis normalization excludes kits while retaining individual components", () => {
+  const normalized = normalizeAnalysisResult({
+    package: { publisher_name: "Abeka", name: "Grade 12", package_type: "grade" },
+    materials: [
+      { title: "Student Kit (Gr. 12)", publisher_item_number: "442135" },
+      { title: "Handbook of Grammar and Composition", publisher_item_number: "174645" },
+      { title: "Video Enrollment—DVDs", publisher_item_number: "417408" },
+    ],
+    excluded_offers: [{ title: "Parent Kit (Gr. 12)", publisher_item_number: "442143", reason: "Kit" }],
+    warnings: [],
+  }, "", "2026-07-31");
+  assert.deepEqual(normalized.materials.map((item) => item.publisher_item_number), ["174645"]);
+  assert.deepEqual(normalized.excluded_offers.map((offer) => offer.publisher_item_number), ["442143", "442135", "417408"]);
 });

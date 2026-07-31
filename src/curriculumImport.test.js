@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { curriculumMaterialsToCsv, deduplicateCurriculumMaterials, parseCsv, prepareCurriculumImport } from "./curriculumImport.js";
+import { curriculumMaterialsToCsv, deduplicateCurriculumMaterials, parseCsv, partitionCurriculumMaterials, prepareCurriculumImport } from "./curriculumImport.js";
 
 const curriculumCatalogSource = readFileSync(new URL("./CurriculumCatalog.jsx", import.meta.url), "utf8");
 const curriculumCatalogStyles = readFileSync(new URL("./App.css", import.meta.url), "utf8");
@@ -68,6 +68,23 @@ test("repeated publisher materials are consolidated before review", () => {
   ];
   const unique = deduplicateCurriculumMaterials(materials);
   assert.deepEqual(unique.map((material) => material.publisher_item_number), ["271942", "197041"]);
+});
+
+test("curriculum imports exclude package offers but keep individual kit contents", () => {
+  const partitioned = partitionCurriculumMaterials([
+    { title: "Student Kit (Gr. 12)", publisher_item_number: "442135" },
+    { title: "Essential Parent Kit", publisher_item_number: "442143" },
+    { title: "Video Enrollment & Books—Video Streaming", publisher_item_number: "422355" },
+    { title: "Handbook of Grammar and Composition", publisher_item_number: "174645" },
+    { title: "Precalculus Solution Key", publisher_item_number: "139289" },
+  ]);
+  assert.deepEqual(partitioned.materials.map((item) => item.publisher_item_number), ["174645", "139289"]);
+  assert.deepEqual(partitioned.excluded.map((item) => item.publisher_item_number), ["442135", "442143", "422355"]);
+});
+
+test("curriculum review reports excluded package offers", () => {
+  assert.match(curriculumCatalogSource, /Only individual materials will be saved/);
+  assert.match(curriculumCatalogSource, /partitionCurriculumMaterials\(result\.materials\)/);
 });
 
 test("curriculum review offers one-click duplicate cleanup", () => {

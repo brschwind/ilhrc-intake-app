@@ -11,6 +11,7 @@ import {
   CURRICULUM_IMPORT_TEMPLATE,
   curriculumMaterialsToCsv,
   deduplicateCurriculumMaterials,
+  partitionCurriculumMaterials,
   prepareCurriculumImport,
 } from "./curriculumImport";
 
@@ -613,9 +614,18 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     setBulkFileName(file.name);
     setAnalysisWarnings([]);
     try {
-      const preview = prepareCurriculumImport(await file.text(), inventory);
+      const initialPreview = prepareCurriculumImport(await file.text(), inventory);
+      const partitioned = partitionCurriculumMaterials(initialPreview.rows.map((row) => row.data));
+      const preview = partitioned.excluded.length
+        ? prepareCurriculumImport(curriculumMaterialsToCsv(partitioned.materials), inventory)
+        : initialPreview;
       setBulkPreview(preview);
-      setMessage(preview.errors[0] || "Review the materials below before importing them.");
+      if (partitioned.excluded.length) {
+        setAnalysisWarnings([`Excluded ${partitioned.excluded.length} kit, enrollment, or bundled purchase offer${partitioned.excluded.length === 1 ? "" : "s"} from the CSV. Only individual materials will be saved.`]);
+      }
+      setMessage(preview.errors[0] || (partitioned.excluded.length
+        ? `Review ${preview.rows.length} individual materials. ${partitioned.excluded.length} package offer${partitioned.excluded.length === 1 ? " was" : "s were"} excluded.`
+        : "Review the materials below before importing them."));
     } catch (error) {
       setBulkPreview({ rows: [], errors: [error.message] });
       setMessage("Could not read this CSV: " + error.message);
@@ -662,8 +672,16 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Could not analyze that curriculum source.");
 
-      const uniqueMaterials = deduplicateCurriculumMaterials(result.materials);
-      const duplicateCount = Math.max(0, result.materials.length - uniqueMaterials.length);
+      const partitioned = partitionCurriculumMaterials(result.materials);
+      const uniqueMaterials = deduplicateCurriculumMaterials(partitioned.materials);
+      const duplicateCount = Math.max(0, partitioned.materials.length - uniqueMaterials.length);
+      const excludedOffers = [...(result.excluded_offers || []), ...partitioned.excluded]
+        .filter((offer, index, offers) => {
+          const key = String(offer.publisher_item_number || "").trim() || String(offer.title || "").trim().toLowerCase();
+          return key && offers.findIndex((candidate) =>
+            (String(candidate.publisher_item_number || "").trim() || String(candidate.title || "").trim().toLowerCase()) === key
+          ) === index;
+        });
       const preview = prepareCurriculumImport(curriculumMaterialsToCsv(uniqueMaterials), inventory);
       preview.rows = preview.rows.map((row, index) => {
         const analyzed = uniqueMaterials[index] || {};
@@ -677,9 +695,12 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
       setBulkFileName(sourceMode === "pdf" ? sourcePdf.name : sourceMode === "link" ? sourceLink.trim() : "Pasted text");
       setAnalysisWarnings([
         ...(result.warnings || []),
+        ...(excludedOffers.length ? [
+          `Excluded ${excludedOffers.length} kit, enrollment, or bundled purchase offer${excludedOffers.length === 1 ? "" : "s"}. Only individual materials will be saved.${excludedOffers.slice(0, 5).map((offer) => ` ${offer.publisher_item_number ? `${offer.publisher_item_number} ` : ""}${offer.title}`).join(";")}${excludedOffers.length > 5 ? "; …" : ""}`,
+        ] : []),
         ...(duplicateCount ? [`Consolidated ${duplicateCount} repeated material${duplicateCount === 1 ? "" : "s"} from the publisher list.`] : []),
       ]);
-      setMessage(`Found ${preview.rows.length} materials. Review the package details and flagged rows before creating the draft.`);
+      setMessage(`Found ${preview.rows.length} individual materials${excludedOffers.length ? ` and excluded ${excludedOffers.length} package offer${excludedOffers.length === 1 ? "" : "s"}` : ""}. Review the package details and flagged rows before creating the draft.`);
     } catch (error) {
       setMessage(error.message || "Could not analyze that curriculum source.");
     } finally {
