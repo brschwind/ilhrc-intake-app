@@ -9,6 +9,7 @@ import {
 import {
   CURRICULUM_IMPORT_TEMPLATE,
   curriculumMaterialsToCsv,
+  deduplicateCurriculumMaterials,
   prepareCurriculumImport,
 } from "./curriculumImport";
 
@@ -438,9 +439,11 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.error || "Could not analyze that curriculum source.");
 
-      const preview = prepareCurriculumImport(curriculumMaterialsToCsv(result.materials), inventory);
+      const uniqueMaterials = deduplicateCurriculumMaterials(result.materials);
+      const duplicateCount = Math.max(0, result.materials.length - uniqueMaterials.length);
+      const preview = prepareCurriculumImport(curriculumMaterialsToCsv(uniqueMaterials), inventory);
       preview.rows = preview.rows.map((row, index) => {
-        const analyzed = result.materials[index] || {};
+        const analyzed = uniqueMaterials[index] || {};
         const aiWarnings = [];
         if (analyzed.review_reason) aiWarnings.push(analyzed.review_reason);
         if (Number(analyzed.confidence) < 0.75) aiWarnings.push("AI confidence is low; verify this row.");
@@ -449,7 +452,10 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
       setBulkPackageDraft({ ...EMPTY_PACKAGE, ...result.package, status: "draft" });
       setBulkPreview(preview);
       setBulkFileName(sourceMode === "pdf" ? sourcePdf.name : sourceMode === "link" ? sourceLink.trim() : "Pasted text");
-      setAnalysisWarnings(result.warnings || []);
+      setAnalysisWarnings([
+        ...(result.warnings || []),
+        ...(duplicateCount ? [`Consolidated ${duplicateCount} repeated material${duplicateCount === 1 ? "" : "s"} from the publisher list.`] : []),
+      ]);
       setMessage(`Found ${preview.rows.length} materials. Review the package details and flagged rows before creating the draft.`);
     } catch (error) {
       setMessage(error.message || "Could not analyze that curriculum source.");
@@ -476,6 +482,21 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     setBulkPreview((current) => {
       const keptRows = current.rows.filter((row) => row.rowNumber !== rowNumber);
       const next = prepareCurriculumImport(curriculumMaterialsToCsv(keptRows.map((row) => row.data)), inventory);
+      next.rows = next.rows.map((row, index) => ({
+        ...row,
+        aiWarnings: keptRows[index]?.aiWarnings || [],
+      }));
+      return next;
+    });
+  }
+
+  function removeBulkDuplicateRows() {
+    setBulkPreview((current) => {
+      const keptMaterials = deduplicateCurriculumMaterials(current.rows.map((row) => row.data));
+      const keptRows = keptMaterials.map((material) =>
+        current.rows.find((row) => row.data === material)
+      );
+      const next = prepareCurriculumImport(curriculumMaterialsToCsv(keptMaterials), inventory);
       next.rows = next.rows.map((row, index) => ({
         ...row,
         aiWarnings: keptRows[index]?.aiWarnings || [],
@@ -885,6 +906,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                     <span><strong>{bulkPreview.rows.filter((row) => row.data.publisher_item_number).length}</strong> publisher numbers</span>
                     <span><strong>{bulkPreview.rows.filter((row) => row.match.status !== "missing").length}</strong> store matches</span>
                     <span><strong>{bulkPreview.rows.filter((row) => row.errors.length > 0).length}</strong> rows to fix</span>
+                    {bulkPreview.rows.some((row) => row.errors.some((error) => error.startsWith("Duplicates row"))) && <button className="secondary" type="button" onClick={removeBulkDuplicateRows}>Remove duplicate rows</button>}
                   </div>
                   <div className="curriculum-import-table-wrap">
                     <table className="curriculum-import-table">
