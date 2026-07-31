@@ -13,7 +13,6 @@ import {
 import { findIsbnInconsistencies, generateRuleSuggestions } from "./ruleSuggestions";
 import CurriculumCatalog from "./CurriculumCatalog";
 import {
-  getKnownPublisherProduct,
   identifyBookBarcode,
   inferPublisherItemNumber,
   normalizePublisher,
@@ -23,6 +22,14 @@ import {
   buildDuplicateLabelQueueUpdate,
   getQueuedLabelQuantity,
 } from "./labelQueue";
+import {
+  EMPTY_BUNDLE_DRAFT,
+  buildBundleContentsNote,
+  getBundleComponentQuantity,
+  getBundleComponentRows,
+  getBundleIndividualValue,
+  getBundlePieceCount,
+} from "./bundleInventory";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -40,6 +47,9 @@ const PUBLIC_CATALOG_COLUMNS = [
   "quantity",
   "image_url",
   "created_at",
+  "item_type",
+  "bundle_piece_count",
+  "bundle_contents",
 ].join(",");
 
 const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "requests", "users"]);
@@ -75,6 +85,18 @@ const EMPTY_BOOK_RESERVATION = {
   preferred_contact: "email",
   website: "",
 };
+const BUNDLE_DRAFT_STORAGE_KEY = "ilhrc-active-bundle-draft";
+
+function loadSavedBundleDraft() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(BUNDLE_DRAFT_STORAGE_KEY) || "null");
+    return saved?.active
+      ? { ...EMPTY_BUNDLE_DRAFT, ...saved, components: saved.components || [] }
+      : { ...EMPTY_BUNDLE_DRAFT };
+  } catch {
+    return { ...EMPTY_BUNDLE_DRAFT };
+  }
+}
 
 function StaffNavIcon({ name }) {
   const paths = {
@@ -145,8 +167,70 @@ function sessionRequiresPasswordSetup(nextSession) {
   return getAuthUrlType() === "invite";
 }
 
-async function shrinkImageFile(file, maxSize = 1400, quality = 0.82) {
+function canvasToJpegFile(canvas, file, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (blob) => {
+        if (!blob) {
+          reject(new Error("The browser could not prepare this photo."));
+          return;
+        }
+
+        const cleanName = file.name.replace(/\.[^.]+$/, "") || "book-cover";
+        resolve(new File([blob], `${cleanName}.jpg`, { type: "image/jpeg" }));
+      },
+      "image/jpeg",
+      quality
+    );
+  });
+}
+
+function drawImageToJpegFile(image, file, maxSize, quality) {
+  const width = image.width || image.naturalWidth;
+  const height = image.height || image.naturalHeight;
+  const scale = Math.min(1, maxSize / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("The browser could not prepare this photo.");
+
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvasToJpegFile(canvas, file, quality);
+}
+
+async function shrinkImageFile(
+  file,
+  maxSize = 1400,
+  quality = 0.82,
+  { requireReadableImage = false } = {}
+) {
   if (!file?.type?.startsWith("image/")) return file;
+
+  const browserReadyTypes = new Set(["image/jpeg", "image/png", "image/webp"]);
+  if (browserReadyTypes.has(file.type.toLowerCase()) && file.size < 900_000) {
+    return file;
+  }
+
+  if (typeof createImageBitmap === "function") {
+    let bitmap;
+
+    try {
+      bitmap = await createImageBitmap(file, {
+        imageOrientation: "from-image",
+        resizeWidth: maxSize,
+        resizeQuality: "high",
+      });
+
+      return await drawImageToJpegFile(bitmap, file, maxSize, quality);
+    } catch (error) {
+      console.warn("Low-memory image preparation failed; trying compatibility mode.", error);
+    } finally {
+      bitmap?.close?.();
+    }
+  }
 
   const imageUrl = URL.createObjectURL(file);
   const image = new Image();
@@ -158,25 +242,16 @@ async function shrinkImageFile(file, maxSize = 1400, quality = 0.82) {
       image.src = imageUrl;
     });
 
-    const scale = Math.min(1, maxSize / Math.max(image.width, image.height));
-    if (scale >= 1 && file.size < 900_000) return file;
+    return await drawImageToJpegFile(image, file, maxSize, quality);
+  } catch (error) {
+    if (requireReadableImage) {
+      throw new Error(
+        "This camera photo could not be read. Try turning off High efficiency pictures in Camera settings, or upload a screenshot of the photo.",
+        { cause: error }
+      );
+    }
 
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(image.width * scale);
-    canvas.height = Math.round(image.height * scale);
-
-    const context = canvas.getContext("2d");
-    context.drawImage(image, 0, 0, canvas.width, canvas.height);
-
-    const blob = await new Promise((resolve) =>
-      canvas.toBlob(resolve, "image/jpeg", quality)
-    );
-
-    if (!blob) return file;
-
-    const cleanName = file.name.replace(/\.[^.]+$/, "") || "book-cover";
-    return new File([blob], `${cleanName}.jpg`, { type: "image/jpeg" });
-  } catch {
+    console.warn("Image preparation failed; using the original file.", error);
     return file;
   } finally {
     URL.revokeObjectURL(imageUrl);
@@ -244,6 +319,12 @@ export default function App() {
     return hashView === "catalog" ? "catalog" : "add";
   });
   const [items, setItems] = useState([]);
+  const [bundleComponents, setBundleComponents] = useState([]);
+  const [bundleDraft, setBundleDraft] = useState(loadSavedBundleDraft);
+  const [bundleReviewOpen, setBundleReviewOpen] = useState(false);
+  const [bundleActionLoading, setBundleActionLoading] = useState(false);
+  const [bundleCoverFile, setBundleCoverFile] = useState(null);
+  const [bundleCoverPreview, setBundleCoverPreview] = useState("");
   const [searchTerm, setSearchTerm] = useState("");
   const [authLoading, setAuthLoading] = useState(true);
   const [session, setSession] = useState(null);
@@ -267,10 +348,22 @@ export default function App() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+  const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
+  const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
+  const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
+  const [forgotPasswordError, setForgotPasswordError] = useState("");
+  const [passwordRecoveryMode, setPasswordRecoveryMode] = useState(
+    () => getAuthUrlType() === "recovery"
+  );
+  const [recoveryPassword, setRecoveryPassword] = useState("");
+  const [recoveryConfirmPassword, setRecoveryConfirmPassword] = useState("");
+  const [recoveryPasswordLoading, setRecoveryPasswordLoading] = useState(false);
+  const [recoveryPasswordError, setRecoveryPasswordError] = useState("");
   const [users, setUsers] = useState([]);
   const [auditLogs, setAuditLogs] = useState([]);
   const [optionsSection, setOptionsSection] = useState("lists");
   const [userManagementMessage, setUserManagementMessage] = useState("");
+  const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteForm, setInviteForm] = useState({
     email: "",
     full_name: "",
@@ -308,6 +401,7 @@ export default function App() {
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
 
   const listingPhotoInputRef = useRef(null);
+  const handledCoverFilesRef = useRef(new WeakSet());
   const inventoryEditorRef = useRef(null);
   const inventoryEditorTitleRef = useRef(null);
   const inventorySearchInputRef = useRef(null);
@@ -348,7 +442,6 @@ export default function App() {
   const [subjectOptions, setSubjectOptions] = useState([]);
   const [gradeOptions, setGradeOptions] = useState([]);
   const [categoryOptions, setCategoryOptions] = useState([]);
-  const [locationOptions, setLocationOptions] = useState([]);
 
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
@@ -361,22 +454,11 @@ export default function App() {
 
   const [bulkPublicVisible, setBulkPublicVisible] = useState("");
 
-  const [currentLocation, setCurrentLocation] = useState("");
-  const [labelLocationFilter, setLabelLocationFilter] = useState("");
   const [labelDateFrom, setLabelDateFrom] = useState("");
   const [labelDateTo, setLabelDateTo] = useState("");
 
-  const [locationFilter, setLocationFilter] = useState("");
   const [inventoryDateFrom, setInventoryDateFrom] = useState("");
   const [inventoryDateTo, setInventoryDateTo] = useState("");
-  const [newLocationName, setNewLocationName] = useState("");
-  const [newLocationTemporary, setNewLocationTemporary] = useState(false);
-  const [renameLocationId, setRenameLocationId] = useState("");
-  const [renameLocationName, setRenameLocationName] = useState("");
-  const [deactivateLocationId, setDeactivateLocationId] = useState("");
-  const [mergeFromLocationId, setMergeFromLocationId] = useState("");
-  const [mergeToLocationId, setMergeToLocationId] = useState("");
-  const [locationListFilter, setLocationListFilter] = useState("all");
   const [optionAddNames, setOptionAddNames] = useState({
     curriculum: "",
     subject: "",
@@ -426,7 +508,9 @@ export default function App() {
   const isAdmin = profile?.role === "admin";
   const isInternalView = INTERNAL_VIEWS.has(view);
   const shouldShowPasswordSetup = Boolean(session && passwordSetupRequired);
-  const showStaffShell = isAuthenticated && !shouldShowPasswordSetup;
+  const shouldShowPasswordRecovery = Boolean(session && passwordRecoveryMode);
+  const showStaffShell =
+    isAuthenticated && !shouldShowPasswordSetup && !shouldShowPasswordRecovery;
 
   useEffect(() => {
     let mounted = true;
@@ -451,7 +535,12 @@ export default function App() {
     initializeAuth();
 
     const { data: listener } = supabase.auth.onAuthStateChange(
-      async (_event, nextSession) => {
+      async (event, nextSession) => {
+        if (event === "PASSWORD_RECOVERY") {
+          setPasswordRecoveryMode(true);
+          setRecoveryPasswordError("");
+        }
+
         setSession(nextSession);
         setPasswordSetupRequired(sessionRequiresPasswordSetup(nextSession));
 
@@ -462,6 +551,7 @@ export default function App() {
           setProfileLoading(false);
           setPasswordSetupRequired(false);
           setPasswordSetupSaved(false);
+          if (event !== "PASSWORD_RECOVERY") setPasswordRecoveryMode(false);
           setStaffSignInOpen(false);
           if (INTERNAL_VIEWS.has(view)) setView("catalog");
         }
@@ -475,8 +565,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (passwordRecoveryMode) return;
     window.location.hash = view === "catalog" || view === "curricula" ? view : "";
-  }, [view]);
+  }, [passwordRecoveryMode, view]);
+
+  useEffect(() => {
+    if (bundleDraft.active) {
+      localStorage.setItem(BUNDLE_DRAFT_STORAGE_KEY, JSON.stringify(bundleDraft));
+    } else {
+      localStorage.removeItem(BUNDLE_DRAFT_STORAGE_KEY);
+    }
+  }, [bundleDraft]);
 
   useEffect(() => {
     if (inventoryToolsPanel === "search") {
@@ -683,6 +782,82 @@ export default function App() {
     setView("add");
   }
 
+  async function requestPasswordReset(event) {
+    event.preventDefault();
+    if (forgotPasswordLoading) return;
+
+    const email = loginEmail.trim();
+    if (!email || !email.includes("@")) {
+      setForgotPasswordError("Enter the account email address first.");
+      return;
+    }
+
+    setForgotPasswordLoading(true);
+    setForgotPasswordMessage("");
+    setForgotPasswordError("");
+
+    const redirectTo = `${window.location.origin}${window.location.pathname}`;
+    const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo,
+    });
+
+    setForgotPasswordLoading(false);
+
+    if (error) {
+      const message = String(error.message || "").toLowerCase();
+      setForgotPasswordError(
+        error.status === 429 || message.includes("rate limit")
+          ? "Too many recovery emails were requested. Please wait before trying again."
+          : "Could not send the recovery email. Please contact an Admin."
+      );
+      return;
+    }
+
+    setForgotPasswordMessage(
+      "If an account exists for that email, a password reset link has been sent."
+    );
+  }
+
+  async function completePasswordRecovery(event) {
+    event.preventDefault();
+    if (recoveryPasswordLoading) return;
+
+    setRecoveryPasswordError("");
+    const validationError = validatePasswordPair(
+      recoveryPassword,
+      recoveryConfirmPassword
+    );
+
+    if (validationError) {
+      setRecoveryPasswordError(validationError);
+      return;
+    }
+
+    setRecoveryPasswordLoading(true);
+    const { error } = await supabase.auth.updateUser({
+      password: recoveryPassword,
+    });
+
+    if (error) {
+      setRecoveryPasswordLoading(false);
+      setRecoveryPasswordError(error.message || "Could not reset password.");
+      return;
+    }
+
+    await supabase.auth.signOut();
+    window.history.replaceState({}, document.title, window.location.pathname);
+    setRecoveryPassword("");
+    setRecoveryConfirmPassword("");
+    setRecoveryPasswordLoading(false);
+    setPasswordRecoveryMode(false);
+    setSession(null);
+    setProfile(null);
+    setLoginPassword("");
+    setStaffSignInOpen(true);
+    setAuthMessage("Password reset. Sign in with your new password.");
+    setView("catalog");
+  }
+
   async function handleLogout() {
     await supabase.auth.signOut();
     setSession(null);
@@ -691,6 +866,10 @@ export default function App() {
     setPasswordSetupSaved(false);
     setSetupPassword("");
     setSetupConfirmPassword("");
+    setPasswordRecoveryMode(false);
+    setRecoveryPassword("");
+    setRecoveryConfirmPassword("");
+    setRecoveryPasswordError("");
     setChangePasswordOpen(false);
     setStaffSignInOpen(false);
     setView("catalog");
@@ -846,23 +1025,34 @@ export default function App() {
 
   async function inviteUser(event) {
     event.preventDefault();
+    if (inviteLoading) return;
+
     setUserManagementMessage("");
+    setInviteLoading(true);
 
-    const response = await authFetch("/admin/users/invite", {
-      method: "POST",
-      body: JSON.stringify(inviteForm),
-    });
-    const data = await response.json().catch(() => ({}));
+    try {
+      const response = await authFetch("/admin/users/invite", {
+        method: "POST",
+        body: JSON.stringify(inviteForm),
+      });
+      const data = await response.json().catch(() => ({}));
 
-    if (!response.ok) {
-      setUserManagementMessage(data.error || "Failed invitation.");
-      return;
+      if (!response.ok) {
+        setUserManagementMessage(data.error || "Failed invitation.");
+        return;
+      }
+
+      setInviteForm({ email: "", full_name: "", role: "team" });
+      setUserManagementMessage("Invitation sent.");
+      loadUsers();
+      loadAuditLogs();
+    } catch {
+      setUserManagementMessage(
+        "Could not reach the invitation service. Please try again."
+      );
+    } finally {
+      setInviteLoading(false);
     }
-
-    setInviteForm({ email: "", full_name: "", role: "team" });
-    setUserManagementMessage("Invitation sent.");
-    loadUsers();
-    loadAuditLogs();
   }
 
   async function updateUserProfile(user, updates) {
@@ -923,7 +1113,39 @@ export default function App() {
       return;
     }
 
-    setItems(data || []);
+    if (isAuthenticated) {
+      const { data: componentRows, error: componentError } = await supabase
+        .from("bundle_components")
+        .select("*");
+
+      if (componentError) {
+        console.error("Could not load bundle contents:", componentError);
+        setBundleComponents([]);
+        setItems(data || []);
+      } else {
+        const links = componentRows || [];
+        setBundleComponents(links);
+        setItems(
+          (data || []).map((item) => ({
+            ...item,
+            bundle_contents:
+              item.item_type === "bundle"
+                ? links
+                    .filter((link) => String(link.bundle_item_id) === String(item.id))
+                    .map((link) => {
+                      const component = (data || []).find(
+                        (candidate) => String(candidate.id) === String(link.component_item_id)
+                      );
+                      return `${link.piece_quantity || 1}× ${component?.title || "Untitled item"}`;
+                    })
+                : [],
+          }))
+        );
+      }
+    } else {
+      setBundleComponents([]);
+      setItems(data || []);
+    }
   }
 
 async function loadOptionLists() {
@@ -948,15 +1170,10 @@ async function loadOptionLists() {
       .select(isAuthenticated ? "*" : "name")
       .order("name");
 
-    const { data: locations } = isAuthenticated
-      ? await supabase.from("location_options").select("*").order("name")
-      : { data: [], error: null };
-
   setCurriculumOptions(curricula?.map((x) => x.name) || []);
   setSubjectOptions(subjects?.map((x) => x.name) || []);
   setGradeOptions(grades?.map((x) => x.name) || []);
   setCategoryOptions(categories || []);
-  setLocationOptions(locations || []);
 }
 
 async function loadIntakeRules() {
@@ -1320,7 +1537,6 @@ function buildIsbnMergeDraft(keeper, candidates) {
     grade_level: keeper.grade_level || "",
     category: keeper.category || "",
     edition: keeper.edition || "",
-    location: keeper.location || "",
     final_price: keeper.final_price ?? "",
     quantity: candidates.reduce((sum, item) => sum + Number(item.quantity || 0), 0),
   };
@@ -1567,6 +1783,7 @@ function cleanLocationName(value) {
   return (value || "").trim().replace(/\s+/g, " ");
 }
 
+/* Location-specific helpers are retained only in database history.
 function getLocationOptionById(id) {
   return locationOptions.find((location) => location.id === id);
 }
@@ -1582,36 +1799,11 @@ function isTemporaryLocationName(name) {
   return getLocationOptionByName(name)?.temporary === true;
 }
 
-function buildLocationList(values) {
-  const byNormalizedName = new Map();
-
-  values.forEach((value) => {
-    const name = cleanLocationName(value);
-    const normalizedName = normalizeLocationName(name);
-
-    if (!normalizedName || byNormalizedName.has(normalizedName)) return;
-
-    byNormalizedName.set(normalizedName, name);
-  });
-
-  return [...byNormalizedName.values()].sort((a, b) =>
-    a.localeCompare(b, undefined, { sensitivity: "base" })
-  );
-}
-
-function getActiveLocationNames(extraValues = []) {
-  return buildLocationList([
-    ...locationOptions
-      .filter((location) => location.active !== false)
-      .map((location) => location.name),
-    ...extraValues,
-  ]);
-}
-
 function locationMatches(value, selectedValue) {
   if (!selectedValue) return true;
   return normalizeLocationName(value) === normalizeLocationName(selectedValue);
 }
+*/
 
 function optionNameMatches(value, selectedValue) {
   return normalizeLocationName(value) === normalizeLocationName(selectedValue);
@@ -1907,6 +2099,7 @@ async function deleteCategoryOption() {
   await loadOptionLists();
 }
 
+/* Location management was removed from the product.
 function getItemIdsByLocation(locationName) {
   const normalizedName = normalizeLocationName(locationName);
 
@@ -2237,6 +2430,7 @@ async function clearTemporaryLocationsFromSelected() {
   await loadItems();
   alert("Temporary locations cleared from selected items.");
 }
+*/
 
 function toggleSelectedItem(id) {
   setSelectedItemIds((current) =>
@@ -2248,6 +2442,16 @@ function toggleSelectedItem(id) {
 
 async function bulkDeleteSelected() {
   if (selectedItemIds.length === 0) return;
+
+  const protectedSelection = items.find(
+    (item) =>
+      selectedItemIds.includes(item.id) &&
+      (item.status === "Bundled" || item.item_type === "bundle")
+  );
+  if (protectedSelection) {
+    alert("Bundles and their protected component books cannot be bulk removed. Split the bundle first.");
+    return;
+  }
 
   const actionLabel = isAdmin ? "Delete" : "Remove";
   const confirmed = window.confirm(
@@ -2376,6 +2580,17 @@ async function applyBulkEdit() {
     return;
   }
 
+  const changesAvailability = Boolean(bulkStatus || bulkPublicVisible);
+  const hasProtectedBundleItems = changesAvailability && items.some(
+    (item) =>
+      selectedItemIds.includes(item.id) &&
+      (item.status === "Bundled" || item.item_type === "bundle")
+  );
+  if (hasProtectedBundleItems) {
+    alert("Bundle availability cannot be bulk changed. Open the bundle to split or update it safely.");
+    return;
+  }
+
   try {
     const shouldArchiveInSquare =
       bulkStatus === "Sold" || bulkStatus === "Removed";
@@ -2443,8 +2658,13 @@ async function applyBulkEdit() {
 
 
 async function handleCoverPhoto(event) {
-  const file = event.target.files?.[0];
+  const input = event.currentTarget;
+  const file = input.files?.[0];
   if (!file) return;
+  if (handledCoverFilesRef.current.has(file)) return;
+  handledCoverFilesRef.current.add(file);
+
+  setAnalysisStatus("Loading camera photo...");
 
   const pendingIdentifier = bookData?.publisher_item_number || bookData?.publisher_barcode
     ? {
@@ -2458,10 +2678,22 @@ async function handleCoverPhoto(event) {
   setBookData((current) => pendingIdentifier ? current : null);
   clearRuleFeedback();
 
-  const optimizedFile = await shrinkImageFile(file);
-  setCoverFile(optimizedFile);
+  try {
+    await new Promise((resolve) => window.requestAnimationFrame(resolve));
 
-  analyzePhotoWithFile(optimizedFile, pendingIdentifier);
+    setAnalysisStatus("Preparing camera photo...");
+    const optimizedFile = await shrinkImageFile(file, 1400, 0.82, {
+      requireReadableImage: true,
+    });
+    setCoverFile(optimizedFile);
+
+    await analyzePhotoWithFile(optimizedFile, pendingIdentifier);
+  } catch (error) {
+    setAnalysisStatus("");
+    alert(error.message || "The camera photo could not be processed. Please try again.");
+  } finally {
+    input.value = "";
+  }
 }
 
 function startManualEntry() {
@@ -2489,7 +2721,6 @@ function startManualEntry() {
     suggested_price: "",
     final_price: "",
     quantity: 1,
-    weight_ounces: "",
     status: "Available",
     notes: "",
     confidence: "",
@@ -2629,13 +2860,6 @@ async function lookupBookByIsbn(isbn) {
     if (googleData?.items && googleData.items.length > 0) {
       const book = googleData.items[0].volumeInfo;
       const suggested = suggestPricingCategory(book);
-      const weightEstimate = estimateWeightFromMetadata({
-        title: book.title || "",
-        category: suggested?.name || "",
-        categories: book.categories || [],
-        pageCount: book.pageCount,
-        format: book.printType || "",
-      });
 
 const coverUrl =
   book.imageLinks?.thumbnail ||
@@ -2655,8 +2879,6 @@ setBookData(await applyRulesToImportedBook({
   suggested_price: suggested?.default_price || "",
   final_price: suggested?.default_price || "",
   quantity: 1,
-  weight_ounces: weightEstimate.weight_ounces,
-  weight_note: weightEstimate.note,
   status: "Available",
   notes: book.description || "",
   confidence: "Google Books ISBN lookup",
@@ -2677,16 +2899,6 @@ setBookData(await applyRulesToImportedBook({
   publisher: openLibraryData.publishers?.[0] || "",
   categories: [],
 });
-      const weightEstimate = estimateWeightFromMetadata({
-        title: openLibraryData.title || "",
-        category: suggested?.name || suggested?.item_name || "",
-        pageCount: openLibraryData.number_of_pages,
-        pagination: openLibraryData.pagination,
-        weight: openLibraryData.weight,
-        physical_weight: openLibraryData.physical_weight,
-        physical_format: openLibraryData.physical_format,
-      });
-
       setBookData(await applyRulesToImportedBook({
         title: openLibraryData.title || "",
         author: Array.isArray(openLibraryData.authors)
@@ -2702,8 +2914,6 @@ setBookData(await applyRulesToImportedBook({
         suggested_price: suggested?.price || "",
         final_price: suggested?.price || "",
         quantity: 1,
-        weight_ounces: weightEstimate.weight_ounces,
-        weight_note: weightEstimate.note,
         status: "Available",
         notes: "",
         confidence: "Open Library ISBN lookup",
@@ -2726,7 +2936,6 @@ setBookData(await applyRulesToImportedBook({
       category: "",
       final_price: "",
       quantity: 1,
-      weight_ounces: "",
       status: "Available",
       notes: "",
       confidence: "ISBN scanned only",
@@ -2752,15 +2961,24 @@ async function findPublisherRecord(table, { publisher, publisherItemNumber, publ
     if (data?.[0]) return data[0];
   }
 
-  if (!publisher || !publisherItemNumber) return null;
+  if (!publisherItemNumber) return null;
   const { data, error } = await supabase
     .from(table)
     .select("*")
     .eq("publisher_item_number", publisherItemNumber);
   if (error) throw error;
-  return (data || []).find((candidate) =>
-    normalizePublisher(candidate.publisher) === normalizePublisher(publisher)
-  ) || null;
+
+  const matches = publisher
+    ? (data || []).filter((candidate) =>
+        normalizePublisher(candidate.publisher) === normalizePublisher(publisher)
+      )
+    : (data || []);
+  if (!matches.length) return null;
+
+  // An unlabelled eight-digit barcode is safe to use only when its six-digit
+  // candidate identifies one publisher in our saved data.
+  const publishers = new Set(matches.map((candidate) => normalizePublisher(candidate.publisher)).filter(Boolean));
+  return publishers.size <= 1 ? matches[0] : null;
 }
 
 async function lookupBookByPublisherIdentifier(identification, currentBook = {}) {
@@ -2771,7 +2989,7 @@ async function lookupBookByPublisherIdentifier(identification, currentBook = {})
   const publisherBarcode = String(
     identification.publisherBarcode || currentBook.publisher_barcode || ""
   ).trim();
-  setAnalysisStatus("Looking up publisher item...");
+  setAnalysisStatus("Looking up book barcode...");
 
   try {
     const lookup = { publisher, publisherItemNumber, publisherBarcode };
@@ -2782,15 +3000,26 @@ async function lookupBookByPublisherIdentifier(identification, currentBook = {})
     const matched = remembered || curriculumMaterial;
     const matchedPublisher = matched?.publisher || publisher;
     const matchedNumber = matched?.publisher_item_number || publisherItemNumber;
-    const knownProduct = getKnownPublisherProduct(matchedPublisher, matchedNumber);
+    let curriculumContext = null;
+    if (curriculumMaterial?.id) {
+      const { data, error } = await supabase
+        .from("curriculum_package_items")
+        .select("group_label, package:curriculum_packages(name,grade_level,subject,edition_label)")
+        .eq("material_id", curriculumMaterial.id)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      curriculumContext = data;
+    }
+    const curriculumPackage = curriculumContext?.package;
     const importedBook = {
       ...currentBook,
-      title: matched?.title || knownProduct?.title || currentBook.title || "",
+      title: matched?.title || currentBook.title || "",
       curriculum: remembered?.curriculum || currentBook.curriculum || matchedPublisher || "",
       publisher: matchedPublisher || currentBook.publisher || "",
-      subject: remembered?.subject || currentBook.subject || "",
-      grade_level: remembered?.grade_level || currentBook.grade_level || "",
-      edition: remembered?.edition || curriculumMaterial?.edition_label || knownProduct?.edition || currentBook.edition || "",
+      subject: remembered?.subject || curriculumPackage?.subject || curriculumContext?.group_label || currentBook.subject || "",
+      grade_level: remembered?.grade_level || curriculumPackage?.grade_level || currentBook.grade_level || "",
+      edition: remembered?.edition || curriculumMaterial?.edition_label || curriculumPackage?.edition_label || currentBook.edition || "",
       isbn: matched?.isbn || currentBook.isbn || "",
       publisher_barcode: publisherBarcode || matched?.publisher_barcode || "",
       publisher_item_number: matchedNumber || "",
@@ -2798,18 +3027,15 @@ async function lookupBookByPublisherIdentifier(identification, currentBook = {})
       suggested_price: remembered?.final_price ?? currentBook.suggested_price ?? "",
       final_price: remembered?.final_price ?? currentBook.final_price ?? "",
       quantity: 1,
-      weight_ounces: remembered?.weight_ounces ?? currentBook.weight_ounces ?? "",
       status: "Available",
       notes: remembered?.notes || currentBook.notes || "",
-      confidence: remembered
-        ? "Remembered from an earlier publisher-item intake"
-        : curriculumMaterial
-          ? "Matched to a Curriculum List material"
-          : knownProduct
-            ? "Matched to the supplied publisher item list"
-            : "New publisher item — use cover analysis and complete the details once",
       public_visible: true,
       image_url: remembered?.image_url || currentBook.image_url || "",
+      confidence: remembered
+        ? "Remembered from an earlier barcode scan"
+        : curriculumMaterial
+          ? "Matched to a Curriculum List material"
+          : "New book barcode — use cover analysis and complete the details once",
     };
 
     setBookData(await applyRulesToImportedBook(
@@ -2817,27 +3043,15 @@ async function lookupBookByPublisherIdentifier(identification, currentBook = {})
       remembered ? "publisher_inventory" : curriculumMaterial ? "curriculum_material" : "publisher_barcode"
     ));
     setAnalysisStatus(
-      matched || knownProduct
-        ? "Publisher item found!"
-        : "New publisher item. Analyze the cover, then review and save it once."
+      matched
+        ? "Book barcode found!"
+        : "New book barcode. Analyze the cover, then review and save it once."
     );
-    if (matched || knownProduct) setTimeout(() => setAnalysisStatus(""), 1800);
+    if (matched) setTimeout(() => setAnalysisStatus(""), 1800);
   } catch (error) {
     setAnalysisStatus("");
-    alert("Publisher item lookup failed: " + error.message);
+    alert("Book barcode lookup failed: " + error.message);
   }
-}
-
-async function lookupEnteredPublisherItem() {
-  if (!bookData?.publisher?.trim() || !bookData?.publisher_item_number?.trim()) {
-    alert("Enter both the publisher and publisher item number before looking it up.");
-    return;
-  }
-  await lookupBookByPublisherIdentifier({
-    publisher: bookData.publisher,
-    publisherItemNumber: bookData.publisher_item_number,
-    publisherBarcode: bookData.publisher_barcode,
-  }, bookData);
 }
 
 async function lookupBookByBarcode(value) {
@@ -2950,11 +3164,6 @@ setBookData(await applyRulesToImportedBook({
   ...(pendingIdentifier || {}),
   ...(inferredPublisherItemNumber ? { publisher_item_number: inferredPublisherItemNumber } : {}),
   category: improvedData.category || suggested?.name || "",
-  weight_ounces: getWeightFromBookData(improvedData) ?? "",
-  weight_note:
-    getWeightFromBookData(improvedData) !== null
-      ? "Estimated by AI. Please adjust if needed."
-      : "",
   suggested_price:
     improvedData.suggested_price || suggested?.default_price || "",
   final_price:
@@ -2973,25 +3182,743 @@ setBookData(await applyRulesToImportedBook({
   }
 }
 
-  async function generateSku() {
-  const { data, error } = await supabase
-    .from("items")
-    .select("sku")
-    .like("sku", "ILHRC-%");
+  async function generateSku(itemType = "individual") {
+    const { data, error } = await supabase.rpc("next_inventory_sku", {
+      p_item_type: itemType,
+    });
 
-  if (error) {
-    throw new Error("Could not generate SKU: " + error.message);
+    if (error || !data) {
+      throw new Error("Could not generate SKU: " + (error?.message || "No SKU returned."));
+    }
+
+    return data;
   }
 
-  const highestNumber = (data || []).reduce((highest, item) => {
-    const number = Number((item.sku || "").replace("ILHRC-", ""));
-    return number > highest ? number : highest;
-  }, 0);
+  async function uploadCoverImage(file) {
+    if (!file) return "";
 
-  const nextNumber = highestNumber + 1;
+    const fileExt = file.type?.split("/")[1] || "jpg";
+    const fileName = `${Date.now()}-${crypto.randomUUID()}.${fileExt}`;
+    const { error: uploadError } = await supabase.storage
+      .from("book-covers")
+      .upload(fileName, file, {
+        contentType: file.type || "image/jpeg",
+      });
 
-  return `ILHRC-${String(nextNumber).padStart(6, "0")}`;
-}
+    if (uploadError) {
+      throw new Error("Image upload failed: " + uploadError.message);
+    }
+
+    const { data } = supabase.storage.from("book-covers").getPublicUrl(fileName);
+    return data.publicUrl;
+  }
+
+  function startBundle() {
+    setBundleDraft({ ...EMPTY_BUNDLE_DRAFT, active: true, source: "intake" });
+    setBundleReviewOpen(false);
+    setBundleCoverFile(null);
+    setBundleCoverPreview("");
+  }
+
+  async function startInventoryBundle() {
+    if (bundleDraft.active && bundleDraft.components.length > 0) {
+      alert("Finish or cancel the active bundle before starting another one.");
+      return;
+    }
+
+    const selectedItems = items.filter((item) => selectedItemIds.includes(item.id));
+    if (selectedItems.length < 2) {
+      alert("Select at least two inventory listings to create a bundle.");
+      return;
+    }
+
+    const unavailableItem = selectedItems.find(
+      (item) =>
+        item.item_type === "bundle" ||
+        item.status !== "Available" ||
+        bundleParentByComponentId[String(item.id)] ||
+        Number(item.quantity || 0) < 1
+    );
+    if (unavailableItem) {
+      alert(
+        `“${unavailableItem.title}” is not available for a new bundle. Choose available individual listings only.`
+      );
+      return;
+    }
+
+    const { data: reservations, error: reservationError } = await supabase
+      .from("book_reservations")
+      .select("item_id")
+      .in("item_id", selectedItems.map((item) => String(item.id)))
+      .in("status", ["pending", "ready"])
+      .gt("expires_at", new Date().toISOString());
+
+    if (reservationError) {
+      alert("Could not check reservations: " + reservationError.message);
+      return;
+    }
+    if ((reservations || []).length > 0) {
+      const reservedIds = new Set(reservations.map((reservation) => String(reservation.item_id)));
+      const reservedItem = selectedItems.find((item) => reservedIds.has(String(item.id)));
+      alert(`Cancel or complete the active reservation for “${reservedItem?.title || "a selected book"}” first.`);
+      return;
+    }
+
+    setBundleDraft({
+      ...EMPTY_BUNDLE_DRAFT,
+      active: true,
+      source: "inventory",
+      components: selectedItems.map((item) => ({
+        ...item,
+        bundle_quantity: 1,
+        from_inventory: true,
+      })),
+    });
+    setBundleReviewOpen(true);
+    setBundleCoverFile(null);
+    setBundleCoverPreview("");
+    setSelectedItemIds([]);
+    setIsSelectionMode(false);
+  }
+
+  function updateInventoryBundleQuantity(componentId, value) {
+    setBundleDraft((current) => ({
+      ...current,
+      components: current.components.map((component) =>
+        component.id === componentId
+          ? {
+              ...component,
+              bundle_quantity: Math.min(
+                Math.max(1, Number(value || 1)),
+                Math.max(1, Number(component.quantity || 1))
+              ),
+            }
+          : component
+      ),
+    }));
+  }
+
+  function removeInventoryBundleComponent(componentId) {
+    setBundleDraft((current) => ({
+      ...current,
+      components: current.components.filter((component) => component.id !== componentId),
+    }));
+  }
+
+  function handleBundleCover(event) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    if (bundleCoverPreview) URL.revokeObjectURL(bundleCoverPreview);
+    setBundleCoverFile(file);
+    setBundleCoverPreview(URL.createObjectURL(file));
+  }
+
+  function clearSavedBook() {
+    setBookData(null);
+    clearRuleFeedback();
+    setCoverPhoto(null);
+    setCoverFile(null);
+    setIsbnPhoto(null);
+  }
+
+  async function createSquareListing(item) {
+    const response = await authFetch("/create-square-item", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        title: item.title || "Untitled Book",
+        sku: item.sku || "",
+        final_price: item.final_price || 0,
+        quantity: item.quantity || 1,
+        notes: item.notes || "",
+      }),
+    });
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok || !data.success) {
+      throw new Error(JSON.stringify(data.error || "Square item creation failed."));
+    }
+
+    return data;
+  }
+
+  async function activateIndividualItem(item) {
+    let squareItemId = item.square_item_id || "";
+    let squareVariationId = item.square_variation_id || "";
+    let createdSquareItemId = "";
+
+    if (!squareItemId || !squareVariationId) {
+      const squareData = await createSquareListing(item);
+      squareItemId = squareData.square_item_id;
+      squareVariationId = squareData.square_variation_id;
+      createdSquareItemId = squareData.square_item_id;
+    } else {
+      const inventoryResponse = await authFetch("/update-square-inventory", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          square_variation_id: squareVariationId,
+          quantity: Math.max(1, Number(item.quantity || 1)),
+        }),
+      });
+      const inventoryData = await inventoryResponse.json().catch(() => ({}));
+      if (!inventoryResponse.ok || !inventoryData.success) {
+        throw new Error(JSON.stringify(inventoryData.error || "Square inventory update failed."));
+      }
+    }
+
+    const queuedAt = new Date().toISOString();
+    const { error } = await supabase
+      .from("items")
+      .update({
+        status: "Available",
+        public_visible: true,
+        square_item_id: squareItemId,
+        square_variation_id: squareVariationId,
+        label_printed: false,
+        pending_label_quantity: Math.max(1, Number(item.quantity || 1)),
+        label_queued_at: queuedAt,
+        updated_at: queuedAt,
+      })
+      .eq("id", item.id);
+
+    if (error) {
+      if (createdSquareItemId) {
+        await authFetch("/archive-square-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ square_item_id: createdSquareItemId }),
+        }).catch(() => null);
+      }
+      throw new Error(error.message);
+    }
+  }
+
+  function buildRetroBundleComponent(item, quantity, sku) {
+    return {
+      title: item.title || "",
+      curriculum: item.curriculum || "",
+      publisher: item.publisher || "",
+      subject: item.subject || "",
+      grade_level: item.grade_level || "",
+      edition: item.edition || "",
+      isbn: item.isbn || "",
+      publisher_barcode: item.publisher_barcode || "",
+      category: item.category || "",
+      suggested_price: item.suggested_price ?? null,
+      final_price: item.final_price ?? null,
+      quantity,
+      status: "Bundled",
+      notes: item.notes || "",
+      ai_confidence: item.ai_confidence ?? null,
+      public_visible: false,
+      image_url: item.image_url || "",
+      sku,
+      item_type: "individual",
+      bundle_piece_count: 0,
+      label_printed: true,
+      pending_label_quantity: 0,
+      label_queued_at: null,
+      ...(item.publisher_item_number !== undefined
+        ? { publisher_item_number: item.publisher_item_number || "" }
+        : {}),
+      ...(item.location !== undefined ? { location: item.location || "" } : {}),
+      ...(item.weight_ounces !== undefined
+        ? { weight_ounces: item.weight_ounces ?? null }
+        : {}),
+    };
+  }
+
+  async function materializeInventoryBundleComponents(components) {
+    const materialized = [];
+    const rememberMaterializedComponent = (originalId, nextComponent) => {
+      setBundleDraft((current) => ({
+        ...current,
+        components: current.components.map((component) =>
+          component.id === originalId ? nextComponent : component
+        ),
+      }));
+    };
+
+    for (const component of components) {
+      if (!component.from_inventory || component.retro_materialized) {
+        materialized.push(component);
+        continue;
+      }
+
+      const { data: currentItem, error: loadError } = await supabase
+        .from("items")
+        .select("*")
+        .eq("id", component.id)
+        .single();
+      if (loadError) throw loadError;
+
+      const bundleQuantity = getBundleComponentQuantity(component);
+      const currentQuantity = Math.max(0, Number(currentItem.quantity || 0));
+      if (bundleQuantity > currentQuantity) {
+        throw new Error(`${currentItem.title} no longer has enough available copies.`);
+      }
+
+      if (bundleQuantity === currentQuantity) {
+        const materializedComponent = {
+          ...currentItem,
+          bundle_quantity: bundleQuantity,
+          retro_materialized: true,
+        };
+        materialized.push(materializedComponent);
+        rememberMaterializedComponent(component.id, materializedComponent);
+        continue;
+      }
+
+      const remainingQuantity = currentQuantity - bundleQuantity;
+      const componentSku = await generateSku("individual");
+      const { data: splitComponent, error: insertError } = await supabase
+        .from("items")
+        .insert([buildRetroBundleComponent(currentItem, bundleQuantity, componentSku)])
+        .select("*")
+        .single();
+      if (insertError) throw insertError;
+
+      let squareInventoryChanged = false;
+      try {
+        if (currentItem.square_variation_id) {
+          const inventoryResponse = await authFetch("/update-square-inventory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              square_variation_id: currentItem.square_variation_id,
+              quantity: remainingQuantity,
+            }),
+          });
+          const inventoryData = await inventoryResponse.json().catch(() => ({}));
+          if (!inventoryResponse.ok || !inventoryData.success) {
+            throw new Error(JSON.stringify(inventoryData.error || "Square inventory update failed."));
+          }
+          squareInventoryChanged = true;
+        }
+
+        const remainingLabels = Math.min(
+          getQueuedLabelQuantity(currentItem),
+          remainingQuantity
+        );
+        const { error: updateError } = await supabase
+          .from("items")
+          .update({
+            quantity: remainingQuantity,
+            label_printed: remainingLabels === 0,
+            pending_label_quantity: remainingLabels,
+            label_queued_at: remainingLabels > 0 ? currentItem.label_queued_at : null,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("id", currentItem.id);
+        if (updateError) throw updateError;
+      } catch (error) {
+        if (squareInventoryChanged && currentItem.square_variation_id) {
+          await authFetch("/update-square-inventory", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              square_variation_id: currentItem.square_variation_id,
+              quantity: currentQuantity,
+            }),
+          }).catch(() => null);
+        }
+        await supabase.from("items").delete().eq("id", splitComponent.id);
+        throw error;
+      }
+
+      await logAudit("inventory_item_split_for_bundle", "item", currentItem.id, {
+        component_item_id: splitComponent.id,
+        bundled_quantity: bundleQuantity,
+        remaining_quantity: remainingQuantity,
+      });
+      const materializedComponent = {
+        ...splitComponent,
+        bundle_quantity: bundleQuantity,
+        retro_materialized: true,
+      };
+      materialized.push(materializedComponent);
+      rememberMaterializedComponent(component.id, materializedComponent);
+    }
+
+    return materialized;
+  }
+
+  async function saveBundleComponent(itemDraft) {
+    setAnalysisStatus("Adding book to bundle...");
+    const [newSku, imageUrl] = await Promise.all([
+      generateSku("individual"),
+      uploadCoverImage(coverFile),
+    ]);
+    const componentToSave = {
+      ...itemDraft,
+      sku: newSku,
+      image_url: imageUrl || bookData.image_url || "",
+      status: "Bundled",
+      public_visible: false,
+      item_type: "individual",
+      bundle_piece_count: 0,
+      label_printed: true,
+      pending_label_quantity: 0,
+      label_queued_at: null,
+    };
+    const { data: insertedItem, error } = await supabase
+      .from("items")
+      .insert([componentToSave])
+      .select("*")
+      .single();
+
+    if (error) throw new Error(error.message);
+
+    await Promise.all([
+      saveOptionIfNew("curriculum_options", insertedItem.curriculum),
+      saveOptionIfNew("category_options", insertedItem.category),
+    ]);
+    await recordIntakeHistory(insertedItem.id, insertedItem, false);
+    await logAudit("bundle_component_created", "item", insertedItem.id, {
+      title: insertedItem.title,
+      sku: insertedItem.sku,
+    });
+
+    setBundleDraft((current) => ({
+      ...current,
+      components: [...current.components, insertedItem],
+    }));
+    clearSavedBook();
+    await loadItems();
+    alert(`${insertedItem.title || "Book"} was added to the active bundle.`);
+  }
+
+  async function removeBundleDraftComponent(component) {
+    if (bundleActionLoading) return;
+    setBundleActionLoading(true);
+    setAnalysisStatus("Releasing book for individual sale...");
+
+    try {
+      const { data: currentItem, error } = await supabase
+        .from("items")
+        .select("*")
+        .eq("id", component.id)
+        .single();
+      if (error) throw error;
+      await activateIndividualItem(currentItem);
+      setBundleDraft((current) => ({
+        ...current,
+        components: current.components.filter((item) => item.id !== component.id),
+      }));
+      await loadItems();
+    } catch (error) {
+      alert("Could not release this book: " + error.message);
+    } finally {
+      setAnalysisStatus("");
+      setBundleActionLoading(false);
+    }
+  }
+
+  async function cancelBundle() {
+    if (bundleActionLoading) return;
+    if (
+      bundleDraft.components.length > 0 &&
+      !confirm(
+        `Cancel this bundle and list its ${getBundlePieceCount(bundleDraft.components)} pieces individually?`
+      )
+    ) {
+      return;
+    }
+
+    if (
+      bundleDraft.source === "inventory" &&
+      bundleDraft.components.every(
+        (component) => component.from_inventory && !component.retro_materialized
+      )
+    ) {
+      setBundleDraft({ ...EMPTY_BUNDLE_DRAFT });
+      setBundleReviewOpen(false);
+      setBundleCoverFile(null);
+      setBundleCoverPreview("");
+      alert("Bundle cancelled. The selected inventory listings were not changed.");
+      return;
+    }
+
+    setBundleActionLoading(true);
+    setAnalysisStatus("Preparing individual listings...");
+    try {
+      for (const component of bundleDraft.components) {
+        const { data: currentItem, error } = await supabase
+          .from("items")
+          .select("*")
+          .eq("id", component.id)
+          .single();
+        if (error) throw error;
+        await activateIndividualItem(currentItem);
+      }
+
+      await logAudit("bundle_draft_cancelled", "bundle", null, {
+        component_ids: bundleDraft.components.map((item) => item.id),
+      });
+      setBundleDraft({ ...EMPTY_BUNDLE_DRAFT });
+      setBundleReviewOpen(false);
+      setBundleCoverFile(null);
+      setBundleCoverPreview("");
+      await loadItems();
+      alert("Bundle cancelled. Its books are now listed individually.");
+    } catch (error) {
+      await loadItems();
+      alert(
+        "The bundle could not be fully cancelled. Books already released are safe; retry to finish. " +
+          error.message
+      );
+    } finally {
+      setAnalysisStatus("");
+      setBundleActionLoading(false);
+    }
+  }
+
+  async function finishBundle() {
+    if (bundleActionLoading) return;
+    const pieceCount = getBundlePieceCount(bundleDraft.components);
+    const price = Number(bundleDraft.price);
+
+    if (pieceCount < 2) {
+      alert("Add at least two pieces before finishing the bundle.");
+      return;
+    }
+    if (!bundleDraft.title.trim()) {
+      alert("Enter a title for the set.");
+      return;
+    }
+    if (bundleDraft.price === "" || !Number.isFinite(price) || price < 0) {
+      alert("Enter a valid bundle price.");
+      return;
+    }
+
+    setBundleActionLoading(true);
+    setAnalysisStatus("Creating bundle listing...");
+    let squareItemId = "";
+    let bundleItemId = "";
+    let workingComponents = bundleDraft.components;
+
+    try {
+      if (bundleDraft.source === "inventory") {
+        workingComponents = await materializeInventoryBundleComponents(workingComponents);
+        setBundleDraft((current) => ({
+          ...current,
+          components: workingComponents,
+        }));
+      }
+
+      const componentIds = workingComponents.map((item) => item.id);
+      const { data: currentComponents, error: componentLoadError } = await supabase
+        .from("items")
+        .select("*")
+        .in("id", componentIds);
+      if (componentLoadError) throw componentLoadError;
+      if ((currentComponents || []).length !== workingComponents.length) {
+        throw new Error("One or more draft books could not be found.");
+      }
+
+      for (const component of currentComponents || []) {
+        if (component.square_item_id) {
+          const archiveResponse = await authFetch("/archive-square-item", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ square_item_id: component.square_item_id }),
+          });
+          const archiveData = await archiveResponse.json().catch(() => ({}));
+          if (!archiveResponse.ok || !archiveData.success) {
+            throw new Error(`Could not protect ${component.title} in Square.`);
+          }
+        }
+      }
+
+      const { error: protectError } = await supabase
+        .from("items")
+        .update({
+          status: "Bundled",
+          public_visible: false,
+          square_item_id: null,
+          square_variation_id: null,
+          label_printed: true,
+          pending_label_quantity: 0,
+          label_queued_at: null,
+          updated_at: new Date().toISOString(),
+        })
+        .in("id", componentIds);
+      if (protectError) throw protectError;
+
+      const [newSku, uploadedBundleImage] = await Promise.all([
+        generateSku("bundle"),
+        uploadCoverImage(bundleCoverFile),
+      ]);
+      const contents = buildBundleContentsNote(workingComponents);
+      const commonValue = (field) => {
+        const values = [...new Set(workingComponents.map((item) => item[field] || ""))];
+        return values.length === 1 ? values[0] : "";
+      };
+      const bundleItem = {
+        title: bundleDraft.title.trim(),
+        curriculum: commonValue("curriculum"),
+        publisher: commonValue("publisher"),
+        subject: commonValue("subject"),
+        grade_level: commonValue("grade_level"),
+        edition: commonValue("edition"),
+        isbn: "",
+        publisher_barcode: "",
+        category: "Bundle / Set",
+        suggested_price: null,
+        final_price: price,
+        quantity: 1,
+        status: "Available",
+        notes: `Bundle contents:\n${contents}`,
+        sku: newSku,
+        image_url:
+          uploadedBundleImage ||
+          workingComponents.find((item) => item.image_url)?.image_url ||
+          "",
+        public_visible: true,
+        item_type: "bundle",
+        bundle_piece_count: pieceCount,
+        label_printed: false,
+        pending_label_quantity: 1,
+        label_queued_at: new Date().toISOString(),
+      };
+
+      const squareData = await createSquareListing(bundleItem);
+      squareItemId = squareData.square_item_id;
+
+      const { data: insertedBundle, error: insertError } = await supabase
+        .from("items")
+        .insert([{
+          ...bundleItem,
+          square_item_id: squareData.square_item_id,
+          square_variation_id: squareData.square_variation_id,
+        }])
+        .select("*")
+        .single();
+      if (insertError) throw insertError;
+      bundleItemId = insertedBundle.id;
+
+      const { error: componentError } = await supabase
+        .from("bundle_components")
+        .insert(getBundleComponentRows(insertedBundle.id, workingComponents));
+      if (componentError) throw componentError;
+
+      await logAudit("inventory_bundle_created", "item", insertedBundle.id, {
+        title: insertedBundle.title,
+        sku: insertedBundle.sku,
+        piece_count: pieceCount,
+        component_ids: workingComponents.map((item) => item.id),
+      });
+
+      setBundleDraft({ ...EMPTY_BUNDLE_DRAFT });
+      setBundleReviewOpen(false);
+      setBundleCoverFile(null);
+      setBundleCoverPreview("");
+      await loadItems();
+      alert(`Bundle saved as ${newSku}. Its sticker is in the label queue.`);
+    } catch (error) {
+      if (bundleItemId) {
+        await supabase.from("items").delete().eq("id", bundleItemId);
+      }
+      if (squareItemId) {
+        await authFetch("/archive-square-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ square_item_id: squareItemId }),
+        }).catch(() => null);
+      }
+      alert("Bundle creation failed. The component books remain safely in the draft. " + error.message);
+    } finally {
+      setAnalysisStatus("");
+      setBundleActionLoading(false);
+    }
+  }
+
+  async function splitBundle(item) {
+    if (bundleActionLoading || item.item_type !== "bundle") return;
+    const links = bundleComponents.filter(
+      (row) => String(row.bundle_item_id) === String(item.id)
+    );
+    if (!confirm(`Split "${item.title}" and return ${item.bundle_piece_count || links.length} pieces to individual sale?`)) {
+      return;
+    }
+
+    setBundleActionLoading(true);
+    try {
+      const { data: activeReservations, error: reservationError } = await supabase
+        .from("book_reservations")
+        .select("id")
+        .eq("item_id", String(item.id))
+        .in("status", ["pending", "ready"])
+        .gt("expires_at", new Date().toISOString());
+      if (reservationError) throw reservationError;
+      if ((activeReservations || []).length > 0) {
+        throw new Error("Cancel or complete the active reservation for this set before splitting it.");
+      }
+
+      if (item.square_item_id) {
+        const archiveResponse = await authFetch("/archive-square-item", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ square_item_id: item.square_item_id }),
+        });
+        const archiveData = await archiveResponse.json().catch(() => ({}));
+        if (!archiveResponse.ok || !archiveData.success) {
+          throw new Error(JSON.stringify(archiveData.error || "Square archive failed."));
+        }
+      }
+
+      const removedAt = new Date().toISOString();
+      const { error: bundleError } = await supabase
+        .from("items")
+        .update({
+          status: "Removed",
+          public_visible: false,
+          quantity: 0,
+          updated_at: removedAt,
+        })
+        .eq("id", item.id);
+      if (bundleError) throw bundleError;
+
+      const componentIds = links.map((row) => row.component_item_id);
+      const { data: components, error: componentLoadError } = await supabase
+        .from("items")
+        .select("*")
+        .in("id", componentIds);
+      if (componentLoadError) throw componentLoadError;
+
+      const releaseErrors = [];
+      for (const component of components || []) {
+        try {
+          await activateIndividualItem(component);
+        } catch (error) {
+          releaseErrors.push(`${component.title}: ${error.message}`);
+        }
+      }
+
+      await logAudit("inventory_bundle_split", "item", item.id, {
+        component_ids: componentIds,
+        release_errors: releaseErrors,
+      });
+      setEditingItem(null);
+      setEditData(null);
+      await loadItems();
+
+      if (releaseErrors.length > 0) {
+        alert(
+          "The bundle was closed safely, but some individual listings need attention:\n" +
+            releaseErrors.join("\n")
+        );
+      } else {
+        alert("Bundle split. The individual books and their labels are now active.");
+      }
+    } catch (error) {
+      await loadItems();
+      alert("Could not split this bundle: " + error.message);
+    } finally {
+      setBundleActionLoading(false);
+    }
+  }
 
 async function saveOptionIfNew(tableName, value) {
   const cleanedValue = (value || "").trim();
@@ -3025,6 +3952,7 @@ function normalizeTitle(title) {
     .trim();
 }
 
+/* Weight capture and estimation were removed from intake.
 function cleanWeightOunces(value) {
   if (value === "" || value === null || value === undefined) return null;
 
@@ -3191,6 +4119,7 @@ function getWeightFromBookData(data) {
       data?.shipping_weight_ounces
   );
 }
+*/
 
 async function saveItem() {
   if (!bookData || isSaving) return;
@@ -3210,7 +4139,6 @@ async function saveItem() {
     publisher_barcode: bookData.publisher_barcode || "",
     publisher_item_number: normalizePublisherItemNumber(bookData.publisher_item_number),
     category: bookData.category || "",
-    location: cleanLocationName(currentLocation),
     suggested_price: bookData.suggested_price || null,
     final_price:
       bookData.final_price === "" ||
@@ -3220,7 +4148,6 @@ async function saveItem() {
         ? null
         : Number(bookData.final_price),
     quantity: bookData.quantity ? Number(bookData.quantity) : 1,
-    weight_ounces: cleanWeightOunces(bookData.weight_ounces),
     status: bookData.status || "Available",
     notes: bookData.notes || "",
     ai_confidence:
@@ -3228,13 +4155,13 @@ async function saveItem() {
     public_visible: true,
   };
 
-if (itemDraft.publisher_item_number && !itemDraft.publisher) {
-  alert("Choose a publisher before saving a publisher item number.");
+if ((itemDraft.publisher_item_number || itemDraft.publisher_barcode) && !itemDraft.title.trim()) {
+  alert("Enter the title before saving this new barcode. The app will remember it for future scans.");
   return;
 }
 
-if ((itemDraft.publisher_item_number || itemDraft.publisher_barcode) && !itemDraft.title.trim()) {
-  alert("Enter the title before saving this new publisher item. The app will remember it for future scans.");
+if (bundleDraft.active) {
+  await saveBundleComponent(itemDraft);
   return;
 }
 
@@ -3264,7 +4191,7 @@ if ((itemDraft.publisher && itemDraft.publisher_item_number) || itemDraft.publis
       ? `${candidate.publisher || "Publisher"} item: ${candidate.publisher_item_number}`
       : `Publisher barcode: ${candidate.publisher_barcode}`;
     const addQuantity = confirm(
-      `Matching publisher item found:\n\n${candidate.title}\n${identifierLabel}\n` +
+      `Matching book barcode found:\n\n${candidate.title}\n${identifierLabel}\n` +
       `SKU: ${candidate.sku}\nCurrent quantity: ${candidate.quantity || 0}\n` +
       `Price: $${Number(candidate.final_price || 0).toFixed(2)}\n\n` +
       `Select OK to add ${itemDraft.quantity || 1} copy/copies to this listing.\n` +
@@ -3272,7 +4199,9 @@ if ((itemDraft.publisher && itemDraft.publisher_item_number) || itemDraft.publis
     );
     if (addQuantity) {
       existingItem = candidate;
-      duplicateMatchReason = "exact_publisher_item";
+      duplicateMatchReason = candidate.publisher_item_number
+        ? "exact_publisher_item"
+        : "exact_publisher_barcode";
     } else {
       exactPublisherMatchDeclined = true;
     }
@@ -3371,14 +4300,6 @@ if (!existingItem && !exactIsbnMatchDeclined && !exactPublisherMatchDeclined) {
       updated_at: queuedAt,
       ...buildDuplicateLabelQueueUpdate(existingItem, receivedQuantity, queuedAt),
     };
-
-    if (
-      (existingItem.weight_ounces === null ||
-        existingItem.weight_ounces === undefined) &&
-      itemDraft.weight_ounces !== null
-    ) {
-      duplicateUpdates.weight_ounces = itemDraft.weight_ounces;
-    }
 
     setAnalysisStatus("Updating quantity...");
 
@@ -3595,6 +4516,15 @@ async function deleteItem() {
     return;
   }
 
+  if (
+    editingItem.status === "Bundled" ||
+    (editingItem.item_type === "bundle" &&
+      (bundleComponentsByBundleId[String(editingItem.id)] || []).length > 0)
+  ) {
+    alert("This item is part of a bundle relationship and cannot be deleted. Split the bundle first.");
+    return;
+  }
+
   const confirmed = confirm(
     isAdmin
       ? `Delete "${editingItem.title}" from inventory? This cannot be undone.`
@@ -3683,6 +4613,14 @@ async function deleteItem() {
 
 async function updateItem() {
   if (!editingItem || !editData) return;
+
+  if (
+    bundleParentByComponentId[String(editingItem.id)] &&
+    editData.status !== "Bundled"
+  ) {
+    alert("Split the bundle before making this book individually available.");
+    return;
+  }
 
   await saveOptionIfNew("category_options", editData.category);
 
@@ -3836,13 +4774,11 @@ async function updateItem() {
       publisher_barcode: editData.publisher_barcode || "",
       publisher_item_number: normalizePublisherItemNumber(editData.publisher_item_number),
       category: editData.category || "",
-      location: cleanLocationName(editData.location),
       final_price:
         editData.final_price === "" || editData.final_price === null
           ? null
           : Number(editData.final_price),
       quantity: Number(editData.quantity || 0),
-      weight_ounces: cleanWeightOunces(editData.weight_ounces),
       status: editData.status || "Available",
       notes: editData.notes || "",
       sku: editData.sku || "",
@@ -3872,10 +4808,8 @@ async function updateItem() {
       "publisher_barcode",
       "publisher_item_number",
       "category",
-      "location",
       "final_price",
       "quantity",
-      "weight_ounces",
       "status",
       "notes",
       "sku",
@@ -3952,6 +4886,7 @@ function generateLabels(itemsToPrint) {
 
       const sku = item.sku || "";
       const barcodeValue = sku;
+      const isBundle = item.item_type === "bundle";
       const barcodeCanvas = document.createElement("canvas");
 
       JsBarcode(barcodeCanvas, barcodeValue, {
@@ -3968,11 +4903,20 @@ function generateLabels(itemsToPrint) {
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(5.5);
       pdf.text("Illinois Homeschool Resource Center", 0.08, 0.14);
+      if (isBundle) {
+        pdf.setFont("helvetica", "bold");
+        pdf.text(
+          `SET • ${Number(item.bundle_piece_count || 0)} PIECES`,
+          1.92,
+          0.14,
+          { align: "right" }
+        );
+      }
 
       // Title
       pdf.setFont("helvetica", "bold");
       pdf.setFontSize(7.5);
-      pdf.text(title.substring(0, 30), 0.08, 0.28);
+      pdf.text(title.substring(0, isBundle ? 38 : 30), 0.08, 0.28);
 
       // Price
       pdf.setFontSize(11);
@@ -3990,27 +4934,16 @@ function generateLabels(itemsToPrint) {
   pdf.save("ILHRC-labels.pdf");
 }
 
-const activeLocationNames = getActiveLocationNames();
-const labelLocationOptions = buildLocationList([
-  ...items.map((item) => item.location),
-  ...locationOptions.map((location) => location.name),
-]);
-
-const inventoryLocationOptions = labelLocationOptions;
+/* Location summaries were removed with location management.
 const locationUsageCounts = items.reduce((counts, item) => {
   const normalizedName = normalizeLocationName(item.location);
-
-  if (!normalizedName) return counts;
-
-  counts[normalizedName] = (counts[normalizedName] || 0) + Number(item.quantity || 0);
+  if (normalizedName) {
+    counts[normalizedName] = (counts[normalizedName] || 0) + Number(item.quantity || 0);
+  }
   return counts;
 }, {});
-const temporaryLocations = locationOptions.filter(
-  (location) => location.temporary === true
-);
-const permanentLocations = locationOptions.filter(
-  (location) => location.temporary !== true
-);
+const temporaryLocations = locationOptions.filter((location) => location.temporary === true);
+const permanentLocations = locationOptions.filter((location) => location.temporary !== true);
 const filteredManagedLocations = locationOptions.filter((location) => {
   if (locationListFilter === "temporary") return location.temporary === true;
   if (locationListFilter === "permanent") return location.temporary !== true;
@@ -4018,33 +4951,39 @@ const filteredManagedLocations = locationOptions.filter((location) => {
   if (locationListFilter === "inactive") return location.active === false;
   return true;
 });
-const selectedTemporaryLocationItemCount = items.filter(
-  (item) =>
-    selectedItemIds.includes(item.id) &&
-    item.location &&
-    isTemporaryLocationName(item.location)
-).length;
 const staleTemporaryItems = items.filter((item) => {
   if (!item.location || !isTemporaryLocationName(item.location)) return false;
-
   const timestamp = item.updated_at || item.created_at;
-  if (!timestamp) return false;
-
-  const ageMs = Date.now() - new Date(timestamp).getTime();
-  return ageMs > 14 * 24 * 60 * 60 * 1000;
+  return timestamp && Date.now() - new Date(timestamp).getTime() > 14 * 24 * 60 * 60 * 1000;
 });
+*/
 
 const labelItems = items.filter(
   (item) =>
     item.label_printed !== true &&
     getQueuedLabelQuantity(item) > 0 &&
-    locationMatches(item.location, labelLocationFilter) &&
     dateAddedMatches(
       { ...item, created_at: item.label_queued_at || item.created_at },
       labelDateFrom,
       labelDateTo
     )
 );
+
+const bundleComponentsByBundleId = bundleComponents.reduce((groups, link) => {
+  const key = String(link.bundle_item_id);
+  if (!groups[key]) groups[key] = [];
+  const component = items.find(
+    (item) => String(item.id) === String(link.component_item_id)
+  );
+  if (component) groups[key].push({ ...component, piece_quantity: link.piece_quantity });
+  return groups;
+}, {});
+
+const bundleParentByComponentId = bundleComponents.reduce((parents, link) => {
+  const parent = items.find((item) => String(item.id) === String(link.bundle_item_id));
+  if (parent) parents[String(link.component_item_id)] = parent;
+  return parents;
+}, {});
 
 const filteredItems = items.filter((item) => {
   const text = `
@@ -4054,7 +4993,6 @@ const filteredItems = items.filter((item) => {
     ${item.grade_level || ""}
     ${item.isbn || ""}
     ${item.publisher_barcode || ""}
-    ${item.publisher_item_number || ""}
     ${item.sku || ""}
     ${item.category || ""}
   `.toLowerCase();
@@ -4073,7 +5011,6 @@ const filteredItems = items.filter((item) => {
   const matchesGrade =
     !gradeFilter || item.grade_level === gradeFilter;
 
-    const matchesLocation = locationMatches(item.location, locationFilter);
     const matchesDateAdded = dateAddedMatches(
       item,
       inventoryDateFrom,
@@ -4086,7 +5023,6 @@ const filteredItems = items.filter((item) => {
   matchesSubject &&
   matchesCategory &&
   matchesGrade &&
-  matchesLocation &&
   matchesDateAdded
 );
 }).sort((a, b) => {
@@ -4114,7 +5050,6 @@ const activeInventoryFilterCount = [
   subjectFilter,
   categoryFilter,
   gradeFilter,
-  locationFilter,
   inventoryDateFrom,
   inventoryDateTo,
   inventorySortBy !== "newest" ? inventorySortBy : "",
@@ -4296,27 +5231,32 @@ const inventoryIsbnInconsistencies = isAdmin
     })
   : [];
 
-const totalTitles = items.length;
+const inventorySummaryItems = items.filter((item) => item.status !== "Bundled");
+const totalTitles = inventorySummaryItems.length;
 
-const totalCopies = items.reduce(
-  (sum, item) => sum + Number(item.quantity || 0),
+const totalCopies = inventorySummaryItems.reduce(
+  (sum, item) =>
+    sum +
+    (item.item_type === "bundle"
+      ? Number(item.bundle_piece_count || 0)
+      : Number(item.quantity || 0)),
   0
 );
 
-const totalValue = items.reduce(
+const totalValue = inventorySummaryItems.reduce(
   (sum, item) =>
     sum + Number(item.final_price || 0) * Number(item.quantity || 0),
   0
 );
 
-const availableCopies = items.reduce((sum, item) => {
+const availableCopies = inventorySummaryItems.reduce((sum, item) => {
   if ((item.status || "Available") === "Available") {
     return sum + Number(item.quantity || 0);
   }
   return sum;
 }, 0);
 
-const soldCopies = items.reduce((sum, item) => {
+const soldCopies = inventorySummaryItems.reduce((sum, item) => {
   if ((item.status || "") === "Sold") {
     return sum + Number(item.quantity || 0);
   }
@@ -4344,7 +5284,6 @@ function clearCatalogFilters() {
   setSubjectFilter("");
   setCategoryFilter("");
   setGradeFilter("");
-  setLocationFilter("");
   setSortBy("newest");
   setCatalogToolsPanel("");
 }
@@ -4503,7 +5442,7 @@ function renderLoginPanel() {
       <h2>Staff Sign In</h2>
       <p>Sign in with your IL HRC team account to use intake and inventory tools.</p>
 
-      <form onSubmit={handleLogin}>
+      <form onSubmit={forgotPasswordOpen ? requestPasswordReset : handleLogin}>
         <label>Email</label>
         <input
           type="email"
@@ -4512,19 +5451,107 @@ function renderLoginPanel() {
           onChange={(e) => setLoginEmail(e.target.value)}
         />
 
-        <label>Password</label>
-        <input
-          type="password"
-          value={loginPassword}
-          autoComplete="current-password"
-          onChange={(e) => setLoginPassword(e.target.value)}
-        />
+        {!forgotPasswordOpen && (
+          <>
+            <label>Password</label>
+            <input
+              type="password"
+              value={loginPassword}
+              autoComplete="current-password"
+              onChange={(e) => setLoginPassword(e.target.value)}
+            />
+          </>
+        )}
 
         {authMessage && <p className="warning-text">{authMessage}</p>}
+        {forgotPasswordMessage && (
+          <p className="status-message">{forgotPasswordMessage}</p>
+        )}
+        {forgotPasswordError && (
+          <p className="warning-text">{forgotPasswordError}</p>
+        )}
 
-        <button className="primary" type="submit" disabled={loginLoading}>
-          {loginLoading ? "Signing In..." : "Sign In"}
-        </button>
+        <div className="auth-actions">
+          <button
+            className="primary"
+            type="submit"
+            disabled={loginLoading || forgotPasswordLoading}
+          >
+            {forgotPasswordOpen
+              ? forgotPasswordLoading
+                ? "Sending..."
+                : "Send Reset Link"
+              : loginLoading
+                ? "Signing In..."
+                : "Sign In"}
+          </button>
+          <button
+            className="text-button"
+            type="button"
+            disabled={loginLoading || forgotPasswordLoading}
+            onClick={() => {
+              setForgotPasswordOpen((current) => !current);
+              setForgotPasswordMessage("");
+              setForgotPasswordError("");
+              setAuthMessage("");
+            }}
+          >
+            {forgotPasswordOpen ? "Back to sign in" : "Forgot password?"}
+          </button>
+        </div>
+      </form>
+    </section>
+  );
+}
+
+function renderPasswordRecoveryPanel() {
+  return (
+    <section className="card auth-card">
+      <h2>Reset Your Password</h2>
+      <p>Choose a new password for your IL HRC team account.</p>
+
+      <form onSubmit={completePasswordRecovery}>
+        <label>New Password</label>
+        <input
+          type="password"
+          value={recoveryPassword}
+          autoComplete="new-password"
+          onChange={(e) => setRecoveryPassword(e.target.value)}
+        />
+
+        <label>Confirm Password</label>
+        <input
+          type="password"
+          value={recoveryConfirmPassword}
+          autoComplete="new-password"
+          onChange={(e) => setRecoveryConfirmPassword(e.target.value)}
+        />
+
+        <p className="helper-text">
+          Use at least {PASSWORD_MIN_LENGTH} characters.
+        </p>
+
+        {recoveryPasswordError && (
+          <p className="warning-text">{recoveryPasswordError}</p>
+        )}
+
+        <div className="auth-actions">
+          <button
+            className="primary"
+            type="submit"
+            disabled={recoveryPasswordLoading}
+          >
+            {recoveryPasswordLoading ? "Saving..." : "Reset Password"}
+          </button>
+          <button
+            className="secondary"
+            type="button"
+            disabled={recoveryPasswordLoading}
+            onClick={handleLogout}
+          >
+            Cancel
+          </button>
+        </div>
       </form>
     </section>
   );
@@ -5044,7 +6071,6 @@ function renderCustomerRequests() {
                     <p><strong>Grade Level:</strong> {item.grade_level || "Not set"}</p>
                     <p><strong>Category:</strong> {item.category || "Not set"}</p>
                     <p><strong>Edition:</strong> {item.edition || "Not set"}</p>
-                    <p><strong>Location:</strong> {item.location || "Not set"}</p>
                     <p><strong>Status:</strong> {item.status || "Available"}</p>
                     <p><strong>SKU:</strong> {item.sku || "Not set"}</p>
                     <p><strong>Quantity:</strong> {item.quantity || 0}</p>
@@ -5148,8 +6174,8 @@ function renderUserManagement() {
           <option value="admin">Admin</option>
         </select>
 
-        <button className="primary" type="submit">
-          Send Invitation
+        <button className="primary" type="submit" disabled={inviteLoading}>
+          {inviteLoading ? "Sending..." : "Send Invitation"}
         </button>
       </form>
 
@@ -5541,7 +6567,15 @@ function renderUserManagement() {
 
       {!authLoading && shouldShowPasswordSetup && renderPasswordSetupPanel()}
 
-      {!authLoading && !shouldShowPasswordSetup && profileLoading && (
+      {!authLoading &&
+        !shouldShowPasswordSetup &&
+        shouldShowPasswordRecovery &&
+        renderPasswordRecoveryPanel()}
+
+      {!authLoading &&
+        !shouldShowPasswordSetup &&
+        !shouldShowPasswordRecovery &&
+        profileLoading && (
         <section className="card">
           <p>Loading account profile...</p>
         </section>
@@ -5549,6 +6583,7 @@ function renderUserManagement() {
 
       {!authLoading &&
         !shouldShowPasswordSetup &&
+        !shouldShowPasswordRecovery &&
         !profileLoading &&
         !isAuthenticated &&
         staffSignInOpen &&
@@ -5556,6 +6591,7 @@ function renderUserManagement() {
 
       {!authLoading &&
         !shouldShowPasswordSetup &&
+        !shouldShowPasswordRecovery &&
         isAuthenticated &&
         renderChangePasswordPanel()}
 
@@ -5571,24 +6607,157 @@ function renderUserManagement() {
       <p>Use the cover photo and ISBN/barcode when available.</p>
     </section>
 
-    <div className="location-box">
-      <label>Current Location</label>
-      <select
-        value={currentLocation}
-        onChange={(e) => setCurrentLocation(e.target.value)}
-      >
-        <option value="">Choose location</option>
-        {activeLocationNames.map((location) => (
-          <option key={location} value={location}>
-            {location}
-          </option>
-        ))}
-      </select>
-      <p className="helper-text">
-        Manage locations from Settings. This selection is saved with each book until you change it.
-      </p>
-    </div>
+    <section
+      className={`bundle-intake-panel ${
+        bundleDraft.active && bundleDraft.source === "intake" ? "active" : ""
+      }`}
+    >
+      <div className="bundle-intake-heading">
+        <div>
+          <strong>Bundle mode</strong>
+          <p>
+            {bundleDraft.active && bundleDraft.source === "inventory"
+              ? "An inventory bundle is in progress. Return to Inventory to finish or cancel it."
+              : bundleDraft.active
+              ? "Each saved book will remain in this set until you finish or cancel it."
+              : "Create one sellable set while preserving every book's individual SKU and price."}
+          </p>
+        </div>
+        <label className="bundle-toggle">
+          <input
+            type="checkbox"
+            checked={bundleDraft.active && bundleDraft.source === "intake"}
+            disabled={
+              bundleActionLoading ||
+              (bundleDraft.active && bundleDraft.source === "inventory")
+            }
+            onChange={(event) => {
+              if (event.target.checked) {
+                startBundle();
+              } else if (bundleDraft.components.length > 0) {
+                setBundleReviewOpen(true);
+              } else {
+                setBundleDraft({ ...EMPTY_BUNDLE_DRAFT });
+              }
+            }}
+          />
+          <span aria-hidden="true" />
+          <b>{bundleDraft.active && bundleDraft.source === "intake" ? "On" : "Off"}</b>
+        </label>
+      </div>
 
+      {bundleDraft.active && bundleDraft.source === "intake" && (
+        <>
+          <label>Working set title</label>
+          <input
+            placeholder="Example: Exploring Countries & Cultures Set"
+            value={bundleDraft.title}
+            onChange={(event) =>
+              setBundleDraft((current) => ({ ...current, title: event.target.value }))
+            }
+          />
+
+          <div className="bundle-summary">
+            <span>
+              <strong>{getBundlePieceCount(bundleDraft.components)}</strong> pieces
+            </span>
+            <span>
+              <strong>${getBundleIndividualValue(bundleDraft.components).toFixed(2)}</strong> individual value
+            </span>
+          </div>
+
+          {bundleDraft.components.length > 0 && (
+            <div className="bundle-component-list">
+              {bundleDraft.components.map((component) => (
+                <div key={component.id}>
+                  <span>
+                    <strong>{component.title || "Untitled"}</strong>
+                    <small>
+                      {component.quantity || 1} piece{Number(component.quantity || 1) === 1 ? "" : "s"} · {component.sku} · ${Number(component.final_price || 0).toFixed(2)}
+                    </small>
+                  </span>
+                  <button
+                    type="button"
+                    className="text-button"
+                    disabled={bundleActionLoading}
+                    onClick={() => removeBundleDraftComponent(component)}
+                  >
+                    List separately
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <div className="bundle-actions">
+            <button
+              type="button"
+              className="primary"
+              disabled={bundleActionLoading || bundleDraft.components.length < 2}
+              onClick={() => setBundleReviewOpen(true)}
+            >
+              Review & Finish Bundle
+            </button>
+            <button
+              type="button"
+              className="secondary"
+              disabled={bundleActionLoading}
+              onClick={cancelBundle}
+            >
+              Cancel Bundle
+            </button>
+          </div>
+
+          {bundleReviewOpen && (
+            <div className="bundle-review">
+              <div className="bundle-review-heading">
+                <div>
+                  <strong>Finish bundle listing</strong>
+                  <p>Only this bundle will be sellable while its pieces stay linked and protected.</p>
+                </div>
+                <button type="button" className="text-button" onClick={() => setBundleReviewOpen(false)}>
+                  Keep adding
+                </button>
+              </div>
+              <label>Set title</label>
+              <input
+                value={bundleDraft.title}
+                onChange={(event) =>
+                  setBundleDraft((current) => ({ ...current, title: event.target.value }))
+                }
+              />
+              <label>Bundle price</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder={getBundleIndividualValue(bundleDraft.components).toFixed(2)}
+                value={bundleDraft.price}
+                onChange={(event) =>
+                  setBundleDraft((current) => ({ ...current, price: event.target.value }))
+                }
+              />
+              <label>Photo of the complete set (optional)</label>
+              <input type="file" accept="image/*" capture="environment" onChange={handleBundleCover} />
+              {bundleCoverPreview && (
+                <img className="bundle-cover-preview" src={bundleCoverPreview} alt="Bundle preview" />
+              )}
+              <p className="helper-text">
+                Individual value: ${getBundleIndividualValue(bundleDraft.components).toFixed(2)} · Bundle sticker: {getBundlePieceCount(bundleDraft.components)} pieces
+              </p>
+              <button
+                type="button"
+                className="primary"
+                disabled={bundleActionLoading}
+                onClick={finishBundle}
+              >
+                {bundleActionLoading ? "Creating Bundle..." : "Create Bundle Listing"}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </section>
 
     <div className="intake-actions">
       <button className="secondary" onClick={scanIsbnBarcode}>
@@ -5616,6 +6785,7 @@ function renderUserManagement() {
   type="file"
   accept="image/*"
   capture="environment"
+  onInput={handleCoverPhoto}
   onChange={handleCoverPhoto}
   className="visually-hidden-file"
 />
@@ -5741,33 +6911,6 @@ function renderUserManagement() {
   onChange={(e) => updateIntakeField("publisher", e.target.value)}
 />
 
-<div className="identifier-box">
-  <label>Publisher Item Number <span className="optional-label">Optional</span></label>
-  <input
-    value={bookData.publisher_item_number || ""}
-    onChange={(e) => setBookData({
-      ...bookData,
-      publisher_item_number: e.target.value,
-    })}
-  />
-  {bookData.publisher_barcode && (
-    <>
-      <label>Scanned Publisher Barcode</label>
-      <input
-        value={bookData.publisher_barcode}
-        onChange={(e) => setBookData({ ...bookData, publisher_barcode: e.target.value })}
-      />
-    </>
-  )}
-  <button className="secondary identifier-lookup" type="button" onClick={lookupEnteredPublisherItem}>
-    Look Up Publisher Item
-  </button>
-  <p className="helper-text">
-    Optional. Used with the publisher to recognize future copies; ISBN remains separate.
-  </p>
-</div>
-
-
               <label>Subject</label>
               <select
               value={bookData.subject || ""}
@@ -5880,48 +7023,6 @@ function renderUserManagement() {
                 }
               />
 
-              <label>Weight</label>
-              <div className="weight-inputs">
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="lb"
-                  value={getWeightPounds(bookData.weight_ounces)}
-                  onChange={(e) =>
-                    setBookData({
-                      ...bookData,
-                      weight_ounces: combineWeightPoundsOunces(
-                        e.target.value,
-                        getWeightRemainingOunces(bookData.weight_ounces)
-                      ),
-                    })
-                  }
-                />
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="oz"
-                  value={getWeightRemainingOunces(bookData.weight_ounces)}
-                  onChange={(e) =>
-                    setBookData({
-                      ...bookData,
-                      weight_ounces: combineWeightPoundsOunces(
-                        getWeightPounds(bookData.weight_ounces),
-                        e.target.value
-                      ),
-                    })
-                  }
-                />
-              </div>
-              <p className="helper-text">
-                Optional shipping weight. AI may estimate this when it can.
-              </p>
-              {bookData.weight_note && (
-                <p className="helper-text">{bookData.weight_note}</p>
-              )}
-
               <label>Status</label>
               <select
                 value={bookData.status || "Available"}
@@ -5952,7 +7053,7 @@ function renderUserManagement() {
               )}
 
               <button className="primary" onClick={saveItem} disabled={isSaving}>
-  {isSaving ? "Saving..." : "Save Item"}
+  {isSaving ? "Saving..." : bundleDraft.active ? "Add Book to Bundle" : "Save Item"}
 </button>
             </section>
           )}
@@ -5989,10 +7090,135 @@ function renderUserManagement() {
   </div>
 </div>
 
+          {bundleDraft.active && bundleDraft.source === "inventory" && (
+            <section className="bundle-intake-panel active inventory-bundle-panel">
+              <div className="bundle-review-heading">
+                <div>
+                  <strong>Create bundle from inventory</strong>
+                  <p>
+                    Choose how many copies of each listing belong in the set. Any remaining copies stay available under their current SKU.
+                  </p>
+                </div>
+                <span className="bundle-badge">
+                  {getBundlePieceCount(bundleDraft.components)} pieces
+                </span>
+              </div>
+
+              <label>Set title</label>
+              <input
+                placeholder="Example: Grade 4 Literature Set"
+                value={bundleDraft.title}
+                onChange={(event) =>
+                  setBundleDraft((current) => ({ ...current, title: event.target.value }))
+                }
+              />
+
+              <div className="inventory-bundle-components">
+                {bundleDraft.components.map((component) => (
+                  <div className="inventory-bundle-component" key={component.id}>
+                    <div>
+                      <strong>{component.title || "Untitled"}</strong>
+                      <small>
+                        {component.sku} · ${Number(component.final_price || 0).toFixed(2)} · {component.quantity || 1} available
+                      </small>
+                    </div>
+                    <label>
+                      Pieces in set
+                      <input
+                        type="number"
+                        min="1"
+                        max={Math.max(1, Number(component.quantity || 1))}
+                        value={getBundleComponentQuantity(component)}
+                        onChange={(event) =>
+                          updateInventoryBundleQuantity(component.id, event.target.value)
+                        }
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="text-button"
+                      onClick={() => removeInventoryBundleComponent(component.id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bundle-summary">
+                <span>
+                  <strong>{getBundlePieceCount(bundleDraft.components)}</strong> pieces
+                </span>
+                <span>
+                  <strong>${getBundleIndividualValue(bundleDraft.components).toFixed(2)}</strong> individual value
+                </span>
+              </div>
+
+              <label>Bundle price</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                placeholder={getBundleIndividualValue(bundleDraft.components).toFixed(2)}
+                value={bundleDraft.price}
+                onChange={(event) =>
+                  setBundleDraft((current) => ({ ...current, price: event.target.value }))
+                }
+              />
+
+              <label>Photo of the complete set (optional)</label>
+              <input type="file" accept="image/*" capture="environment" onChange={handleBundleCover} />
+              {bundleCoverPreview && (
+                <img className="bundle-cover-preview" src={bundleCoverPreview} alt="Bundle preview" />
+              )}
+
+              <div className="bundle-actions">
+                <button
+                  type="button"
+                  className="primary"
+                  disabled={
+                    bundleActionLoading ||
+                    bundleDraft.components.length < 2 ||
+                    getBundlePieceCount(bundleDraft.components) < 2
+                  }
+                  onClick={finishBundle}
+                >
+                  {bundleActionLoading ? "Creating Bundle..." : "Create Bundle Listing"}
+                </button>
+                <button
+                  type="button"
+                  className="secondary"
+                  disabled={bundleActionLoading}
+                  onClick={cancelBundle}
+                >
+                  Cancel
+                </button>
+              </div>
+            </section>
+          )}
+
 
           {editData && (
             <section ref={inventoryEditorRef} className="card inventory-editor">
               <h2>Edit Item</h2>
+              {editingItem?.item_type === "bundle" && (
+                <div className="bundle-editor-summary">
+                  <strong>Bundle · {editingItem.bundle_piece_count || 0} pieces</strong>
+                  <ul>
+                    {(bundleComponentsByBundleId[String(editingItem.id)] || []).map((component) => (
+                      <li key={component.id}>
+                        {component.piece_quantity || component.quantity || 1}× {component.title} · {component.sku}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {bundleParentByComponentId[String(editingItem?.id)] && (
+                <p className="bundle-component-notice">
+                  This book is protected inside “{bundleParentByComponentId[String(editingItem.id)].title}”.
+                  Split the bundle before making it individually available.
+                </p>
+              )}
 
               <label>Cover Photo</label>
 
@@ -6076,23 +7302,6 @@ function renderUserManagement() {
   value={editData.publisher || ""}
   onChange={(e) => setEditData({ ...editData, publisher: e.target.value })}
 />
-
-<div className="identifier-box">
-  <label>Publisher Item Number <span className="optional-label">Optional</span></label>
-  <input
-    value={editData.publisher_item_number || ""}
-    onChange={(e) => setEditData({ ...editData, publisher_item_number: e.target.value })}
-  />
-  {editData.publisher_barcode && (
-    <>
-      <label>Scanned Publisher Barcode</label>
-      <input
-        value={editData.publisher_barcode}
-        onChange={(e) => setEditData({ ...editData, publisher_barcode: e.target.value })}
-      />
-    </>
-  )}
-</div>
 
 <label>Subject</label>
 <select
@@ -6181,21 +7390,6 @@ function renderUserManagement() {
                 </p>
               )}
 
-              <label>Location</label>
-              <select
-                value={editData.location || ""}
-                onChange={(e) =>
-                  setEditData({ ...editData, location: e.target.value })
-                }
-              >
-                <option value="">No location</option>
-                {getActiveLocationNames([editData.location]).map((location) => (
-                  <option key={location} value={location}>
-                    {location}
-                  </option>
-                ))}
-              </select>
-
               <label>Final Price</label>
               <input
                 type="number"
@@ -6216,42 +7410,6 @@ function renderUserManagement() {
                 }
               />
 
-              <label>Weight</label>
-              <div className="weight-inputs">
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="lb"
-                  value={getWeightPounds(editData.weight_ounces)}
-                  onChange={(e) =>
-                    setEditData({
-                      ...editData,
-                      weight_ounces: combineWeightPoundsOunces(
-                        e.target.value,
-                        getWeightRemainingOunces(editData.weight_ounces)
-                      ),
-                    })
-                  }
-                />
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  placeholder="oz"
-                  value={getWeightRemainingOunces(editData.weight_ounces)}
-                  onChange={(e) =>
-                    setEditData({
-                      ...editData,
-                      weight_ounces: combineWeightPoundsOunces(
-                        getWeightPounds(editData.weight_ounces),
-                        e.target.value
-                      ),
-                    })
-                  }
-                />
-              </div>
-
               <label>Status</label>
               <select
                 value={editData.status || "Available"}
@@ -6263,12 +7421,14 @@ function renderUserManagement() {
                 <option>Sold</option>
                 <option>Hold</option>
                 <option>Removed</option>
+                {editData.status === "Bundled" && <option>Bundled</option>}
 </select>
 
 <label className="checkbox-label">
   <input
     type="checkbox"
     checked={editData.public_visible !== false}
+    disabled={editData.status === "Bundled"}
     onChange={(e) =>
       setEditData({
         ...editData,
@@ -6294,6 +7454,18 @@ function renderUserManagement() {
             <button className="secondary" onClick={cancelEditing}>
               Cancel
             </button>
+
+            {editingItem?.item_type === "bundle" &&
+              ["Available", "Hold"].includes(editingItem.status || "Available") &&
+              Number(editingItem.quantity || 0) > 0 && (
+              <button
+                className="secondary"
+                disabled={bundleActionLoading}
+                onClick={() => splitBundle(editingItem)}
+              >
+                {bundleActionLoading ? "Splitting Bundle..." : "Split Bundle into Individual Listings"}
+              </button>
+            )}
 
             <button className="danger" onClick={deleteItem}>
               {isAdmin ? "Delete Item" : "Remove Item"}
@@ -6344,7 +7516,7 @@ function renderUserManagement() {
 
           <div className={`inventory-grid ${isSelectionMode ? "selection-mode" : ""}`}>
           {filteredItems.map((item) => (
-            <div className="inventory-item" key={item.id}>
+            <div className={`inventory-item ${item.item_type === "bundle" ? "bundle-item" : ""}`} key={item.id}>
               {isSelectionMode && (
                 <label className="item-select">
                   <input
@@ -6352,21 +7524,22 @@ function renderUserManagement() {
                     checked={selectedItemIds.includes(item.id)}
                     onChange={() => toggleSelectedItem(item.id)}
                   />
-                  Select
+                  <span>Select</span>
                 </label>
               )}
               <BookCoverImage src={item.image_url} alt={item.title} />
 
               <div>
                 <h3>{item.title}</h3>
-                <p><strong>SKU:</strong> {item.sku}</p>
-                {item.publisher_item_number && (
-                  <p>
-                    <strong>{item.publisher || "Publisher"} Item:</strong> {item.publisher_item_number}
-                    {item.publisher_barcode && ` · Barcode ${item.publisher_barcode}`}
+                {item.item_type === "bundle" && (
+                  <p className="bundle-badge">Set · {item.bundle_piece_count || 0} pieces</p>
+                )}
+                {bundleParentByComponentId[String(item.id)] && (
+                  <p className="bundle-component-badge">
+                    In bundle: {bundleParentByComponentId[String(item.id)].title}
                   </p>
                 )}
-
+                <p><strong>SKU:</strong> {item.sku}</p>
 <p><strong>Publisher:</strong> {item.publisher || "Unknown"}</p>
 
 <p>
@@ -6375,12 +7548,8 @@ function renderUserManagement() {
                 <p>
                   ${item.final_price} • Qty: {item.quantity}
                 </p>
-                {item.weight_ounces !== null && item.weight_ounces !== undefined && (
-                  <p><strong>Weight:</strong> {formatWeight(item.weight_ounces)}</p>
-                )}
                 <p>Status: {item.status}</p>
                   <p><strong>Added:</strong> {formatDateAdded(item.created_at)}</p>
-                  <p><strong>Location:</strong> {item.location || "Not set"}</p>
                   <p>
                     Public: {item.public_visible !== false ? "Yes" : "No"}
                   </p>
@@ -6416,7 +7585,7 @@ function renderUserManagement() {
                 <input
                   ref={inventorySearchInputRef}
                   type="search"
-                  placeholder="Title, ISBN, publisher item, SKU..."
+                  placeholder="Title, ISBN, barcode, SKU..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -6484,19 +7653,6 @@ function renderUserManagement() {
                 ))}
               </select>
 
-              <label>Location</label>
-              <select
-                value={locationFilter}
-                onChange={(e) => setLocationFilter(e.target.value)}
-              >
-                <option value="">All Locations</option>
-                {inventoryLocationOptions.map((location) => (
-                  <option key={location} value={location}>
-                    {location}
-                  </option>
-                ))}
-              </select>
-
               <label>Added From</label>
               <input
                 type="date"
@@ -6528,7 +7684,6 @@ function renderUserManagement() {
                 subjectFilter ||
                 categoryFilter ||
                 gradeFilter ||
-                locationFilter ||
                 inventoryDateFrom ||
                 inventoryDateTo ||
                 inventorySortBy !== "newest") && (
@@ -6541,7 +7696,6 @@ function renderUserManagement() {
                     setSubjectFilter("");
                     setCategoryFilter("");
                     setGradeFilter("");
-                    setLocationFilter("");
                     setInventoryDateFrom("");
                     setInventoryDateTo("");
                     setInventorySortBy("newest");
@@ -6600,6 +7754,17 @@ function renderUserManagement() {
                         Clear
                       </button>
                     </div>
+
+                    {selectedItemIds.length >= 2 && (
+                      <button
+                        type="button"
+                        className="primary selection-bundle-action"
+                        disabled={bundleActionLoading}
+                        onClick={startInventoryBundle}
+                      >
+                        Create Bundle from {selectedItemIds.length} Selected
+                      </button>
+                    )}
 
                     {selectedItemIds.length > 0 && (
                       <div className="bulk-edit-bar">
@@ -6722,18 +7887,6 @@ function renderUserManagement() {
 
                           <button
                             type="button"
-                            className="secondary"
-                            disabled={selectedTemporaryLocationItemCount === 0}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              clearTemporaryLocationsFromSelected();
-                            }}
-                          >
-                            Clear Temporary Locations
-                          </button>
-
-                          <button
-                            type="button"
                             className="bulk-delete-btn"
                             onClick={(e) => {
                               e.preventDefault();
@@ -6766,7 +7919,6 @@ function renderUserManagement() {
           <div className="options-layout">
             <nav className="options-nav" aria-label="Options sections">
               <button type="button" className={optionsSection === "lists" ? "active" : ""} onClick={() => setOptionsSection("lists")}>Lists & Pricing</button>
-              <button type="button" className={optionsSection === "locations" ? "active" : ""} onClick={() => setOptionsSection("locations")}>Locations</button>
               {isAdmin && <button type="button" className={optionsSection === "rules" ? "active" : ""} onClick={() => setOptionsSection("rules")}>Intake Rules</button>}
               {isAdmin && (
                 <button type="button" className={optionsSection === "review" ? "active" : ""} onClick={() => setOptionsSection("review")}>
@@ -6957,7 +8109,6 @@ function renderUserManagement() {
                                   <p><strong>Grade:</strong> {item.grade_level || "Not set"}</p>
                                   <p><strong>Category:</strong> {item.category || "Not set"}</p>
                                   <p><strong>Edition:</strong> {item.edition || "Not set"}</p>
-                                  <p><strong>Location:</strong> {item.location || "Not set"}</p>
                                   <p><strong>Square:</strong> {item.square_item_id ? "Connected" : "Not connected"}</p>
                                   <button
                                     type="button"
@@ -7039,13 +8190,6 @@ function renderUserManagement() {
                       <div>
                         <label>Edition</label>
                         <input value={isbnMergeDraft.edition} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, edition: e.target.value }))} />
-                      </div>
-                      <div>
-                        <label>Location</label>
-                        <select value={isbnMergeDraft.location} onChange={(e) => setIsbnMergeDraft((current) => ({ ...current, location: e.target.value }))}>
-                          <option value="">Not set</option>
-                          {activeLocationNames.map((option) => <option key={option} value={option}>{option}</option>)}
-                        </select>
                       </div>
                       <div>
                         <label>Final Price</label>
@@ -7327,7 +8471,7 @@ function renderUserManagement() {
             </section>
           )}
 
-          {optionsSection === "locations" && (
+          {/* Location management was removed from the product.
           <section className="options-section">
             <h3>Locations</h3>
 
@@ -7515,7 +8659,7 @@ function renderUserManagement() {
             ))}
           </section>
           </section>
-          )}
+          */}
             </div>
           </div>
         </section>
@@ -7528,21 +8672,6 @@ function renderUserManagement() {
           <p>
             These are items that have not been marked as label printed yet.
           </p>
-
-<label>Storage Location</label>
-
-<select
-  value={labelLocationFilter}
-  onChange={(e) => setLabelLocationFilter(e.target.value)}
->
-  <option value="">All Locations</option>
-
-  {labelLocationOptions.map((location) => (
-    <option key={location} value={location}>
-      {location}
-    </option>
-  ))}
-</select>
 
 <div className="catalog-filters">
   <label className="date-filter-label">
@@ -7563,12 +8692,11 @@ function renderUserManagement() {
     />
   </label>
 
-  {(labelLocationFilter || labelDateFrom || labelDateTo) && (
+  {(labelDateFrom || labelDateTo) && (
     <button
       type="button"
       className="filter-reset"
       onClick={() => {
-        setLabelLocationFilter("");
         setLabelDateFrom("");
         setLabelDateTo("");
       }}
@@ -7615,6 +8743,9 @@ function renderUserManagement() {
 
               <div>
                 <h3>{item.title}</h3>
+                {item.item_type === "bundle" && (
+                  <p className="bundle-badge">Bundle sticker · {item.bundle_piece_count || 0} pieces</p>
+                )}
                 <p><strong>SKU:</strong> {item.sku}</p>
                 <p><strong>Price:</strong> ${item.final_price}</p>
                 <p><strong>Labels queued:</strong> {getQueuedLabelQuantity(item)}</p>
@@ -7675,6 +8806,21 @@ function renderUserManagement() {
     />
 
     <h2>{selectedCatalogItem.title}</h2>
+    {selectedCatalogItem.item_type === "bundle" && (
+      <>
+        <p className="bundle-badge">Complete set · {selectedCatalogItem.bundle_piece_count || 0} pieces</p>
+        {selectedCatalogItem.bundle_contents?.length > 0 && (
+          <div className="catalog-bundle-contents">
+            <strong>Included in this set</strong>
+            <ul>
+              {selectedCatalogItem.bundle_contents.map((content) => (
+                <li key={content}>{content}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </>
+    )}
 
     <p><strong>Curriculum:</strong> {selectedCatalogItem.curriculum || "N/A"}</p>
     <p><strong>Subject:</strong> {selectedCatalogItem.subject || "N/A"}</p>
@@ -7747,6 +8893,9 @@ function renderUserManagement() {
 
           <div>
             <h3>{item.title}</h3>
+            {item.item_type === "bundle" && (
+              <p className="bundle-badge">Complete set · {item.bundle_piece_count || 0} pieces</p>
+            )}
 
             {item.curriculum && <p>{item.curriculum}</p>}
 

@@ -39,7 +39,7 @@ test("curriculum import accepts friendly column aliases", () => {
   assert.equal(preview.rows[0].data.publisher_item_number, "195278");
 });
 
-test("curriculum import matches inventory by publisher item number", () => {
+test("curriculum import matches inventory by hidden publisher item number", () => {
   const preview = prepareCurriculumImport(
     "title,publisher,publisher_item_number\nStepping Stones,Abeka,195278\n",
     [{ title: "Stepping Stones", publisher: "A Beka", publisher_item_number: "195278", quantity: 2 }]

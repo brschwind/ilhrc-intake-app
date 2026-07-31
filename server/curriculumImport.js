@@ -203,11 +203,15 @@ async function fetchPublicCurriculumSource(value, options = {}) {
 function curriculumAnalysisPrompt({ sourceType, sourceUrl, checkedOn }) {
   return `Role: You organize homeschool curriculum publisher information for a used bookstore.
 
-Goal: Extract one curriculum package and its complete material list from the supplied ${sourceType} source.
+Goal: Extract one curriculum package and its complete, exhaustive material list from the supplied ${sourceType} source.
 
 Success criteria:
 - Identify the publisher, package name, grade or level, subject, edition, and package type.
 - List every clearly included or required book, teacher item, student item, digital item, test, workbook, or supply.
+- Read the entire source, including every continued materials page. Do not stop after the first kit, package summary, subject, page, or 30 items.
+- When a grade catalog contains several enrollment or kit summaries followed by a detailed "Grade N Materials" section, create one grade-level master list from the detailed materials section. Include every distinct, individually listed material there; do not add enrollment plans or kit SKUs as books.
+- Prefer the most detailed item listing when the same material also appears in a kit summary. Deduplicate those repeated summary mentions, but keep genuinely different bound, unbound, student, teacher, test, answer-key, print, and digital versions as separate materials.
+- Make generic labels unambiguous from their surrounding heading. For example, use "Letters and Sounds 1 Teacher Key" rather than the bare title "Teacher Key."
 - Preserve exact titles, ISBNs, publisher item numbers, barcodes, editions, and product URLs when the source provides them.
 - Distinguish required, optional, and choose-one materials.
 - Put uncertainty in review_reason and package-wide concerns in warnings.
@@ -216,6 +220,7 @@ Constraints:
 - Use only the supplied source. Do not fill gaps from memory.
 - For a publisher link, the extracted page text may be incomplete. Use web search only to inspect the exact source URL and directly related pages on the same publisher domain. Do not use reseller, blog, or marketplace lists.
 - Never invent an ISBN, edition, author, URL, or package component.
+- Publisher catalog or item numbers are not ISBNs or full barcodes. Put them in publisher_item_number so a future back-cover scan can match the material. For Abeka, this is normally the six-digit number printed before the title.
 - Use an empty string when a field is unknown.
 - Use strict compatibility when an edition-specific ISBN or teacher/student pairing matters; otherwise use flexible.
 - A consumable workbook or test should say that staff must verify a used copy is usable.
@@ -244,8 +249,8 @@ function normalizeAnalysisResult(result, sourceUrl, checkedOn) {
     materials: (Array.isArray(result.materials) ? result.materials : []).slice(0, 150).map((item) => ({
       title: clean(item.title, 500),
       author: clean(item.author, 300),
-      publisher: clean(item.publisher, 300),
-      publisher_item_number: clean(item.publisher_item_number, 100),
+      publisher: clean(item.publisher, 300) || clean(result.package?.publisher_name, 300),
+      publisher_item_number: clean(item.publisher_item_number, 100).replace(/\s+/g, ""),
       publisher_barcode: clean(item.publisher_barcode, 200).replace(/\s+/g, ""),
       isbn: normalizeIsbn(item.isbn),
       acceptable_isbns: (Array.isArray(item.acceptable_isbns) ? item.acceptable_isbns : []).map(normalizeIsbn).filter(Boolean).slice(0, 10),

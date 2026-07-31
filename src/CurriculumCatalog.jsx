@@ -702,7 +702,6 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                       material.author,
                       material.edition_label,
                       material.isbn && `ISBN ${material.isbn}`,
-                      material.publisher_item_number && `${material.publisher || "Publisher"} item ${material.publisher_item_number}`,
                     ].filter(Boolean).join(" · ")}</p>
                     <p className="curriculum-meta">
                       {entry.requirement_type !== "required" && `${entry.requirement_type} · `}
@@ -753,7 +752,6 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                     <label>Title<input required value={materialDraft.title} onChange={(e) => setMaterialDraft({ ...materialDraft, title: e.target.value })} /></label>
                     <label>Author<input value={materialDraft.author} onChange={(e) => setMaterialDraft({ ...materialDraft, author: e.target.value })} /></label>
                     <label>Publisher<input value={materialDraft.publisher} onChange={(e) => setMaterialDraft({ ...materialDraft, publisher: e.target.value })} /></label>
-                    <label>Publisher item number<input value={materialDraft.publisher_item_number} onChange={(e) => setMaterialDraft({ ...materialDraft, publisher_item_number: e.target.value })} /></label>
                     <label>Publisher barcode<input value={materialDraft.publisher_barcode} onChange={(e) => setMaterialDraft({ ...materialDraft, publisher_barcode: e.target.value })} /></label>
                     <label>ISBN<input value={materialDraft.isbn} onChange={(e) => setMaterialDraft({ ...materialDraft, isbn: e.target.value })} /></label>
                     <label>Approved alternate ISBNs<input placeholder="Separate with commas" value={materialDraft.acceptable_isbns} onChange={(e) => setMaterialDraft({ ...materialDraft, acceptable_isbns: e.target.value })} /></label>
@@ -844,7 +842,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                   <h3>Create a package from a source</h3>
                 </div>
               </div>
-              <p>Start with whatever the publisher gives you. AI will organize links, pasted lists, and PDFs; CSV remains available when you already have structured data.</p>
+              <p>Start with whatever the publisher gives you. AI reads complete grade catalogs, including continued materials pages, and organizes links, pasted lists, and PDFs; CSV remains available when you already have structured data.</p>
               <div className="curriculum-source-options" role="group" aria-label="Curriculum source type">
                 {[['link', 'Publisher link'], ['text', 'Pasted text'], ['pdf', 'PDF'], ['csv', 'CSV']].map(([value, label]) => (
                   <button className={sourceMode === value ? "source-option active" : "source-option"} type="button" onClick={() => chooseSourceMode(value)} key={value}>{label}</button>
@@ -892,7 +890,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                       <tbody>
                         {bulkPreview.rows.map((row) => (
                           <tr className={row.errors.length ? "has-error" : ""} key={row.rowNumber}>
-                            <td><input aria-label={`Title row ${row.rowNumber}`} value={row.data.title} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "title", e.target.value)} /><input aria-label={`ISBN row ${row.rowNumber}`} placeholder="ISBN" value={row.data.isbn} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "isbn", e.target.value)} /><input aria-label={`Publisher item row ${row.rowNumber}`} placeholder="Publisher item number" value={row.data.publisher_item_number} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "publisher_item_number", e.target.value)} /></td>
+                            <td><input aria-label={`Title row ${row.rowNumber}`} value={row.data.title} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "title", e.target.value)} /><input aria-label={`ISBN row ${row.rowNumber}`} placeholder="ISBN" value={row.data.isbn} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "isbn", e.target.value)} /></td>
                             <td><input aria-label={`Section row ${row.rowNumber}`} value={row.data.group_label} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "group_label", e.target.value)} /></td>
                             <td><select aria-label={`Material type row ${row.rowNumber}`} value={row.data.material_type} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "material_type", e.target.value)}>{Object.entries(MATERIAL_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></td>
                             <td><select aria-label={`Requirement row ${row.rowNumber}`} value={row.data.requirement_type} onChange={(e) => updateBulkPreviewRow(row.rowNumber, "requirement_type", e.target.value)}><option value="required">Required</option><option value="optional">Optional</option><option value="choice">Choose one</option></select></td>
