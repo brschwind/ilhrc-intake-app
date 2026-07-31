@@ -13,7 +13,7 @@ const AUDIENCES = ["family", "student", "teacher", "age_band"];
 const curriculumAnalysisSchema = {
   type: "object",
   additionalProperties: false,
-  required: ["package", "materials", "warnings"],
+  required: ["package", "materials", "excluded_offers", "warnings"],
   properties: {
     package: {
       type: "object",
@@ -63,6 +63,20 @@ const curriculumAnalysisSchema = {
           notes: { type: "string" },
           confidence: { type: "number", minimum: 0, maximum: 1 },
           review_reason: { type: "string" },
+        },
+      },
+    },
+    excluded_offers: {
+      type: "array",
+      maxItems: 75,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "publisher_item_number", "reason"],
+        properties: {
+          title: { type: "string" },
+          publisher_item_number: { type: "string" },
+          reason: { type: "string" },
         },
       },
     },
@@ -210,6 +224,9 @@ Success criteria:
 - List every clearly included or required book, teacher item, student item, digital item, test, workbook, or supply.
 - Read the entire source, including every continued materials page. Do not stop after the first kit, package summary, subject, page, or 30 items.
 - When a grade catalog contains several enrollment or kit summaries followed by a detailed "Grade N Materials" section, create one grade-level master list from the detailed materials section. Include every distinct, individually listed material there; do not add enrollment plans or kit SKUs as books.
+- Put every Student Kit, Parent Kit, Essential Parent Kit, Full-Grade Book Kit, Single-Subject Book Kit, Video Enrollment, Video Instruction, or other bundled purchase offer in excluded_offers, never in materials.
+- Use the bullet contents beneath a kit only to identify its individual books and materials. Add those components to materials when the source names them clearly, but do not copy the kit SKU onto a component. If a component has no individual item number, leave publisher_item_number empty and explain that in review_reason.
+- A title containing "Kit" is a package offer for this bookstore workflow, even when it is sold as a physical product. Exclude it rather than treating it as a book or supply.
 - Prefer the most detailed item listing when the same material also appears in a kit summary. Deduplicate those repeated summary mentions, but keep genuinely different bound, unbound, student, teacher, test, answer-key, print, and digital versions as separate materials.
 - Make generic labels unambiguous from their surrounding heading. For example, use "Letters and Sounds 1 Teacher Key" rather than the bare title "Teacher Key."
 - Preserve exact titles, ISBNs, publisher item numbers, barcodes, editions, and product URLs when the source provides them.
@@ -233,7 +250,7 @@ Output only the requested structured package data.`;
 function normalizeAnalysisResult(result, sourceUrl, checkedOn) {
   const clean = (value, max = 1000) => String(value || "").trim().slice(0, max);
   const normalizeIsbn = (value) => clean(value, 30).toUpperCase().replace(/[^0-9X]/g, "");
-  return {
+  const normalized = {
     package: {
       publisher_name: clean(result.package?.publisher_name, 200),
       name: clean(result.package?.name, 300),
@@ -267,8 +284,38 @@ function normalizeAnalysisResult(result, sourceUrl, checkedOn) {
       confidence: Math.max(0, Math.min(1, Number(item.confidence) || 0)),
       review_reason: clean(item.review_reason, 1000),
     })).filter((item) => item.title),
+    excluded_offers: (Array.isArray(result.excluded_offers) ? result.excluded_offers : []).slice(0, 75).map((offer) => ({
+      title: clean(offer.title, 500),
+      publisher_item_number: clean(offer.publisher_item_number, 100).replace(/\s+/g, ""),
+      reason: clean(offer.reason, 500) || "Package offer",
+    })).filter((offer) => offer.title),
     warnings: (Array.isArray(result.warnings) ? result.warnings : []).map((warning) => clean(warning, 1000)).filter(Boolean).slice(0, 30),
   };
+
+  const packageOffers = normalized.materials.filter((item) => isCurriculumPackageOffer(item.title));
+  normalized.materials = normalized.materials.filter((item) => !isCurriculumPackageOffer(item.title));
+  normalized.excluded_offers.push(...packageOffers.map((item) => ({
+    title: item.title,
+    publisher_item_number: item.publisher_item_number,
+    reason: "Kit, enrollment, or bundled purchase offer",
+  })));
+  const seenOffers = new Set();
+  normalized.excluded_offers = normalized.excluded_offers.filter((offer) => {
+    const key = offer.publisher_item_number
+      ? `number:${offer.publisher_item_number}`
+      : `title:${offer.title.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
+    if (seenOffers.has(key)) return false;
+    seenOffers.add(key);
+    return true;
+  });
+  return normalized;
+}
+
+function isCurriculumPackageOffer(title) {
+  const normalized = String(title || "").toLowerCase().replace(/[–—]/g, "-").replace(/\s+/g, " ").trim();
+  return /\bkit\b/.test(normalized) ||
+    /\bvideo (?:enrollment|instruction)\b/.test(normalized) ||
+    /\bfull-grade video(?: enrollment| & books)\b/.test(normalized);
 }
 
 module.exports = {
@@ -278,6 +325,7 @@ module.exports = {
   fetchPublicCurriculumSource,
   htmlToCurriculumText,
   isPrivateIpAddress,
+  isCurriculumPackageOffer,
   normalizeAnalysisResult,
   validatePublicUrl,
 };

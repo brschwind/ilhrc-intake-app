@@ -57,6 +57,24 @@ export function deduplicateCurriculumMaterials(materials) {
   });
 }
 
+export function isCurriculumPackageOffer(material) {
+  const normalized = String(material?.title || material || "")
+    .toLowerCase()
+    .replace(/[–—]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+  return /\bkit\b/.test(normalized) ||
+    /\bvideo (?:enrollment|instruction)\b/.test(normalized) ||
+    /\bfull-grade video(?: enrollment| & books)\b/.test(normalized);
+}
+
+export function partitionCurriculumMaterials(materials) {
+  return (Array.isArray(materials) ? materials : []).reduce((result, material) => {
+    result[isCurriculumPackageOffer(material) ? "excluded" : "materials"].push(material);
+    return result;
+  }, { materials: [], excluded: [] });
+}
+
 const MATERIAL_TYPES = new Set(["book", "teacher", "student", "answer_key", "test", "workbook", "digital", "supply", "other"]);
 const REQUIREMENT_TYPES = new Set(["required", "optional", "choice"]);
 const COMPATIBILITY_MODES = new Set(["strict", "flexible"]);
