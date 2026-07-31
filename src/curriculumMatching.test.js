@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { findCurriculumInventoryMatch, normalizeIsbn } from "./curriculumMatching.js";
+import { findCurriculumInventoryMatch, findCurriculumInventoryMatches, normalizeIsbn } from "./curriculumMatching.js";
 
 test("normalizes formatted ISBNs", () => {
   assert.equal(normalizeIsbn("978-1-2345-6789-7"), "9781234567897");
@@ -47,4 +47,17 @@ test("ignores inventory with no available copies", () => {
   const material = { title: "A Reader", isbn: "111" };
   const inventory = [{ title: "A Reader", isbn: "111", quantity: 0 }];
   assert.equal(findCurriculumInventoryMatch(material, inventory).status, "missing");
+});
+
+test("returns every available listing at the strongest match level", () => {
+  const material = { title: "A Reader", isbn: "9781608260102" };
+  const inventory = [
+    { id: "one", title: "A Reader", isbn: "9781608260102", quantity: 1 },
+    { id: "two", title: "A Reader", isbn: "978-1-60826-010-2", quantity: 2 },
+    { id: "sold", title: "A Reader", isbn: "9781608260102", quantity: 0 },
+  ];
+  assert.deepEqual(
+    findCurriculumInventoryMatches(material, inventory).map((match) => match.item.id),
+    ["one", "two"]
+  );
 });

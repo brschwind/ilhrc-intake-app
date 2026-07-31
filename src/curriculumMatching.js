@@ -16,7 +16,7 @@ export function normalizePublisherItemNumber(value) {
   return String(value || "").trim().replace(/\s+/g, "").toUpperCase();
 }
 
-export function findCurriculumInventoryMatch(material, inventory = []) {
+export function findCurriculumInventoryMatches(material, inventory = []) {
   const available = inventory.filter((item) => Number(item.quantity || 0) > 0);
   const primaryIsbn = normalizeIsbn(material.isbn);
   const acceptedIsbns = (material.acceptable_isbns || [])
@@ -24,36 +24,42 @@ export function findCurriculumInventoryMatch(material, inventory = []) {
     .filter(Boolean);
 
   if (primaryIsbn) {
-    const exact = available.find((item) => normalizeIsbn(item.isbn) === primaryIsbn);
-    if (exact) return { status: "exact", item: exact };
+    const exact = available.filter((item) => normalizeIsbn(item.isbn) === primaryIsbn);
+    if (exact.length) return exact.map((item) => ({ status: "exact", item }));
   }
 
   if (acceptedIsbns.length > 0) {
-    const approved = available.find((item) => acceptedIsbns.includes(normalizeIsbn(item.isbn)));
-    if (approved) return { status: "approved", item: approved };
+    const approved = available.filter((item) => acceptedIsbns.includes(normalizeIsbn(item.isbn)));
+    if (approved.length) return approved.map((item) => ({ status: "approved", item }));
   }
 
   const publisher = normalizePublisherIdentifier(material.publisher);
   const publisherItemNumber = normalizePublisherItemNumber(material.publisher_item_number);
   if (publisher && publisherItemNumber) {
-    const publisherMatch = available.find((item) =>
+    const publisherMatches = available.filter((item) =>
       normalizePublisherIdentifier(item.publisher) === publisher &&
       normalizePublisherItemNumber(item.publisher_item_number) === publisherItemNumber
     );
-    if (publisherMatch) return { status: "publisher", item: publisherMatch };
+    if (publisherMatches.length) return publisherMatches.map((item) => ({ status: "publisher", item }));
   }
 
   const title = normalizeBookText(material.title);
   const author = normalizeBookText(material.author);
   if (title) {
-    const possible = available.find((item) => {
+    const possible = available.filter((item) => {
       if (normalizeBookText(item.title) !== title) return false;
       const itemAuthor = normalizeBookText(item.author);
       return !author || !itemAuthor || itemAuthor === author;
     });
-    if (possible) return { status: "possible", item: possible };
+    if (possible.length) return possible.map((item) => ({ status: "possible", item }));
   }
 
+  return [];
+}
+
+export function findCurriculumInventoryMatch(material, inventory = []) {
+  const matches = findCurriculumInventoryMatches(material, inventory);
+  if (matches.length) return matches[0];
   return { status: "missing", item: null };
 }
 
