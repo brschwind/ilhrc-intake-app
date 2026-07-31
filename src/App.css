@@ -2531,6 +2531,23 @@ button:disabled {
   color: var(--curriculum-ink);
 }
 
+.curriculum-detail-shell {
+  display: flex;
+  flex-direction: column;
+}
+
+.curriculum-detail-shell .curriculum-staff-panel {
+  order: 1;
+}
+
+.curriculum-detail-shell .curriculum-group {
+  order: 2;
+}
+
+.curriculum-detail-shell .affiliate-disclosure {
+  order: 3;
+}
+
 .curriculum-hero {
   padding: 26px;
   border-radius: 18px;
@@ -2640,6 +2657,8 @@ button:disabled {
 
 .curriculum-toolbar > div {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -2736,7 +2755,8 @@ button:disabled {
 }
 
 .match-exact,
-.match-approved {
+.match-approved,
+.match-confirmed {
   background: #dcebdc;
   color: #285331;
 }
@@ -2836,6 +2856,12 @@ button:disabled {
   margin-top: 8px;
   padding: 7px 10px;
   font-size: 0.78rem;
+}
+
+.curriculum-confirm-button {
+  margin-top: 8px;
+  padding: 6px 9px;
+  font-size: 0.76rem;
 }
 
 .affiliate-link {

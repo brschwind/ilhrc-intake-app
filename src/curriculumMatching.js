@@ -65,6 +65,7 @@ export function findCurriculumInventoryMatch(material, inventory = []) {
 
 export function getCurriculumMatchLabel(status) {
   return {
+    confirmed: "In store — staff confirmed",
     exact: "In store — exact edition",
     approved: "In store — approved alternative",
     publisher: "In store — publisher item match",
