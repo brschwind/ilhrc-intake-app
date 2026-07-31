@@ -86,7 +86,7 @@ function getStoredChecks() {
   }
 }
 
-export default function CurriculumCatalog({ inventory, isAuthenticated, userId, authFetch }) {
+export default function CurriculumCatalog({ inventory, isAuthenticated, userId, authFetch, onReserveBook }) {
   const [packages, setPackages] = useState([]);
   const [selectedPackage, setSelectedPackage] = useState(null);
   const [packageItems, setPackageItems] = useState([]);
@@ -102,6 +102,10 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
   const [packageDraft, setPackageDraft] = useState(EMPTY_PACKAGE);
   const [bulkPackageDraft, setBulkPackageDraft] = useState(EMPTY_PACKAGE);
   const [materialDraft, setMaterialDraft] = useState(EMPTY_MATERIAL);
+  const [packageEditDraft, setPackageEditDraft] = useState(EMPTY_PACKAGE);
+  const [editingPackage, setEditingPackage] = useState(false);
+  const [editingEntryId, setEditingEntryId] = useState(null);
+  const [materialEditDraft, setMaterialEditDraft] = useState(EMPTY_MATERIAL);
   const [saving, setSaving] = useState(false);
   const [bulkPreview, setBulkPreview] = useState({ rows: [], errors: [] });
   const [bulkFileName, setBulkFileName] = useState("");
@@ -175,6 +179,8 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
 
   async function openPackage(curriculumPackage) {
     setSelectedPackage(curriculumPackage);
+    setEditingPackage(false);
+    setEditingEntryId(null);
     setDetailLoading(true);
     setMessage("");
     const { data, error } = await supabase
@@ -289,6 +295,66 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     setMessage("Curriculum list created. Add its books and materials below.");
   }
 
+  function beginPackageEdit() {
+    setPackageEditDraft({
+      ...EMPTY_PACKAGE,
+      ...selectedPackage,
+      publisher_name: selectedPackage.publisher_name || "",
+      source_checked_on: selectedPackage.source_checked_on || "",
+    });
+    setEditingPackage(true);
+  }
+
+  async function savePackageEdits(event) {
+    event.preventDefault();
+    if (!selectedPackage) return;
+    setSaving(true);
+    setMessage("");
+    const publisherName = packageEditDraft.publisher_name.trim();
+    let publisherId = null;
+    if (publisherName) {
+      const { data: publisher, error: publisherError } = await supabase
+        .from("curriculum_publishers")
+        .upsert({ name: publisherName }, { onConflict: "name" })
+        .select("id,name,website_url")
+        .single();
+      if (publisherError) {
+        setSaving(false);
+        setMessage("Could not save the publisher: " + publisherError.message);
+        return;
+      }
+      publisherId = publisher.id;
+    }
+    const updates = {
+      publisher_id: publisherId,
+      name: packageEditDraft.name.trim(),
+      package_type: packageEditDraft.package_type,
+      grade_level: packageEditDraft.grade_level.trim() || null,
+      subject: packageEditDraft.subject.trim() || null,
+      edition_label: packageEditDraft.edition_label.trim() || null,
+      description: packageEditDraft.description.trim() || null,
+      source_url: packageEditDraft.source_url.trim() || null,
+      source_checked_on: packageEditDraft.source_checked_on || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase
+      .from("curriculum_packages")
+      .update(updates)
+      .eq("id", selectedPackage.id)
+      .select("*, curriculum_publishers(id,name,website_url)")
+      .single();
+    setSaving(false);
+    if (error) {
+      setMessage("Could not update the curriculum list: " + error.message);
+      return;
+    }
+    const updated = { ...data, publisher_name: data.curriculum_publishers?.name || publisherName };
+    setSelectedPackage(updated);
+    setEditingPackage(false);
+    await loadPackages();
+    setMessage("Curriculum list information updated.");
+  }
+
   async function saveMaterial(event) {
     event.preventDefault();
     if (!selectedPackage) return;
@@ -355,6 +421,70 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     setMaterialDraft(EMPTY_MATERIAL);
     await openPackage(selectedPackage);
     setMessage("Material added to the curriculum list.");
+  }
+
+  function beginMaterialEdit(entry) {
+    setEditingEntryId(entry.id);
+    setMaterialEditDraft({
+      ...EMPTY_MATERIAL,
+      ...entry.material,
+      acceptable_isbns: (entry.material.acceptable_isbns || []).join(", "),
+      group_label: entry.group_label || "",
+      requirement_type: entry.requirement_type,
+      compatibility_mode: entry.compatibility_mode,
+      audience: entry.audience,
+      quantity: entry.quantity,
+      notes: entry.notes || "",
+    });
+  }
+
+  async function saveMaterialEdits(event, entry) {
+    event.preventDefault();
+    setSaving(true);
+    setMessage("");
+    const materialUpdates = {
+      title: materialEditDraft.title.trim(),
+      author: materialEditDraft.author.trim() || null,
+      publisher: materialEditDraft.publisher.trim() || null,
+      publisher_item_number: materialEditDraft.publisher_item_number.trim() || null,
+      publisher_barcode: materialEditDraft.publisher_barcode.trim() || null,
+      isbn: normalizeIsbn(materialEditDraft.isbn) || null,
+      acceptable_isbns: materialEditDraft.acceptable_isbns.split(",").map(normalizeIsbn).filter(Boolean),
+      edition_label: materialEditDraft.edition_label.trim() || null,
+      material_type: materialEditDraft.material_type,
+      affiliate_url: materialEditDraft.affiliate_url.trim() || null,
+      affiliate_label: materialEditDraft.affiliate_label.trim() || null,
+      updated_at: new Date().toISOString(),
+    };
+    const { error: materialError } = await supabase
+      .from("curriculum_materials")
+      .update(materialUpdates)
+      .eq("id", entry.material.id);
+    if (materialError) {
+      setSaving(false);
+      setMessage("Could not update the material: " + materialError.message);
+      return;
+    }
+    const { error: entryError } = await supabase
+      .from("curriculum_package_items")
+      .update({
+        group_label: materialEditDraft.group_label.trim() || null,
+        requirement_type: materialEditDraft.requirement_type,
+        compatibility_mode: materialEditDraft.compatibility_mode,
+        audience: materialEditDraft.audience,
+        quantity: Number(materialEditDraft.quantity) || 1,
+        notes: materialEditDraft.notes.trim() || null,
+      })
+      .eq("id", entry.id);
+    setSaving(false);
+    if (entryError) {
+      setMessage("The book information was saved, but its list settings could not be updated: " + entryError.message);
+      return;
+    }
+    setEditingEntryId(null);
+    setMaterialEditDraft(EMPTY_MATERIAL);
+    await openPackage(selectedPackage);
+    setMessage("Curriculum material updated.");
   }
 
   async function updatePackageStatus(status) {
@@ -747,6 +877,11 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                                 <strong>{item.title}</strong>
                                 <span>{[item.edition, item.sku && `SKU ${item.sku}`].filter(Boolean).join(" · ")}</span>
                                 <span>${Number(item.final_price || 0).toFixed(2)} · {item.quantity} available</span>
+                                {!isAuthenticated && onReserveBook && (
+                                  <button className="primary curriculum-reserve-button no-print" type="button" onClick={() => onReserveBook(item)}>
+                                    Reserve this copy
+                                  </button>
+                                )}
                               </div>
                             </article>
                           ))}
@@ -758,10 +893,44 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                         Find at {material.affiliate_label || "partner retailer"} ↗
                       </a>
                     )}
+                    {isAuthenticated && staffMode && editingEntryId === entry.id && (
+                      <form className="curriculum-editor curriculum-inline-editor no-print" onSubmit={(event) => saveMaterialEdits(event, entry)}>
+                        <h4>Edit this list item</h4>
+                        <p className="curriculum-edit-note">Book identity fields update this material anywhere it is used. Section, requirement, quantity, audience, and notes apply only to this list.</p>
+                        <div className="curriculum-form-grid">
+                          <label>Title<input required value={materialEditDraft.title} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, title: e.target.value })} /></label>
+                          <label>Author<input value={materialEditDraft.author} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, author: e.target.value })} /></label>
+                          <label>Publisher<input value={materialEditDraft.publisher} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, publisher: e.target.value })} /></label>
+                          <label>Publisher item number<input value={materialEditDraft.publisher_item_number} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, publisher_item_number: e.target.value })} /></label>
+                          <label>Publisher barcode<input value={materialEditDraft.publisher_barcode} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, publisher_barcode: e.target.value })} /></label>
+                          <label>ISBN<input value={materialEditDraft.isbn} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, isbn: e.target.value })} /></label>
+                          <label>Approved alternate ISBNs<input placeholder="Separate with commas" value={materialEditDraft.acceptable_isbns} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, acceptable_isbns: e.target.value })} /></label>
+                          <label>Edition<input value={materialEditDraft.edition_label} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, edition_label: e.target.value })} /></label>
+                          <label>Section / subject<input value={materialEditDraft.group_label} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, group_label: e.target.value })} /></label>
+                          <label>Material type<select value={materialEditDraft.material_type} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, material_type: e.target.value })}>{Object.entries(MATERIAL_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                          <label>Requirement<select value={materialEditDraft.requirement_type} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, requirement_type: e.target.value })}><option value="required">Required</option><option value="optional">Optional</option><option value="choice">Choose one</option></select></label>
+                          <label>Used-edition matching<select value={materialEditDraft.compatibility_mode} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, compatibility_mode: e.target.value })}><option value="strict">Strict edition</option><option value="flexible">Flexible</option></select></label>
+                          <label>Who needs it?<select value={materialEditDraft.audience} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, audience: e.target.value })}><option value="family">One per family</option><option value="student">One per student</option><option value="teacher">Teacher / parent</option><option value="age_band">Per age band</option></select></label>
+                          <label>Quantity<input type="number" min="1" value={materialEditDraft.quantity} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, quantity: e.target.value })} /></label>
+                          <label>Affiliate URL<input type="url" value={materialEditDraft.affiliate_url} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, affiliate_url: e.target.value })} /></label>
+                          <label>Affiliate retailer<input value={materialEditDraft.affiliate_label} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, affiliate_label: e.target.value })} /></label>
+                        </div>
+                        <label>Notes<textarea value={materialEditDraft.notes} onChange={(e) => setMaterialEditDraft({ ...materialEditDraft, notes: e.target.value })} /></label>
+                        <div className="curriculum-edit-actions">
+                          <button className="primary" disabled={saving}>{saving ? "Saving…" : "Save item changes"}</button>
+                          <button className="secondary" type="button" onClick={() => setEditingEntryId(null)}>Cancel</button>
+                        </div>
+                      </form>
+                    )}
                   </div>
                   <div className="curriculum-row-actions">
                     <span className={`match-badge match-${match.status}`}>{getCurriculumMatchLabel(match.status)}</span>
-                    {isAuthenticated && staffMode && <button className="text-danger no-print" type="button" onClick={() => removePackageItem(entry)}>Remove</button>}
+                    {isAuthenticated && staffMode && (
+                      <div className="curriculum-item-buttons no-print">
+                        <button className="secondary" type="button" onClick={() => beginMaterialEdit(entry)}>Edit</button>
+                        <button className="text-danger" type="button" onClick={() => removePackageItem(entry)}>Remove</button>
+                      </div>
+                    )}
                   </div>
                 </article>
               );
@@ -781,16 +950,40 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
               <>
                 <div className="curriculum-publish-row">
                   <span>Status: <strong>{selectedPackage.status}</strong></span>
-                  {selectedPackage.status === "published" ?
-                    <button className="secondary" type="button" onClick={() => updatePackageStatus("draft")}>Return to draft</button> :
-                    <button className="primary" type="button" onClick={() => updatePackageStatus("published")}>Publish list</button>}
+                  <div className="curriculum-edit-actions">
+                    <button className="secondary" type="button" onClick={beginPackageEdit}>Edit list information</button>
+                    {selectedPackage.status === "published" ?
+                      <button className="secondary" type="button" onClick={() => updatePackageStatus("draft")}>Return to draft</button> :
+                      <button className="primary" type="button" onClick={() => updatePackageStatus("published")}>Publish list</button>}
+                  </div>
                 </div>
+                {editingPackage && (
+                  <form className="curriculum-editor curriculum-package-editor" onSubmit={savePackageEdits}>
+                    <h3>Edit list information</h3>
+                    <div className="curriculum-form-grid">
+                      <label>Publisher<input required value={packageEditDraft.publisher_name} onChange={(e) => setPackageEditDraft({ ...packageEditDraft, publisher_name: e.target.value })} /></label>
+                      <label>List name<input required value={packageEditDraft.name} onChange={(e) => setPackageEditDraft({ ...packageEditDraft, name: e.target.value })} /></label>
+                      <label>List type<select value={packageEditDraft.package_type} onChange={(e) => setPackageEditDraft({ ...packageEditDraft, package_type: e.target.value })}>{Object.entries(PACKAGE_TYPE_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></label>
+                      <label>Grade / level<input value={packageEditDraft.grade_level} onChange={(e) => setPackageEditDraft({ ...packageEditDraft, grade_level: e.target.value })} /></label>
+                      <label>Subject<input value={packageEditDraft.subject} onChange={(e) => setPackageEditDraft({ ...packageEditDraft, subject: e.target.value })} /></label>
+                      <label>Edition / school year<input value={packageEditDraft.edition_label} onChange={(e) => setPackageEditDraft({ ...packageEditDraft, edition_label: e.target.value })} /></label>
+                      <label>Publisher source URL<input type="url" value={packageEditDraft.source_url} onChange={(e) => setPackageEditDraft({ ...packageEditDraft, source_url: e.target.value })} /></label>
+                      <label>Source checked on<input type="date" value={packageEditDraft.source_checked_on} onChange={(e) => setPackageEditDraft({ ...packageEditDraft, source_checked_on: e.target.value })} /></label>
+                    </div>
+                    <label>Description<textarea value={packageEditDraft.description} onChange={(e) => setPackageEditDraft({ ...packageEditDraft, description: e.target.value })} /></label>
+                    <div className="curriculum-edit-actions">
+                      <button className="primary" disabled={saving}>{saving ? "Saving…" : "Save list changes"}</button>
+                      <button className="secondary" type="button" onClick={() => setEditingPackage(false)}>Cancel</button>
+                    </div>
+                  </form>
+                )}
                 <form className="curriculum-editor" onSubmit={saveMaterial}>
                   <h3>Add a book or material</h3>
                   <div className="curriculum-form-grid">
                     <label>Title<input required value={materialDraft.title} onChange={(e) => setMaterialDraft({ ...materialDraft, title: e.target.value })} /></label>
                     <label>Author<input value={materialDraft.author} onChange={(e) => setMaterialDraft({ ...materialDraft, author: e.target.value })} /></label>
                     <label>Publisher<input value={materialDraft.publisher} onChange={(e) => setMaterialDraft({ ...materialDraft, publisher: e.target.value })} /></label>
+                    <label>Publisher item number<input value={materialDraft.publisher_item_number} onChange={(e) => setMaterialDraft({ ...materialDraft, publisher_item_number: e.target.value })} /></label>
                     <label>Publisher barcode<input value={materialDraft.publisher_barcode} onChange={(e) => setMaterialDraft({ ...materialDraft, publisher_barcode: e.target.value })} /></label>
                     <label>ISBN<input value={materialDraft.isbn} onChange={(e) => setMaterialDraft({ ...materialDraft, isbn: e.target.value })} /></label>
                     <label>Approved alternate ISBNs<input placeholder="Separate with commas" value={materialDraft.acceptable_isbns} onChange={(e) => setMaterialDraft({ ...materialDraft, acceptable_isbns: e.target.value })} /></label>
