@@ -5,6 +5,8 @@ import { curriculumMaterialsToCsv, deduplicateCurriculumMaterials, parseCsv, pre
 
 const curriculumCatalogSource = readFileSync(new URL("./CurriculumCatalog.jsx", import.meta.url), "utf8");
 const curriculumCatalogStyles = readFileSync(new URL("./App.css", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
+const publicMatchingMigration = readFileSync(new URL("../supabase/migrations/20260731160000_public_curriculum_matching_fields.sql", import.meta.url), "utf8");
 
 test("CSV parser handles quoted commas and escaped quotation marks", () => {
   assert.deepEqual(parseCsv('title,notes\n"History, Part One","A ""classic"" text"\n'), [
@@ -78,6 +80,29 @@ test("curriculum details show inline store listings and aligned staff actions", 
   assert.match(curriculumCatalogSource, /SKU \$\{item\.sku\}/);
   assert.match(curriculumCatalogSource, /curriculum-row-actions/);
   assert.match(curriculumCatalogStyles, /\.curriculum-row-actions\s*\{[^}]*display:\s*flex/s);
+});
+
+test("staff can edit curriculum list information and individual materials", () => {
+  assert.match(curriculumCatalogSource, /savePackageEdits/);
+  assert.match(curriculumCatalogSource, /Edit list information/);
+  assert.match(curriculumCatalogSource, /saveMaterialEdits/);
+  assert.match(curriculumCatalogSource, /Save item changes/);
+  assert.match(curriculumCatalogSource, /Publisher item number/);
+});
+
+test("customers can reserve matched books from a curriculum list", () => {
+  assert.match(curriculumCatalogSource, /Reserve this copy/);
+  assert.match(curriculumCatalogSource, /onReserveBook\(item\)/);
+  assert.match(appSource, /onReserveBook=\{openBookReservation\}/);
+  assert.match(appSource, /view === "curricula"[\s\S]*renderBookReservationForm\(\)/);
+  assert.match(appSource, /LEGACY_PUBLIC_CATALOG_COLUMNS/);
+  assert.match(publicMatchingMigration, /item\.publisher_item_number/);
+});
+
+test("curriculum printing uses a compact checklist layout", () => {
+  assert.match(curriculumCatalogStyles, /@page\s*\{[^}]*margin:\s*0\.4in/s);
+  assert.match(curriculumCatalogStyles, /\.curriculum-store-copies,[\s\S]*display:\s*none\s*!important/);
+  assert.match(curriculumCatalogStyles, /@media print[\s\S]*\.curriculum-row\s*\{[^}]*padding:\s*4px 0/s);
 });
 
 test("AI material records can be converted into the same CSV preview pipeline", () => {

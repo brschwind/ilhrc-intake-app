@@ -2775,6 +2775,17 @@ button:disabled {
   margin-top: 0;
 }
 
+.curriculum-item-buttons,
+.curriculum-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.curriculum-item-buttons button {
+  margin: 0;
+}
+
 .curriculum-store-copies {
   margin-top: 12px;
 }
@@ -2821,6 +2832,12 @@ button:disabled {
   font-size: 0.78rem;
 }
 
+.curriculum-reserve-button {
+  margin-top: 8px;
+  padding: 7px 10px;
+  font-size: 0.78rem;
+}
+
 .affiliate-link {
   display: inline-block;
   margin-top: 4px;
@@ -2859,6 +2876,36 @@ button:disabled {
 }
 
 .curriculum-editor > button {
+  margin-top: 14px;
+}
+
+.curriculum-package-editor,
+.curriculum-inline-editor {
+  padding: 16px;
+  border: 1px solid #c7d3c4;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.curriculum-package-editor {
+  margin-bottom: 22px;
+}
+
+.curriculum-inline-editor {
+  margin-top: 14px;
+}
+
+.curriculum-inline-editor h4 {
+  margin: 0 0 4px;
+}
+
+.curriculum-edit-note {
+  color: #687069;
+  font-size: 0.8rem;
+}
+
+.curriculum-edit-actions {
+  justify-content: flex-end;
   margin-top: 14px;
 }
 
@@ -3487,6 +3534,11 @@ button:disabled {
 }
 
 @media print {
+  @page {
+    size: letter;
+    margin: 0.4in;
+  }
+
   body,
   html {
     background: #fff !important;
@@ -3495,10 +3547,15 @@ button:disabled {
   .account-bar,
   .nav-buttons,
   .public-nav,
+  .staff-sidebar,
+  .staff-topbar,
   .no-print,
   .curriculum-staff-panel,
   .affiliate-disclosure,
-  .curriculum-hero {
+  .curriculum-hero,
+  .curriculum-row-actions,
+  .curriculum-store-copies,
+  .affiliate-link {
     display: none !important;
   }
 
@@ -3518,13 +3575,79 @@ button:disabled {
     padding: 0 !important;
   }
 
+  .curriculum-detail-heading {
+    padding: 0 0 8px;
+  }
+
+  .curriculum-detail-heading h2 {
+    margin: 2px 0;
+    font-size: 18pt;
+  }
+
+  .curriculum-detail-heading p {
+    margin: 2px 0;
+    font-size: 8pt;
+    line-height: 1.2;
+  }
+
+  .curriculum-type {
+    font-size: 7pt;
+  }
+
+  .curriculum-summary {
+    display: flex;
+    gap: 5px;
+    margin: 6px 0 8px;
+  }
+
   .curriculum-summary > div {
+    flex: 1;
+    padding: 4px 6px;
     border: 1px solid #aaa;
     background: #fff;
   }
 
+  .curriculum-summary strong {
+    font-size: 11pt;
+  }
+
+  .curriculum-summary span {
+    font-size: 6.5pt;
+  }
+
+  .curriculum-group {
+    margin: 7px 0;
+  }
+
+  .curriculum-group > h3 {
+    break-after: avoid;
+    margin: 0;
+    padding-bottom: 2px;
+    border-bottom-width: 1px;
+    font-size: 10pt;
+  }
+
   .curriculum-row {
+    grid-template-columns: 18px minmax(0, 1fr);
+    gap: 5px;
+    padding: 4px 0;
     break-inside: avoid;
+  }
+
+  .curriculum-check input {
+    width: 13px;
+    height: 13px;
+  }
+
+  .curriculum-book-heading h4 {
+    font-size: 8.5pt;
+    line-height: 1.1;
+  }
+
+  .curriculum-book-info p {
+    margin: 1px 0;
+    font-size: 7pt;
+    line-height: 1.15;
   }
 
   .match-badge {

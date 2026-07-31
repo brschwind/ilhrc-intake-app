@@ -50,6 +50,27 @@ const PUBLIC_CATALOG_COLUMNS = [
   "item_type",
   "bundle_piece_count",
   "bundle_contents",
+  "author",
+  "publisher",
+  "publisher_item_number",
+].join(",");
+
+const LEGACY_PUBLIC_CATALOG_COLUMNS = [
+  "id",
+  "title",
+  "curriculum",
+  "subject",
+  "grade_level",
+  "category",
+  "edition",
+  "isbn",
+  "final_price",
+  "quantity",
+  "image_url",
+  "created_at",
+  "item_type",
+  "bundle_piece_count",
+  "bundle_contents",
 ].join(",");
 
 const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "requests", "users"]);
@@ -1132,10 +1153,20 @@ export default function App() {
     const tableName = isAuthenticated ? "items" : "public_catalog_items";
     const columns = isAuthenticated ? "*" : PUBLIC_CATALOG_COLUMNS;
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from(tableName)
       .select(columns)
       .order("created_at", { ascending: false });
+
+    // Keep the public catalog usable while the matching-field migration and
+    // the web deployment are rolling out. The richer query will be used as
+    // soon as the updated view is available.
+    if (error && !isAuthenticated) {
+      ({ data, error } = await supabase
+        .from(tableName)
+        .select(LEGACY_PUBLIC_CATALOG_COLUMNS)
+        .order("created_at", { ascending: false }));
+    }
 
     if (error) {
       alert(
@@ -9253,12 +9284,16 @@ function renderUserManagement() {
       {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "requests" && renderCustomerRequests()}
 
       {!authLoading && !shouldShowPasswordSetup && view === "curricula" && (
-        <CurriculumCatalog
-          inventory={items}
-          isAuthenticated={isAuthenticated}
-          userId={session?.user?.id}
-          authFetch={authFetch}
-        />
+        <>
+          <CurriculumCatalog
+            inventory={items}
+            isAuthenticated={isAuthenticated}
+            userId={session?.user?.id}
+            authFetch={authFetch}
+            onReserveBook={openBookReservation}
+          />
+          {renderBookReservationForm()}
+        </>
       )}
 
       {!authLoading && !shouldShowPasswordSetup && view === "catalog" && (
