@@ -1,11 +1,24 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  curriculumAnalysisPrompt,
   htmlToCurriculumText,
   isPrivateIpAddress,
   normalizeAnalysisResult,
   validatePublicUrl,
 } = require("./curriculumImport");
+
+test("analysis prompt requires exhaustive grade-catalog extraction", () => {
+  const prompt = curriculumAnalysisPrompt({
+    sourceType: "pdf",
+    sourceUrl: "",
+    checkedOn: "2026-07-31",
+  });
+  assert.match(prompt, /entire source/i);
+  assert.match(prompt, /Do not stop.*30 items/i);
+  assert.match(prompt, /Grade N Materials/i);
+  assert.match(prompt, /Deduplicate/i);
+});
 
 test("HTML extraction preserves readable labels and absolute product links", () => {
   const text = htmlToCurriculumText(
@@ -37,7 +50,7 @@ test("analysis normalization keeps drafts and removes formatted ISBN punctuation
     materials: [{
       title: "Book",
       publisher: "Abeka",
-      publisher_item_number: "195278",
+      publisher_item_number: " 195278 ",
       publisher_barcode: "1952 7806",
       isbn: "978-1-60826-010-2",
       quantity: 1,
@@ -50,4 +63,14 @@ test("analysis normalization keeps drafts and removes formatted ISBN punctuation
   assert.equal(normalized.materials[0].isbn, "9781608260102");
   assert.equal(normalized.materials[0].publisher_item_number, "195278");
   assert.equal(normalized.materials[0].publisher_barcode, "19527806");
+});
+
+test("analysis normalization carries the package publisher onto catalog materials", () => {
+  const normalized = normalizeAnalysisResult({
+    package: { publisher_name: "Abeka", name: "Grade 1", package_type: "grade" },
+    materials: [{ title: "Stepping Stones", publisher_item_number: "195278" }],
+    warnings: [],
+  }, "", "2026-07-31");
+  assert.equal(normalized.materials[0].publisher, "Abeka");
+  assert.equal(normalized.materials[0].publisher_item_number, "195278");
 });

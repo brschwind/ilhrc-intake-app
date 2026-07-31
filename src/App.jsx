@@ -13,7 +13,6 @@ import {
 import { findIsbnInconsistencies, generateRuleSuggestions } from "./ruleSuggestions";
 import CurriculumCatalog from "./CurriculumCatalog";
 import {
-  getKnownPublisherProduct,
   identifyBookBarcode,
   inferPublisherItemNumber,
   normalizePublisher,
@@ -3154,15 +3153,22 @@ async function findPublisherRecord(table, { publisher, publisherItemNumber, publ
     if (data?.[0]) return data[0];
   }
 
-  if (!publisher || !publisherItemNumber) return null;
+  if (!publisherItemNumber) return null;
   const { data, error } = await supabase
     .from(table)
     .select("*")
     .eq("publisher_item_number", publisherItemNumber);
   if (error) throw error;
-  return (data || []).find((candidate) =>
-    normalizePublisher(candidate.publisher) === normalizePublisher(publisher)
-  ) || null;
+
+  const matches = publisher
+    ? (data || []).filter((candidate) =>
+        normalizePublisher(candidate.publisher) === normalizePublisher(publisher)
+      )
+    : (data || []);
+  if (!matches.length) return null;
+
+  const publishers = new Set(matches.map((candidate) => normalizePublisher(candidate.publisher)).filter(Boolean));
+  return publishers.size <= 1 ? matches[0] : null;
 }
 
 async function lookupBookByPublisherIdentifier(identification, currentBook = {}) {
@@ -3184,15 +3190,26 @@ async function lookupBookByPublisherIdentifier(identification, currentBook = {})
     const matched = remembered || curriculumMaterial;
     const matchedPublisher = matched?.publisher || publisher;
     const matchedNumber = matched?.publisher_item_number || publisherItemNumber;
-    const knownProduct = getKnownPublisherProduct(matchedPublisher, matchedNumber);
+    let curriculumContext = null;
+    if (curriculumMaterial?.id) {
+      const { data, error } = await supabase
+        .from("curriculum_package_items")
+        .select("group_label, package:curriculum_packages(name,grade_level,subject,edition_label)")
+        .eq("material_id", curriculumMaterial.id)
+        .limit(1)
+        .maybeSingle();
+      if (error) throw error;
+      curriculumContext = data;
+    }
+    const curriculumPackage = curriculumContext?.package;
     const importedBook = {
       ...currentBook,
-      title: matched?.title || knownProduct?.title || currentBook.title || "",
+      title: matched?.title || currentBook.title || "",
       curriculum: remembered?.curriculum || currentBook.curriculum || matchedPublisher || "",
       publisher: matchedPublisher || currentBook.publisher || "",
-      subject: remembered?.subject || currentBook.subject || "",
-      grade_level: remembered?.grade_level || currentBook.grade_level || "",
-      edition: remembered?.edition || curriculumMaterial?.edition_label || knownProduct?.edition || currentBook.edition || "",
+      subject: remembered?.subject || curriculumPackage?.subject || curriculumContext?.group_label || currentBook.subject || "",
+      grade_level: remembered?.grade_level || curriculumPackage?.grade_level || currentBook.grade_level || "",
+      edition: remembered?.edition || curriculumMaterial?.edition_label || curriculumPackage?.edition_label || currentBook.edition || "",
       isbn: matched?.isbn || currentBook.isbn || "",
       publisher_barcode: publisherBarcode || matched?.publisher_barcode || "",
       publisher_item_number: matchedNumber || "",
@@ -3207,9 +3224,7 @@ async function lookupBookByPublisherIdentifier(identification, currentBook = {})
         ? "Remembered from an earlier publisher-item intake"
         : curriculumMaterial
           ? "Matched to a Curriculum List material"
-          : knownProduct
-            ? "Matched to the supplied publisher item list"
-            : "New publisher item — use cover analysis and complete the details once",
+          : "New publisher item — use cover analysis and complete the details once",
       public_visible: true,
       image_url: remembered?.image_url || currentBook.image_url || "",
     };
@@ -3219,27 +3234,15 @@ async function lookupBookByPublisherIdentifier(identification, currentBook = {})
       remembered ? "publisher_inventory" : curriculumMaterial ? "curriculum_material" : "publisher_barcode"
     ));
     setAnalysisStatus(
-      matched || knownProduct
+      matched
         ? "Publisher item found!"
         : "New publisher item. Analyze the cover, then review and save it once."
     );
-    if (matched || knownProduct) setTimeout(() => setAnalysisStatus(""), 1800);
+    if (matched) setTimeout(() => setAnalysisStatus(""), 1800);
   } catch (error) {
     setAnalysisStatus("");
     alert("Publisher item lookup failed: " + error.message);
   }
-}
-
-async function lookupEnteredPublisherItem() {
-  if (!bookData?.publisher?.trim() || !bookData?.publisher_item_number?.trim()) {
-    alert("Enter both the publisher and publisher item number before looking it up.");
-    return;
-  }
-  await lookupBookByPublisherIdentifier({
-    publisher: bookData.publisher,
-    publisherItemNumber: bookData.publisher_item_number,
-    publisherBarcode: bookData.publisher_barcode,
-  }, bookData);
 }
 
 async function lookupBookByBarcode(value) {
@@ -7213,32 +7216,6 @@ function renderUserManagement() {
   onChange={(e) => updateIntakeField("publisher", e.target.value)}
 />
 
-<div className="identifier-box">
-  <label>Publisher Item Number <span className="optional-label">Optional</span></label>
-  <input
-    value={bookData.publisher_item_number || ""}
-    onChange={(e) => setBookData({
-      ...bookData,
-      publisher_item_number: e.target.value,
-    })}
-  />
-  {bookData.publisher_barcode && (
-    <>
-      <label>Scanned Publisher Barcode</label>
-      <input
-        value={bookData.publisher_barcode}
-        onChange={(e) => setBookData({ ...bookData, publisher_barcode: e.target.value })}
-      />
-    </>
-  )}
-  <button className="secondary identifier-lookup" type="button" onClick={lookupEnteredPublisherItem}>
-    Look Up Publisher Item
-  </button>
-  <p className="helper-text">
-    Optional. Used with the publisher to recognize future copies; ISBN remains separate.
-  </p>
-</div>
-
 
               <label>Subject</label>
               <select
@@ -7702,23 +7679,6 @@ function renderUserManagement() {
   value={editData.publisher || ""}
   onChange={(e) => setEditData({ ...editData, publisher: e.target.value })}
 />
-
-<div className="identifier-box">
-  <label>Publisher Item Number <span className="optional-label">Optional</span></label>
-  <input
-    value={editData.publisher_item_number || ""}
-    onChange={(e) => setEditData({ ...editData, publisher_item_number: e.target.value })}
-  />
-  {editData.publisher_barcode && (
-    <>
-      <label>Scanned Publisher Barcode</label>
-      <input
-        value={editData.publisher_barcode}
-        onChange={(e) => setEditData({ ...editData, publisher_barcode: e.target.value })}
-      />
-    </>
-  )}
-</div>
 
 <label>Subject</label>
 <select
