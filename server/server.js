@@ -1077,13 +1077,13 @@ app.post("/analyze-curriculum", requireAuth, upload.single("file"), async (req, 
         type: "input_file",
         filename: pdfFilename,
         file_data: `data:application/pdf;base64,${pdfBuffer.toString("base64")}`,
-        detail: "low",
+        detail: "high",
       });
     }
 
     const model = sourceType === "link"
       ? process.env.CURRICULUM_LINK_MODEL || "gpt-5.6-luna"
-      : process.env.CURRICULUM_IMPORT_MODEL || "gpt-4.1-mini";
+      : process.env.CURRICULUM_IMPORT_MODEL || "gpt-5.6-luna";
     const request = {
       model,
       input: [{ role: "user", content }],
@@ -1095,7 +1095,7 @@ app.post("/analyze-curriculum", requireAuth, upload.single("file"), async (req, 
           schema: curriculumAnalysisSchema,
         },
       },
-      max_output_tokens: 16_000,
+      max_output_tokens: 32_000,
     };
     if (sourceType === "link") request.tools = [{ type: "web_search" }];
     const response = await openai.responses.create(request);
@@ -1191,7 +1191,6 @@ Return ONLY valid JSON in this exact format:
 "grade": "",
 "edition": "",
 "isbn": "",
-"weight_ounces": null,
 "confidence": 0.0,
 "notes": ""
 }
@@ -1238,7 +1237,6 @@ Apologia, Abeka, BJU Press, Notgrass, IEW, Saxon, Math-U-See, Master Books, The 
 
 * If no ISBN is visible, return an empty string.
 
-* Weight_ounces should be a numeric estimated shipping weight in ounces when you can make a reasonable estimate from the item type, size, format, and visible clues. Use null if there is not enough information. Do not guess wildly.
 
 * Confidence should be a number between 0.0 and 1.0 indicating overall confidence in the identification.
 
