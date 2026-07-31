@@ -78,6 +78,10 @@ function packageSubtitle(curriculumPackage) {
   ].filter(Boolean).join(" · ");
 }
 
+function cleanText(value) {
+  return String(value ?? "").trim();
+}
+
 function getStoredChecks() {
   try {
     return JSON.parse(window.localStorage.getItem("ilhrc-curriculum-checks") || "{}");
@@ -107,6 +111,8 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
   const [editingEntryId, setEditingEntryId] = useState(null);
   const [materialEditDraft, setMaterialEditDraft] = useState(EMPTY_MATERIAL);
   const [saving, setSaving] = useState(false);
+  const [confirmedMatches, setConfirmedMatches] = useState([]);
+  const [savingMatchKey, setSavingMatchKey] = useState("");
   const [bulkPreview, setBulkPreview] = useState({ rows: [], errors: [] });
   const [bulkFileName, setBulkFileName] = useState("");
   const [bulkImporting, setBulkImporting] = useState(false);
@@ -191,10 +197,22 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     setDetailLoading(false);
     if (error) {
       setPackageItems([]);
+      setConfirmedMatches([]);
       setMessage("We could not load this curriculum list. Please try again.");
       return;
     }
-    setPackageItems(data || []);
+    const entries = data || [];
+    setPackageItems(entries);
+    const materialIds = entries.map((entry) => entry.material_id).filter(Boolean);
+    if (materialIds.length === 0) {
+      setConfirmedMatches([]);
+      return;
+    }
+    const { data: confirmations, error: confirmationError } = await supabase
+      .from("public_curriculum_inventory_matches")
+      .select("material_id,inventory_item_id")
+      .in("material_id", materialIds);
+    setConfirmedMatches(confirmationError ? [] : (confirmations || []));
   }
 
   const visiblePackages = useMemo(() => {
@@ -218,7 +236,15 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
   const grades = [...new Set(packages.map((item) => item.grade_level).filter(Boolean))].sort();
   const checkedIds = new Set(checkedByPackage[selectedPackage?.id] || []);
   const matchedItems = packageItems.map((entry) => {
-    const inventoryMatches = findCurriculumInventoryMatches(entry.material, inventory);
+    const confirmedItemIds = new Set(confirmedMatches
+      .filter((confirmation) => confirmation.material_id === entry.material_id)
+      .map((confirmation) => String(confirmation.inventory_item_id)));
+    const confirmedInventoryMatches = inventory
+      .filter((item) => Number(item.quantity || 0) > 0 && confirmedItemIds.has(String(item.id)))
+      .map((item) => ({ status: "confirmed", item }));
+    const automaticMatches = findCurriculumInventoryMatches(entry.material, inventory)
+      .filter(({ item }) => !confirmedItemIds.has(String(item.id)));
+    const inventoryMatches = [...confirmedInventoryMatches, ...automaticMatches];
     return {
       ...entry,
       inventoryMatches,
@@ -249,6 +275,52 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     const next = { ...checkedByPackage, [selectedPackage.id]: [] };
     setCheckedByPackage(next);
     window.localStorage.setItem("ilhrc-curriculum-checks", JSON.stringify(next));
+  }
+
+  async function confirmInventoryMatch(material, item) {
+    const matchKey = `${material.id}:${item.id}`;
+    setSavingMatchKey(matchKey);
+    setMessage("");
+    const confirmation = {
+      material_id: material.id,
+      inventory_item_id: String(item.id),
+      confirmed_by: userId || null,
+    };
+    const { data, error } = await supabase
+      .from("curriculum_inventory_matches")
+      .upsert(confirmation, { onConflict: "material_id,inventory_item_id" })
+      .select("material_id,inventory_item_id")
+      .single();
+    setSavingMatchKey("");
+    if (error) {
+      setMessage("Could not confirm this match: " + error.message);
+      return;
+    }
+    setConfirmedMatches((current) => [
+      ...current.filter((match) => !(match.material_id === data.material_id && String(match.inventory_item_id) === String(data.inventory_item_id))),
+      data,
+    ]);
+    setMessage(`Confirmed “${item.title}” as a match for “${material.title}.”`);
+  }
+
+  async function removeConfirmedInventoryMatch(material, item) {
+    const matchKey = `${material.id}:${item.id}`;
+    setSavingMatchKey(matchKey);
+    setMessage("");
+    const { error } = await supabase
+      .from("curriculum_inventory_matches")
+      .delete()
+      .eq("material_id", material.id)
+      .eq("inventory_item_id", String(item.id));
+    setSavingMatchKey("");
+    if (error) {
+      setMessage("Could not remove this confirmation: " + error.message);
+      return;
+    }
+    setConfirmedMatches((current) => current.filter((match) => !(
+      match.material_id === material.id && String(match.inventory_item_id) === String(item.id)
+    )));
+    setMessage("Match confirmation removed.");
   }
 
   async function savePackage(event) {
@@ -298,8 +370,14 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
   function beginPackageEdit() {
     setPackageEditDraft({
       ...EMPTY_PACKAGE,
-      ...selectedPackage,
       publisher_name: selectedPackage.publisher_name || "",
+      name: selectedPackage.name || "",
+      package_type: selectedPackage.package_type || EMPTY_PACKAGE.package_type,
+      grade_level: selectedPackage.grade_level || "",
+      subject: selectedPackage.subject || "",
+      edition_label: selectedPackage.edition_label || "",
+      description: selectedPackage.description || "",
+      source_url: selectedPackage.source_url || "",
       source_checked_on: selectedPackage.source_checked_on || "",
     });
     setEditingPackage(true);
@@ -310,7 +388,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     if (!selectedPackage) return;
     setSaving(true);
     setMessage("");
-    const publisherName = packageEditDraft.publisher_name.trim();
+    const publisherName = cleanText(packageEditDraft.publisher_name);
     let publisherId = null;
     if (publisherName) {
       const { data: publisher, error: publisherError } = await supabase
@@ -327,13 +405,13 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     }
     const updates = {
       publisher_id: publisherId,
-      name: packageEditDraft.name.trim(),
+      name: cleanText(packageEditDraft.name),
       package_type: packageEditDraft.package_type,
-      grade_level: packageEditDraft.grade_level.trim() || null,
-      subject: packageEditDraft.subject.trim() || null,
-      edition_label: packageEditDraft.edition_label.trim() || null,
-      description: packageEditDraft.description.trim() || null,
-      source_url: packageEditDraft.source_url.trim() || null,
+      grade_level: cleanText(packageEditDraft.grade_level) || null,
+      subject: cleanText(packageEditDraft.subject) || null,
+      edition_label: cleanText(packageEditDraft.edition_label) || null,
+      description: cleanText(packageEditDraft.description) || null,
+      source_url: cleanText(packageEditDraft.source_url) || null,
       source_checked_on: packageEditDraft.source_checked_on || null,
       updated_at: new Date().toISOString(),
     };
@@ -424,16 +502,26 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
   }
 
   function beginMaterialEdit(entry) {
+    const material = entry.material || {};
     setEditingEntryId(entry.id);
     setMaterialEditDraft({
       ...EMPTY_MATERIAL,
-      ...entry.material,
-      acceptable_isbns: (entry.material.acceptable_isbns || []).join(", "),
+      title: material.title || "",
+      author: material.author || "",
+      publisher: material.publisher || "",
+      publisher_item_number: material.publisher_item_number || "",
+      publisher_barcode: material.publisher_barcode || "",
+      isbn: material.isbn || "",
+      acceptable_isbns: (material.acceptable_isbns || []).join(", "),
+      edition_label: material.edition_label || "",
+      material_type: material.material_type || EMPTY_MATERIAL.material_type,
+      affiliate_url: material.affiliate_url || "",
+      affiliate_label: material.affiliate_label || "",
       group_label: entry.group_label || "",
-      requirement_type: entry.requirement_type,
-      compatibility_mode: entry.compatibility_mode,
-      audience: entry.audience,
-      quantity: entry.quantity,
+      requirement_type: entry.requirement_type || EMPTY_MATERIAL.requirement_type,
+      compatibility_mode: entry.compatibility_mode || EMPTY_MATERIAL.compatibility_mode,
+      audience: entry.audience || EMPTY_MATERIAL.audience,
+      quantity: entry.quantity || 1,
       notes: entry.notes || "",
     });
   }
@@ -443,17 +531,17 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     setSaving(true);
     setMessage("");
     const materialUpdates = {
-      title: materialEditDraft.title.trim(),
-      author: materialEditDraft.author.trim() || null,
-      publisher: materialEditDraft.publisher.trim() || null,
-      publisher_item_number: materialEditDraft.publisher_item_number.trim() || null,
-      publisher_barcode: materialEditDraft.publisher_barcode.trim() || null,
-      isbn: normalizeIsbn(materialEditDraft.isbn) || null,
-      acceptable_isbns: materialEditDraft.acceptable_isbns.split(",").map(normalizeIsbn).filter(Boolean),
-      edition_label: materialEditDraft.edition_label.trim() || null,
+      title: cleanText(materialEditDraft.title),
+      author: cleanText(materialEditDraft.author) || null,
+      publisher: cleanText(materialEditDraft.publisher) || null,
+      publisher_item_number: cleanText(materialEditDraft.publisher_item_number) || null,
+      publisher_barcode: cleanText(materialEditDraft.publisher_barcode) || null,
+      isbn: normalizeIsbn(cleanText(materialEditDraft.isbn)) || null,
+      acceptable_isbns: cleanText(materialEditDraft.acceptable_isbns).split(",").map(normalizeIsbn).filter(Boolean),
+      edition_label: cleanText(materialEditDraft.edition_label) || null,
       material_type: materialEditDraft.material_type,
-      affiliate_url: materialEditDraft.affiliate_url.trim() || null,
-      affiliate_label: materialEditDraft.affiliate_label.trim() || null,
+      affiliate_url: cleanText(materialEditDraft.affiliate_url) || null,
+      affiliate_label: cleanText(materialEditDraft.affiliate_label) || null,
       updated_at: new Date().toISOString(),
     };
     const { error: materialError } = await supabase
@@ -468,12 +556,12 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     const { error: entryError } = await supabase
       .from("curriculum_package_items")
       .update({
-        group_label: materialEditDraft.group_label.trim() || null,
+        group_label: cleanText(materialEditDraft.group_label) || null,
         requirement_type: materialEditDraft.requirement_type,
         compatibility_mode: materialEditDraft.compatibility_mode,
         audience: materialEditDraft.audience,
         quantity: Number(materialEditDraft.quantity) || 1,
-        notes: materialEditDraft.notes.trim() || null,
+        notes: cleanText(materialEditDraft.notes) || null,
       })
       .eq("id", entry.id);
     setSaving(false);
@@ -800,12 +888,17 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
 
   if (selectedPackage) {
     return (
-      <section className="card curriculum-shell">
+      <section className="card curriculum-shell curriculum-detail-shell">
         <div className="curriculum-toolbar no-print">
           <button className="secondary" type="button" onClick={() => { setSelectedPackage(null); setPackageItems([]); setMessage(""); }}>
             ← All curriculum lists
           </button>
           <div>
+            {isAuthenticated && (
+              <button className="secondary" type="button" onClick={() => setStaffMode((current) => !current)}>
+                {staffMode ? "Close curriculum tools" : "Curriculum List Tools"}
+              </button>
+            )}
             <button className="secondary" type="button" onClick={clearChecks}>Clear checks</button>
             <button className="primary" type="button" onClick={() => window.print()}>Print checklist</button>
           </div>
@@ -870,13 +963,26 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                       <div className="curriculum-store-copies">
                         <strong>{inventoryMatches.length} in-store {inventoryMatches.length === 1 ? "listing" : "listings"}</strong>
                         <div className="curriculum-store-copy-grid">
-                          {inventoryMatches.map(({ item }) => (
+                          {inventoryMatches.map(({ item, status }) => {
+                            const matchKey = `${material.id}:${item.id}`;
+                            const matchSaving = savingMatchKey === matchKey;
+                            return (
                             <article className="curriculum-store-copy-card" key={item.id || item.sku || `${item.title}-${item.final_price}`}>
                               {item.image_url && <img src={item.image_url} alt="" />}
                               <div>
                                 <strong>{item.title}</strong>
                                 <span>{[item.edition, item.sku && `SKU ${item.sku}`].filter(Boolean).join(" · ")}</span>
                                 <span>${Number(item.final_price || 0).toFixed(2)} · {item.quantity} available</span>
+                                {isAuthenticated && staffMode && status === "possible" && (
+                                  <button className="secondary curriculum-confirm-button no-print" type="button" disabled={matchSaving} onClick={() => confirmInventoryMatch(material, item)}>
+                                    {matchSaving ? "Confirming…" : "Confirm match"}
+                                  </button>
+                                )}
+                                {isAuthenticated && staffMode && status === "confirmed" && (
+                                  <button className="secondary curriculum-confirm-button no-print" type="button" disabled={matchSaving} onClick={() => removeConfirmedInventoryMatch(material, item)}>
+                                    {matchSaving ? "Removing…" : "Undo confirmation"}
+                                  </button>
+                                )}
                                 {!isAuthenticated && onReserveBook && (
                                   <button className="primary curriculum-reserve-button no-print" type="button" onClick={() => onReserveBook(item)}>
                                     Reserve this copy
@@ -884,7 +990,8 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                                 )}
                               </div>
                             </article>
-                          ))}
+                            );
+                          })}
                         </div>
                       </div>
                     )}
@@ -940,7 +1047,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
 
         <p className="affiliate-disclosure">External links may be affiliate links. ILHRC may earn a commission from qualifying purchases.</p>
 
-        {isAuthenticated && (
+        {isAuthenticated && staffMode && (
           <section className="curriculum-staff-panel no-print">
             <div className="curriculum-staff-heading">
               <div><span className="eyebrow">Staff tools</span><h3>Manage this curriculum list</h3></div>

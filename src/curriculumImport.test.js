@@ -7,6 +7,7 @@ const curriculumCatalogSource = readFileSync(new URL("./CurriculumCatalog.jsx", 
 const curriculumCatalogStyles = readFileSync(new URL("./App.css", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
 const publicMatchingMigration = readFileSync(new URL("../supabase/migrations/20260731160000_public_curriculum_matching_fields.sql", import.meta.url), "utf8");
+const confirmationMigration = readFileSync(new URL("../supabase/migrations/20260731170000_curriculum_match_confirmations.sql", import.meta.url), "utf8");
 
 test("CSV parser handles quoted commas and escaped quotation marks", () => {
   assert.deepEqual(parseCsv('title,notes\n"History, Part One","A ""classic"" text"\n'), [
@@ -88,6 +89,31 @@ test("staff can edit curriculum list information and individual materials", () =
   assert.match(curriculumCatalogSource, /saveMaterialEdits/);
   assert.match(curriculumCatalogSource, /Save item changes/);
   assert.match(curriculumCatalogSource, /Publisher item number/);
+});
+
+test("curriculum editors normalize nullable database fields before saving", () => {
+  assert.match(curriculumCatalogSource, /function cleanText\(value\)/);
+  assert.match(curriculumCatalogSource, /source_url: selectedPackage\.source_url \|\| ""/);
+  assert.match(curriculumCatalogSource, /affiliate_url: material\.affiliate_url \|\| ""/);
+  assert.doesNotMatch(curriculumCatalogSource, /packageEditDraft\.source_url\.trim\(\)/);
+  assert.doesNotMatch(curriculumCatalogSource, /materialEditDraft\.affiliate_url\.trim\(\)/);
+});
+
+test("staff curriculum tools open from the top of the detail page", () => {
+  assert.match(curriculumCatalogSource, /Curriculum List Tools[\s\S]*Object\.entries\(groupedItems\)/);
+  assert.match(curriculumCatalogSource, /isAuthenticated && staffMode && \(/);
+  assert.match(curriculumCatalogStyles, /\.curriculum-detail-shell \.curriculum-staff-panel\s*\{[^}]*order:\s*1/s);
+  assert.match(curriculumCatalogStyles, /\.curriculum-detail-shell \.curriculum-group\s*\{[^}]*order:\s*2/s);
+});
+
+test("staff can persistently confirm and undo possible inventory matches", () => {
+  assert.match(curriculumCatalogSource, /confirmInventoryMatch/);
+  assert.match(curriculumCatalogSource, /Confirm match/);
+  assert.match(curriculumCatalogSource, /Undo confirmation/);
+  assert.match(curriculumCatalogSource, /status: "confirmed"/);
+  assert.match(confirmationMigration, /create table if not exists public\.curriculum_inventory_matches/);
+  assert.match(confirmationMigration, /current_profile_is_active\(\)/);
+  assert.match(confirmationMigration, /public_curriculum_inventory_matches/);
 });
 
 test("customers can reserve matched books from a curriculum list", () => {
