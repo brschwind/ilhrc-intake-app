@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { curriculumMaterialsToCsv, parseCsv, prepareCurriculumImport } from "./curriculumImport.js";
+import { curriculumMaterialsToCsv, deduplicateCurriculumMaterials, parseCsv, prepareCurriculumImport } from "./curriculumImport.js";
 
 const curriculumCatalogSource = readFileSync(new URL("./CurriculumCatalog.jsx", import.meta.url), "utf8");
 
@@ -54,6 +54,21 @@ test("curriculum review visibly exposes publisher item numbers", () => {
   assert.match(curriculumCatalogSource, /placeholder="Publisher item #"/);
   assert.match(curriculumCatalogSource, /publisher numbers/);
   assert.match(curriculumCatalogSource, /material\.publisher_item_number/);
+});
+
+test("repeated publisher materials are consolidated before review", () => {
+  const materials = [
+    { title: "1st Grade Writing Tablet — Cursive", publisher: "Abeka", publisher_item_number: "271942" },
+    { title: "1st Grade Writing Tablet — Manuscript", publisher: "Abeka", publisher_item_number: "271942" },
+    { title: "Writing with Phonics 1", publisher: "Abeka", publisher_item_number: "197041" },
+  ];
+  const unique = deduplicateCurriculumMaterials(materials);
+  assert.deepEqual(unique.map((material) => material.publisher_item_number), ["271942", "197041"]);
+});
+
+test("curriculum review offers one-click duplicate cleanup", () => {
+  assert.match(curriculumCatalogSource, /Remove duplicate rows/);
+  assert.match(curriculumCatalogSource, /removeBulkDuplicateRows/);
 });
 
 test("AI material records can be converted into the same CSV preview pipeline", () => {

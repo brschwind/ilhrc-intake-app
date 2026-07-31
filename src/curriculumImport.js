@@ -38,6 +38,25 @@ export function curriculumMaterialsToCsv(materials) {
   return [CURRICULUM_IMPORT_COLUMNS.join(","), ...rows].join("\n");
 }
 
+export function deduplicateCurriculumMaterials(materials) {
+  const seen = new Set();
+  return (Array.isArray(materials) ? materials : []).filter((material) => {
+    const isbn = normalizeIsbn(material?.isbn);
+    const publisher = String(material?.publisher || "").trim().toLowerCase();
+    const publisherItemNumber = normalizePublisherItemNumber(material?.publisher_item_number);
+    const title = String(material?.title || "").trim().toLowerCase();
+    const edition = String(material?.edition_label || "").trim().toLowerCase();
+    const key = isbn
+      ? `isbn:${isbn}`
+      : publisher && publisherItemNumber
+        ? `publisher:${publisher}|${publisherItemNumber}`
+        : `title:${title}|${edition}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 const MATERIAL_TYPES = new Set(["book", "teacher", "student", "answer_key", "test", "workbook", "digital", "supply", "other"]);
 const REQUIREMENT_TYPES = new Set(["required", "optional", "choice"]);
 const COMPATIBILITY_MODES = new Set(["strict", "flexible"]);

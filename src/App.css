@@ -2942,6 +2942,10 @@ button:disabled {
   background: #fff;
 }
 
+.curriculum-import-summary button {
+  margin-top: 0;
+}
+
 .curriculum-import-table-wrap {
   overflow-x: auto;
   margin-bottom: 14px;
