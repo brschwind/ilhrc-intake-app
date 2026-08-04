@@ -427,6 +427,9 @@ export default function App() {
   const [inventoryToolsPanel, setInventoryToolsPanel] = useState("");
   const [catalogToolsPanel, setCatalogToolsPanel] = useState("");
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
+  const [barcodeScanTarget, setBarcodeScanTarget] = useState("book");
+  const [hardwareScanValue, setHardwareScanValue] = useState("");
+  const [publisherHardwareScanValue, setPublisherHardwareScanValue] = useState("");
 
   const listingPhotoInputRef = useRef(null);
   const handledCoverFilesRef = useRef(new WeakSet());
@@ -474,6 +477,10 @@ export default function App() {
 
   const [selectedItemIds, setSelectedItemIds] = useState([]);
   const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [inventoryCurriculumPickerOpen, setInventoryCurriculumPickerOpen] = useState(false);
+  const [inventoryCurriculumOptions, setInventoryCurriculumOptions] = useState([]);
+  const [inventoryCurriculumTarget, setInventoryCurriculumTarget] = useState("");
+  const [inventoryCurriculumLoading, setInventoryCurriculumLoading] = useState(false);
 
   const [bulkCurriculum, setBulkCurriculum] = useState("");
   const [bulkSubject, setBulkSubject] = useState("");
@@ -3362,7 +3369,40 @@ async function lookupBookByBarcode(value) {
   await lookupBookByPublisherIdentifier({ publisherBarcode: identification.raw });
 }
 
-async function scanIsbnBarcode() {
+async function capturePublisherBarcode(value) {
+  const identification = identifyBookBarcode(value);
+  const raw = identification.raw;
+  if (!raw) return;
+
+  const currentBook = bookData || {};
+  const inferredItemNumber =
+    inferPublisherItemNumber(currentBook.publisher, raw) ||
+    (normalizePublisher(currentBook.publisher) === "abeka"
+      ? identification.publisherItemNumber
+      : normalizePublisherItemNumber(raw));
+
+  await lookupBookByPublisherIdentifier({
+    publisher: currentBook.publisher,
+    publisherBarcode: raw,
+    publisherItemNumber: inferredItemNumber,
+  }, {
+    ...currentBook,
+    publisher_barcode: raw,
+    publisher_item_number: inferredItemNumber || currentBook.publisher_item_number || "",
+  });
+}
+
+async function submitHardwareScan(value, target = "book") {
+  const scannedValue = String(value || "").trim();
+  if (!scannedValue) return;
+  if (target === "publisher") await capturePublisherBarcode(scannedValue);
+  else await lookupBookByBarcode(scannedValue);
+  setHardwareScanValue("");
+  setPublisherHardwareScanValue("");
+}
+
+async function scanBarcode(target = "book") {
+  setBarcodeScanTarget(target);
   setIsScanningBarcode(true);
 
   try {
@@ -3373,9 +3413,9 @@ async function scanIsbnBarcode() {
       "barcode-video"
     );
 
-const scannedValue = result.getText();
-
-await lookupBookByBarcode(scannedValue);
+    const scannedValue = result.getText();
+    if (target === "publisher") await capturePublisherBarcode(scannedValue);
+    else await lookupBookByBarcode(scannedValue);
   } catch (error) {
     alert("Barcode scan failed: " + error.message);
   } finally {
@@ -3584,6 +3624,98 @@ setBookData(await applyRulesToImportedBook({
     setBundleCoverPreview("");
     setSelectedItemIds([]);
     setIsSelectionMode(false);
+  }
+
+  async function startCurriculumBundle(selectedItems, suggestedTitle = "") {
+    if (bundleDraft.active && bundleDraft.components.length > 0) {
+      alert("Finish or cancel the active bundle before starting another one.");
+      return;
+    }
+    const uniqueItems = [...new Map(
+      (selectedItems || []).map((item) => [String(item.id), item])
+    ).values()];
+    if (uniqueItems.length < 2) {
+      alert("At least two available inventory books are needed to create this curriculum bundle.");
+      return;
+    }
+    const unavailableItem = uniqueItems.find((item) =>
+      item.item_type === "bundle" || item.status !== "Available" ||
+      bundleParentByComponentId[String(item.id)] || Number(item.quantity || 0) < 1
+    );
+    if (unavailableItem) {
+      alert(`"${unavailableItem.title}" is no longer available for this bundle. Refresh the curriculum list and try again.`);
+      return;
+    }
+    const { data: reservations, error: reservationError } = await supabase
+      .from("book_reservations")
+      .select("item_id")
+      .in("item_id", uniqueItems.map((item) => String(item.id)))
+      .in("status", ["pending", "ready"])
+      .gt("expires_at", new Date().toISOString());
+    if (reservationError) {
+      alert("Could not check reservations: " + reservationError.message);
+      return;
+    }
+    if ((reservations || []).length > 0) {
+      alert("One of these books has an active reservation. Cancel or complete it before building the set.");
+      return;
+    }
+    setBundleDraft({
+      ...EMPTY_BUNDLE_DRAFT,
+      active: true,
+      source: "inventory",
+      title: suggestedTitle,
+      components: uniqueItems.map((item) => ({
+        ...item,
+        bundle_quantity: 1,
+        from_inventory: true,
+      })),
+    });
+    setBundleReviewOpen(true);
+    setBundleCoverFile(null);
+    setBundleCoverPreview("");
+    setView("inventory");
+  }
+
+  async function openInventoryCurriculumPicker() {
+    setInventoryCurriculumPickerOpen(true);
+    if (inventoryCurriculumOptions.length) return;
+    setInventoryCurriculumLoading(true);
+    const { data, error } = await supabase
+      .from("curriculum_package_items")
+      .select("id,material_id,package:curriculum_packages(id,name,grade_level),material:curriculum_materials(id,title,edition_label)")
+      .order("sort_order");
+    setInventoryCurriculumLoading(false);
+    if (error) {
+      alert("Could not load curriculum lists: " + error.message);
+      return;
+    }
+    setInventoryCurriculumOptions(data || []);
+  }
+
+  async function assignSelectedInventoryToCurriculum() {
+    if (!inventoryCurriculumTarget || selectedItemIds.length === 0) return;
+    const target = inventoryCurriculumOptions.find(
+      (entry) => String(entry.material_id) === String(inventoryCurriculumTarget)
+    );
+    if (!target) return;
+    setInventoryCurriculumLoading(true);
+    const rows = selectedItemIds.map((itemId) => ({
+      material_id: target.material_id,
+      inventory_item_id: String(itemId),
+      confirmed_by: session?.user?.id || null,
+    }));
+    const { error } = await supabase
+      .from("curriculum_inventory_matches")
+      .upsert(rows, { onConflict: "material_id,inventory_item_id" });
+    setInventoryCurriculumLoading(false);
+    if (error) {
+      alert("Could not add the selected books to this curriculum list: " + error.message);
+      return;
+    }
+    alert(`${selectedItemIds.length} selected ${selectedItemIds.length === 1 ? "book was" : "books were"} added as confirmed matches.`);
+    setInventoryCurriculumPickerOpen(false);
+    setInventoryCurriculumTarget("");
   }
 
   function updateInventoryBundleQuantity(componentId, value) {
@@ -7134,9 +7266,25 @@ function renderUserManagement() {
     </section>
 
     <div className="intake-actions">
-      <button className="secondary" onClick={scanIsbnBarcode}>
-        {isScanningBarcode ? "Scanning..." : "Scan Book Barcode"}
+      <button className="secondary" onClick={() => scanBarcode("book")}>
+        {isScanningBarcode && barcodeScanTarget === "book" ? "Scanning..." : "Scan a Barcode with Camera"}
       </button>
+
+      <label className="hardware-scanner-field">
+        <span>Symbol barcode scanner</span>
+        <input
+          value={hardwareScanValue}
+          placeholder="Click here, then scan"
+          autoComplete="off"
+          onChange={(event) => setHardwareScanValue(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              submitHardwareScan(hardwareScanValue, "book");
+            }
+          }}
+        />
+      </label>
 
       <button className="secondary" type="button" onClick={startCoverCamera}>
         Analyze Book Cover
@@ -7384,6 +7532,41 @@ function renderUserManagement() {
                 value={bookData.isbn || ""}
                 onChange={(e) => updateIntakeField("isbn", e.target.value)}
               />
+
+              <div className="publisher-scan-panel">
+                <div>
+                  <label>Publisher item number</label>
+                  <input
+                    value={bookData.publisher_item_number || ""}
+                    onChange={(e) => updateIntakeField("publisher_item_number", e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label>Publisher barcode</label>
+                  <input
+                    value={bookData.publisher_barcode || ""}
+                    onChange={(e) => updateIntakeField("publisher_barcode", e.target.value)}
+                  />
+                </div>
+                <button type="button" className="secondary" onClick={() => scanBarcode("publisher")}>
+                  {isScanningBarcode && barcodeScanTarget === "publisher" ? "Scanning..." : "Scan Publisher Number with Camera"}
+                </button>
+                <label className="hardware-scanner-field">
+                  <span>Or click here and use the Symbol scanner</span>
+                  <input
+                    value={publisherHardwareScanValue}
+                    placeholder="Scan publisher number"
+                    autoComplete="off"
+                    onChange={(event) => setPublisherHardwareScanValue(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        event.preventDefault();
+                        submitHardwareScan(publisherHardwareScanValue, "publisher");
+                      }
+                    }}
+                  />
+                </label>
+              </div>
 
               <label>Category</label>
               <select
@@ -8332,6 +8515,40 @@ function renderUserManagement() {
                       >
                         Create Bundle from {selectedItemIds.length} Selected
                       </button>
+                    )}
+
+                    {selectedItemIds.length > 0 && (
+                      <button
+                        type="button"
+                        className="secondary selection-curriculum-action"
+                        onClick={openInventoryCurriculumPicker}
+                      >
+                        Add Selected to Curriculum List
+                      </button>
+                    )}
+
+                    {inventoryCurriculumPickerOpen && selectedItemIds.length > 0 && (
+                      <div className="curriculum-assignment-panel">
+                        <label>Curriculum list item</label>
+                        <select
+                          value={inventoryCurriculumTarget}
+                          onChange={(event) => setInventoryCurriculumTarget(event.target.value)}
+                          disabled={inventoryCurriculumLoading}
+                        >
+                          <option value="">Choose a book on a list</option>
+                          {inventoryCurriculumOptions.map((entry) => (
+                            <option key={entry.id} value={entry.material_id}>
+                              {[entry.package?.name, entry.package?.grade_level, entry.material?.title, entry.material?.edition_label].filter(Boolean).join(" — ")}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="curriculum-edit-actions">
+                          <button type="button" className="primary" disabled={!inventoryCurriculumTarget || inventoryCurriculumLoading} onClick={assignSelectedInventoryToCurriculum}>
+                            {inventoryCurriculumLoading ? "Saving..." : "Confirm Match"}
+                          </button>
+                          <button type="button" className="secondary" onClick={() => setInventoryCurriculumPickerOpen(false)}>Cancel</button>
+                        </div>
+                      </div>
                     )}
 
                     {selectedItemIds.length > 0 && (
@@ -9374,6 +9591,7 @@ function renderUserManagement() {
             userId={session?.user?.id}
             authFetch={authFetch}
             onReserveBook={openBookReservation}
+            onBuildBundle={startCurriculumBundle}
           />
           {renderBookReservationForm()}
         </>

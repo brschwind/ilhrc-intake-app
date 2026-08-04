@@ -91,7 +91,7 @@ function getStoredChecks() {
   }
 }
 
-export default function CurriculumCatalog({ inventory, isAuthenticated, userId, authFetch, onReserveBook }) {
+export default function CurriculumCatalog({ inventory, isAuthenticated, userId, authFetch, onReserveBook, onBuildBundle }) {
   const [packages, setPackages] = useState([]);
   const [selectedPackage, setSelectedPackage] = useState(null);
   const [packageItems, setPackageItems] = useState([]);
@@ -114,6 +114,8 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
   const [saving, setSaving] = useState(false);
   const [confirmedMatches, setConfirmedMatches] = useState([]);
   const [savingMatchKey, setSavingMatchKey] = useState("");
+  const [manualMatchMaterialId, setManualMatchMaterialId] = useState("");
+  const [manualMatchSearch, setManualMatchSearch] = useState("");
   const [bulkPreview, setBulkPreview] = useState({ rows: [], errors: [] });
   const [bulkFileName, setBulkFileName] = useState("");
   const [bulkImporting, setBulkImporting] = useState(false);
@@ -260,6 +262,46 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     groups[label].push(entry);
     return groups;
   }, {});
+  const bundleInventoryItems = matchedItems.reduce((selected, entry) => {
+    const match = entry.inventoryMatches.find(({ item }) =>
+      item.item_type !== "bundle" &&
+      item.status === "Available" &&
+      Number(item.quantity || 0) > 0
+    );
+    if (match && !selected.some((item) => String(item.id) === String(match.item.id))) {
+      selected.push(match.item);
+    }
+    return selected;
+  }, []);
+
+  function manualInventoryChoices(material) {
+    const needle = manualMatchSearch.trim().toLowerCase();
+    const confirmedIds = new Set(confirmedMatches
+      .filter((match) => match.material_id === material.id)
+      .map((match) => String(match.inventory_item_id)));
+    return inventory
+      .filter((item) =>
+        item.item_type !== "bundle" && item.status === "Available" &&
+        Number(item.quantity || 0) > 0 && !confirmedIds.has(String(item.id))
+      )
+      .filter((item) => !needle || [item.title, item.author, item.isbn, item.sku, item.publisher_item_number]
+        .join(" ").toLowerCase().includes(needle))
+      .slice(0, 30);
+  }
+
+  function beginManualMatch(materialId) {
+    setManualMatchMaterialId((current) => current === materialId ? "" : materialId);
+    setManualMatchSearch("");
+  }
+
+  function buildSelectedCurriculumBundle() {
+    if (!onBuildBundle) return;
+    if (bundleInventoryItems.length < 2) {
+      setMessage("At least two available books from this list are needed to build a bundle.");
+      return;
+    }
+    onBuildBundle(bundleInventoryItems, selectedPackage?.name || "Curriculum bundle");
+  }
 
   function toggleChecked(itemId) {
     if (!selectedPackage) return;
@@ -301,6 +343,8 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
       ...current.filter((match) => !(match.material_id === data.material_id && String(match.inventory_item_id) === String(data.inventory_item_id))),
       data,
     ]);
+    setManualMatchMaterialId("");
+    setManualMatchSearch("");
     setMessage(`Confirmed “${item.title}” as a match for “${material.title}.”`);
   }
 
@@ -947,6 +991,15 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
           </div>
         )}
 
+        {isAuthenticated && onBuildBundle && !detailLoading && (
+          <div className="curriculum-bundle-action no-print">
+            <button type="button" className="primary" onClick={buildSelectedCurriculumBundle} disabled={bundleInventoryItems.length < 2}>
+              Build Bundle from {bundleInventoryItems.length} Available {bundleInventoryItems.length === 1 ? "Book" : "Books"}
+            </button>
+            <p>One copy of each matched list item is included by default. You can adjust quantities before saving.</p>
+          </div>
+        )}
+
         {message && <p className="status-message no-print">{message}</p>}
         {detailLoading && <p>Loading curriculum materials…</p>}
         {!detailLoading && packageItems.length === 0 && <p>No materials have been added to this list yet.</p>}
@@ -1014,6 +1067,38 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                             );
                           })}
                         </div>
+                      </div>
+                    )}
+                    {isAuthenticated && staffMode && (
+                      <div className="curriculum-manual-match no-print">
+                        <button className="secondary" type="button" onClick={() => beginManualMatch(material.id)}>
+                          {manualMatchMaterialId === material.id ? "Close Inventory Picker" : "Add Inventory Book Manually"}
+                        </button>
+                        {manualMatchMaterialId === material.id && (
+                          <div className="curriculum-manual-match-picker">
+                            <label>
+                              Search inventory
+                              <input type="search" placeholder="Title, ISBN, publisher number, or SKU" value={manualMatchSearch} onChange={(event) => setManualMatchSearch(event.target.value)} />
+                            </label>
+                            <div className="curriculum-manual-match-results">
+                              {manualInventoryChoices(material).map((item) => {
+                                const matchKey = `${material.id}:${item.id}`;
+                                return (
+                                  <article key={item.id} className="curriculum-manual-match-row">
+                                    <div>
+                                      <strong>{item.title}</strong>
+                                      <span>{[item.edition, item.isbn && `ISBN ${item.isbn}`, item.sku && `SKU ${item.sku}`, `${item.quantity} available`].filter(Boolean).join(" · ")}</span>
+                                    </div>
+                                    <button type="button" className="primary" disabled={savingMatchKey === matchKey} onClick={() => confirmInventoryMatch(material, item)}>
+                                      {savingMatchKey === matchKey ? "Adding…" : "Add Match"}
+                                    </button>
+                                  </article>
+                                );
+                              })}
+                              {manualInventoryChoices(material).length === 0 && <p>No available inventory books match this search.</p>}
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )}
                     {match.status === "missing" && material.affiliate_url && (

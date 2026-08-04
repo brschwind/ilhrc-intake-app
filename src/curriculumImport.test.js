@@ -133,6 +133,13 @@ test("staff can persistently confirm and undo possible inventory matches", () =>
   assert.match(confirmationMigration, /public_curriculum_inventory_matches/);
 });
 
+test("staff can manually attach inventory and build a matched curriculum bundle", () => {
+  assert.match(curriculumCatalogSource, /Add Inventory Book Manually/);
+  assert.match(curriculumCatalogSource, /manualInventoryChoices/);
+  assert.match(curriculumCatalogSource, /Build Bundle from \{bundleInventoryItems\.length\} Available/);
+  assert.match(curriculumCatalogSource, /One copy of each matched list item is included by default/);
+});
+
 test("customers can reserve matched books from a curriculum list", () => {
   assert.match(curriculumCatalogSource, /Reserve this copy/);
   assert.match(curriculumCatalogSource, /onReserveBook\(item\)/);

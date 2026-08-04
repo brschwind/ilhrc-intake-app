@@ -16,6 +16,19 @@ test("inventory selection offers retroactive bundle creation", () => {
   assert.match(appSource, /update-square-inventory/);
 });
 
+test("inventory and curriculum workflows can create and split bundles", () => {
+  assert.match(appSource, /Add Selected to Curriculum List/);
+  assert.match(appSource, /async function startCurriculumBundle/);
+  assert.match(appSource, /bundle_quantity:\s*1/);
+  assert.match(appSource, /Split Bundle into Individual Listings/);
+});
+
+test("intake supports camera and hardware publisher scans", () => {
+  assert.match(appSource, /Scan Publisher Number with Camera/);
+  assert.match(appSource, /use the Symbol scanner/);
+  assert.match(appSource, /async function capturePublisherBarcode/);
+});
+
 test("the intake screen does not contain a Location control", () => {
   const intakeStart = appSource.indexOf(
     'isAuthenticated && view === "add" && ('
