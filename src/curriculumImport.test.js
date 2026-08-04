@@ -136,8 +136,10 @@ test("staff can persistently confirm and undo possible inventory matches", () =>
 test("staff can manually attach inventory and build a matched curriculum bundle", () => {
   assert.match(curriculumCatalogSource, /Add Inventory Book Manually/);
   assert.match(curriculumCatalogSource, /manualInventoryChoices/);
-  assert.match(curriculumCatalogSource, /Build Bundle from \{bundleInventoryItems\.length\} Available/);
-  assert.match(curriculumCatalogSource, /One copy of each matched list item is included by default/);
+  assert.match(curriculumCatalogSource, /Build Bundle from \{selectedBundleItems\.length\} Selected/);
+  assert.match(curriculumCatalogSource, /Select Available \$\{group\} for Bundle/);
+  assert.match(curriculumCatalogSource, /Include this copy in bundle/);
+  assert.match(curriculumCatalogSource, /One copy of each selected listing is included by default/);
 });
 
 test("customers can reserve matched books from a curriculum list", () => {

@@ -428,10 +428,9 @@ export default function App() {
   const [catalogToolsPanel, setCatalogToolsPanel] = useState("");
   const [isScanningBarcode, setIsScanningBarcode] = useState(false);
   const [barcodeScanTarget, setBarcodeScanTarget] = useState("book");
-  const [hardwareScanValue, setHardwareScanValue] = useState("");
-  const [publisherHardwareScanValue, setPublisherHardwareScanValue] = useState("");
 
   const listingPhotoInputRef = useRef(null);
+  const barcodeScannerBufferRef = useRef("");
   const handledCoverFilesRef = useRef(new WeakSet());
   const inventoryEditorRef = useRef(null);
   const inventoryEditorTitleRef = useRef(null);
@@ -3397,8 +3396,22 @@ async function submitHardwareScan(value, target = "book") {
   if (!scannedValue) return;
   if (target === "publisher") await capturePublisherBarcode(scannedValue);
   else await lookupBookByBarcode(scannedValue);
-  setHardwareScanValue("");
-  setPublisherHardwareScanValue("");
+}
+
+function handleScannerButtonKeyDown(event, target = "book") {
+  if ((event.key === "Enter" || event.key === "Tab") && barcodeScannerBufferRef.current) {
+    event.preventDefault();
+    event.stopPropagation();
+    const scannedValue = barcodeScannerBufferRef.current;
+    barcodeScannerBufferRef.current = "";
+    submitHardwareScan(scannedValue, target);
+    return;
+  }
+
+  if (event.key !== " " && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey) {
+    event.preventDefault();
+    barcodeScannerBufferRef.current += event.key;
+  }
 }
 
 async function scanBarcode(target = "book") {
@@ -7266,25 +7279,16 @@ function renderUserManagement() {
     </section>
 
     <div className="intake-actions">
-      <button className="secondary" onClick={() => scanBarcode("book")}>
-        {isScanningBarcode && barcodeScanTarget === "book" ? "Scanning..." : "Scan a Barcode with Camera"}
+      <button
+        className="secondary scanner-button"
+        onClick={() => scanBarcode("book")}
+        onKeyDown={(event) => handleScannerButtonKeyDown(event, "book")}
+        onBlur={() => { barcodeScannerBufferRef.current = ""; }}
+        title="Click for the camera, or focus this button and use the Symbol scanner"
+      >
+        <span>{isScanningBarcode && barcodeScanTarget === "book" ? "Scanning..." : "Scan a Barcode"}</span>
+        <small>Camera or Symbol scanner</small>
       </button>
-
-      <label className="hardware-scanner-field">
-        <span>Symbol barcode scanner</span>
-        <input
-          value={hardwareScanValue}
-          placeholder="Click here, then scan"
-          autoComplete="off"
-          onChange={(event) => setHardwareScanValue(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              submitHardwareScan(hardwareScanValue, "book");
-            }
-          }}
-        />
-      </label>
 
       <button className="secondary" type="button" onClick={startCoverCamera}>
         Analyze Book Cover
@@ -7548,24 +7552,17 @@ function renderUserManagement() {
                     onChange={(e) => updateIntakeField("publisher_barcode", e.target.value)}
                   />
                 </div>
-                <button type="button" className="secondary" onClick={() => scanBarcode("publisher")}>
-                  {isScanningBarcode && barcodeScanTarget === "publisher" ? "Scanning..." : "Scan Publisher Number with Camera"}
+                <button
+                  type="button"
+                  className="secondary scanner-button"
+                  onClick={() => scanBarcode("publisher")}
+                  onKeyDown={(event) => handleScannerButtonKeyDown(event, "publisher")}
+                  onBlur={() => { barcodeScannerBufferRef.current = ""; }}
+                  title="Click for the camera, or focus this button and use the Symbol scanner"
+                >
+                  <span>{isScanningBarcode && barcodeScanTarget === "publisher" ? "Scanning..." : "Scan Publisher Number"}</span>
+                  <small>Camera or Symbol scanner</small>
                 </button>
-                <label className="hardware-scanner-field">
-                  <span>Or click here and use the Symbol scanner</span>
-                  <input
-                    value={publisherHardwareScanValue}
-                    placeholder="Scan publisher number"
-                    autoComplete="off"
-                    onChange={(event) => setPublisherHardwareScanValue(event.target.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter") {
-                        event.preventDefault();
-                        submitHardwareScan(publisherHardwareScanValue, "publisher");
-                      }
-                    }}
-                  />
-                </label>
               </div>
 
               <label>Category</label>

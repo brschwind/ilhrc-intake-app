@@ -116,6 +116,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
   const [savingMatchKey, setSavingMatchKey] = useState("");
   const [manualMatchMaterialId, setManualMatchMaterialId] = useState("");
   const [manualMatchSearch, setManualMatchSearch] = useState("");
+  const [bundleSelectionIds, setBundleSelectionIds] = useState([]);
   const [bulkPreview, setBulkPreview] = useState({ rows: [], errors: [] });
   const [bulkFileName, setBulkFileName] = useState("");
   const [bulkImporting, setBulkImporting] = useState(false);
@@ -190,6 +191,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     setSelectedPackage(curriculumPackage);
     setEditingPackage(false);
     setEditingEntryId(null);
+    setBundleSelectionIds([]);
     setDetailLoading(true);
     setMessage("");
     const { data, error } = await supabase
@@ -273,6 +275,34 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
     }
     return selected;
   }, []);
+  const bundleInventoryById = new Map(matchedItems.flatMap((entry) => entry.inventoryMatches)
+    .map(({ item }) => item)
+    .filter((item) => item.item_type !== "bundle" && item.status === "Available" && Number(item.quantity || 0) > 0)
+    .map((item) => [String(item.id), item]));
+  const selectedBundleItems = bundleSelectionIds
+    .map((itemId) => bundleInventoryById.get(String(itemId)))
+    .filter(Boolean);
+
+  function getBundleableItem(entry) {
+    return entry.inventoryMatches.find(({ item }) =>
+      item.item_type !== "bundle" && item.status === "Available" && Number(item.quantity || 0) > 0
+    )?.item || null;
+  }
+
+  function toggleBundleSelection(itemId) {
+    const key = String(itemId);
+    setBundleSelectionIds((current) => current.includes(key)
+      ? current.filter((id) => id !== key)
+      : [...current, key]);
+  }
+
+  function toggleBundleGroup(entries) {
+    const groupIds = [...new Set(entries.map(getBundleableItem).filter(Boolean).map((item) => String(item.id)))];
+    const allSelected = groupIds.length > 0 && groupIds.every((id) => bundleSelectionIds.includes(id));
+    setBundleSelectionIds((current) => allSelected
+      ? current.filter((id) => !groupIds.includes(id))
+      : [...new Set([...current, ...groupIds])]);
+  }
 
   function manualInventoryChoices(material) {
     const needle = manualMatchSearch.trim().toLowerCase();
@@ -296,11 +326,11 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
 
   function buildSelectedCurriculumBundle() {
     if (!onBuildBundle) return;
-    if (bundleInventoryItems.length < 2) {
-      setMessage("At least two available books from this list are needed to build a bundle.");
+    if (selectedBundleItems.length < 2) {
+      setMessage("Select at least two available inventory books to build a bundle.");
       return;
     }
-    onBuildBundle(bundleInventoryItems, selectedPackage?.name || "Curriculum bundle");
+    onBuildBundle(selectedBundleItems, selectedPackage?.name || "Curriculum bundle");
   }
 
   function toggleChecked(itemId) {
@@ -993,10 +1023,16 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
 
         {isAuthenticated && onBuildBundle && !detailLoading && (
           <div className="curriculum-bundle-action no-print">
-            <button type="button" className="primary" onClick={buildSelectedCurriculumBundle} disabled={bundleInventoryItems.length < 2}>
-              Build Bundle from {bundleInventoryItems.length} Available {bundleInventoryItems.length === 1 ? "Book" : "Books"}
-            </button>
-            <p>One copy of each matched list item is included by default. You can adjust quantities before saving.</p>
+            <div>
+              <button type="button" className="primary" onClick={buildSelectedCurriculumBundle} disabled={selectedBundleItems.length < 2}>
+                Build Bundle from {selectedBundleItems.length} Selected {selectedBundleItems.length === 1 ? "Book" : "Books"}
+              </button>
+              <button type="button" className="secondary" onClick={() => setBundleSelectionIds(bundleInventoryItems.map((item) => String(item.id)))} disabled={bundleInventoryItems.length === 0}>
+                Select All Available
+              </button>
+              {bundleSelectionIds.length > 0 && <button type="button" className="secondary" onClick={() => setBundleSelectionIds([])}>Clear Selection</button>}
+            </div>
+            <p>Select individual matches below or select all available books in a section. One copy of each selected listing is included by default.</p>
           </div>
         )}
 
@@ -1006,7 +1042,16 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
 
         {Object.entries(groupedItems).map(([group, entries]) => (
           <section className="curriculum-group" key={group}>
-            <h3>{group}</h3>
+            <div className="curriculum-group-heading">
+              <h3>{group}</h3>
+              {isAuthenticated && onBuildBundle && entries.some(getBundleableItem) && (
+                <button type="button" className="secondary no-print" onClick={() => toggleBundleGroup(entries)}>
+                  {entries.map(getBundleableItem).filter(Boolean).every((item) => bundleSelectionIds.includes(String(item.id)))
+                    ? `Remove ${group} from Bundle`
+                    : `Select Available ${group} for Bundle`}
+                </button>
+              )}
+            </div>
             {entries.map((entry) => {
               const { material, match, inventoryMatches } = entry;
               const isChecked = checkedIds.has(entry.id);
@@ -1047,15 +1092,21 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                                 <strong>{item.title}</strong>
                                 <span>{[item.edition, item.sku && `SKU ${item.sku}`].filter(Boolean).join(" · ")}</span>
                                 <span>${Number(item.final_price || 0).toFixed(2)} · {item.quantity} available</span>
-                                {isAuthenticated && staffMode && status === "possible" && (
+                                {isAuthenticated && status === "possible" && (
                                   <button className="secondary curriculum-confirm-button no-print" type="button" disabled={matchSaving} onClick={() => confirmInventoryMatch(material, item)}>
                                     {matchSaving ? "Confirming…" : "Confirm match"}
                                   </button>
                                 )}
-                                {isAuthenticated && staffMode && status === "confirmed" && (
+                                {isAuthenticated && status === "confirmed" && (
                                   <button className="secondary curriculum-confirm-button no-print" type="button" disabled={matchSaving} onClick={() => removeConfirmedInventoryMatch(material, item)}>
                                     {matchSaving ? "Removing…" : "Undo confirmation"}
                                   </button>
+                                )}
+                                {isAuthenticated && onBuildBundle && item.item_type !== "bundle" && item.status === "Available" && Number(item.quantity || 0) > 0 && (
+                                  <label className="curriculum-bundle-choice no-print">
+                                    <input type="checkbox" checked={bundleSelectionIds.includes(String(item.id))} onChange={() => toggleBundleSelection(item.id)} />
+                                    <span>Include this copy in bundle</span>
+                                  </label>
                                 )}
                                 {!isAuthenticated && onReserveBook && (
                                   <button className="primary curriculum-reserve-button no-print" type="button" onClick={() => onReserveBook(item)}>
@@ -1069,7 +1120,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                         </div>
                       </div>
                     )}
-                    {isAuthenticated && staffMode && (
+                    {isAuthenticated && (
                       <div className="curriculum-manual-match no-print">
                         <button className="secondary" type="button" onClick={() => beginManualMatch(material.id)}>
                           {manualMatchMaterialId === material.id ? "Close Inventory Picker" : "Add Inventory Book Manually"}

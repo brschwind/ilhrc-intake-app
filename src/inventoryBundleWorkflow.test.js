@@ -24,9 +24,10 @@ test("inventory and curriculum workflows can create and split bundles", () => {
 });
 
 test("intake supports camera and hardware publisher scans", () => {
-  assert.match(appSource, /Scan Publisher Number with Camera/);
-  assert.match(appSource, /use the Symbol scanner/);
+  assert.match(appSource, /Scan Publisher Number/);
+  assert.match(appSource, /Camera or Symbol scanner/);
   assert.match(appSource, /async function capturePublisherBarcode/);
+  assert.match(appSource, /handleScannerButtonKeyDown/);
 });
 
 test("the intake screen does not contain a Location control", () => {

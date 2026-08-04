@@ -1082,14 +1082,16 @@ button:disabled {
   border: 1px solid var(--border);
 }
 
-.hardware-scanner-field {
-  display: grid;
-  gap: 0.35rem;
-  min-width: min(100%, 18rem);
+.scanner-button {
+  display: inline-grid;
+  gap: 0.15rem;
+  justify-items: center;
 }
 
-.hardware-scanner-field span {
-  font-weight: 700;
+.scanner-button small {
+  font-size: 0.72rem;
+  font-weight: 500;
+  opacity: 0.78;
 }
 
 .publisher-scan-panel,
@@ -1118,6 +1120,12 @@ button:disabled {
 .curriculum-bundle-action {
   grid-template-columns: max-content 1fr;
   align-items: center;
+}
+
+.curriculum-bundle-action > div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .curriculum-bundle-action p {
@@ -1152,12 +1160,40 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+.curriculum-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.curriculum-group-heading h3 {
+  margin: 0;
+}
+
+.curriculum-bundle-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+  font-weight: 700;
+}
+
+.curriculum-bundle-choice input {
+  width: auto;
+}
+
 @media (max-width: 720px) {
   .curriculum-bundle-action {
     grid-template-columns: 1fr;
   }
 
   .curriculum-manual-match-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .curriculum-group-heading {
     align-items: stretch;
     flex-direction: column;
   }
