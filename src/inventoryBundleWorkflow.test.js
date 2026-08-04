@@ -55,3 +55,10 @@ test("inventory selection controls remain reachable and aligned", () => {
   assert.match(appStyles, /\.card \.item-select\s*\{[^}]*display:\s*inline-flex/s);
   assert.match(appStyles, /\.selection-bundle-action\s*\{[^}]*width:\s*100%/s);
 });
+
+test("inventory selection queues labels instead of generating a PDF immediately", () => {
+  assert.match(appSource, /Add to Print Queue/);
+  assert.match(appSource, /addSelectedToPrintQueue/);
+  assert.match(appSource, /Remove from Queue/);
+  assert.match(appSource, /Remove Visible from Queue/);
+});

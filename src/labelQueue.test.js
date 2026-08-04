@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
   buildDuplicateLabelQueueUpdate,
+  buildSelectedLabelQueueUpdate,
   getQueuedLabelQuantity,
 } from "./labelQueue.js";
 
@@ -38,5 +39,17 @@ test("legacy unprinted listings fall back to their inventory quantity", () => {
   assert.equal(
     getQueuedLabelQuantity({ quantity: 4, label_printed: false }),
     4
+  );
+});
+
+test("inventory selection queues existing labels without duplicating an existing queue", () => {
+  const queuedAt = "2026-08-04T20:00:00.000Z";
+  assert.deepEqual(
+    buildSelectedLabelQueueUpdate({ quantity: 3, label_printed: true }, queuedAt),
+    { label_printed: false, pending_label_quantity: 3, label_queued_at: queuedAt }
+  );
+  assert.deepEqual(
+    buildSelectedLabelQueueUpdate({ quantity: 5, label_printed: false, pending_label_quantity: 2, label_queued_at: "earlier" }, queuedAt),
+    { label_printed: false, pending_label_quantity: 2, label_queued_at: "earlier" }
   );
 });

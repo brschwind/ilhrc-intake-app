@@ -20,6 +20,7 @@ import {
 } from "./barcodeIdentification";
 import {
   buildDuplicateLabelQueueUpdate,
+  buildSelectedLabelQueueUpdate,
   getQueuedLabelQuantity,
 } from "./labelQueue";
 import {
@@ -5349,6 +5350,68 @@ async function markLabelsPrinted() {
   loadItems();
 }
 
+async function addSelectedToPrintQueue() {
+  const selectedItems = items.filter((item) => selectedItemIds.includes(item.id));
+  if (selectedItems.length === 0) {
+    alert("Select at least one inventory item to add to the print queue.");
+    return;
+  }
+
+  const queuedAt = new Date().toISOString();
+  const results = await Promise.all(selectedItems.map(async (item) => {
+    const wasAlreadyQueued = getQueuedLabelQuantity(item) > 0;
+    const { error } = await supabase
+      .from("items")
+      .update({
+        ...buildSelectedLabelQueueUpdate(item, queuedAt),
+        updated_at: queuedAt,
+      })
+      .eq("id", item.id);
+    return { item, error, wasAlreadyQueued };
+  }));
+
+  const failed = results.filter((result) => result.error);
+  if (failed.length > 0) {
+    alert(`Could not queue ${failed.length} selected ${failed.length === 1 ? "item" : "items"}. Please try again.`);
+    return;
+  }
+
+  const newlyQueuedCount = results.filter((result) => !result.wasAlreadyQueued).length;
+  await logAudit("inventory_labels_queued", "items", null, {
+    item_ids: selectedItems.map((item) => item.id),
+    newly_queued_count: newlyQueuedCount,
+  });
+  setSelectedItemIds([]);
+  setIsSelectionMode(false);
+  await loadItems();
+  alert(`${selectedItems.length} selected ${selectedItems.length === 1 ? "item is" : "items are"} in the print queue. Existing SKUs and stickers were kept.`);
+}
+
+async function removeFromPrintQueue(itemsToRemove) {
+  const queueItems = (itemsToRemove || []).filter(Boolean);
+  if (queueItems.length === 0) return;
+  if (!confirm(`Remove ${queueItems.length === 1 ? `“${queueItems[0].title}”` : `${queueItems.length} visible titles`} from the print queue?`)) return;
+
+  const { error } = await supabase
+    .from("items")
+    .update({
+      label_printed: true,
+      pending_label_quantity: 0,
+      label_queued_at: null,
+      updated_at: new Date().toISOString(),
+    })
+    .in("id", queueItems.map((item) => item.id));
+  if (error) {
+    alert("Could not remove labels from the queue: " + error.message);
+    return;
+  }
+
+  await logAudit("inventory_labels_dequeued", "items", null, {
+    item_ids: queueItems.map((item) => item.id),
+  });
+  await loadItems();
+}
+
 function generateLabels(itemsToPrint) {
   const pdf = new jsPDF({
     orientation: "landscape",
@@ -8649,22 +8712,9 @@ function renderUserManagement() {
                             type="button"
                             className="secondary"
                             disabled={selectedItemIds.length === 0}
-                            onClick={(e) => {
-                              e.preventDefault();
-
-                              const itemsToPrint = items.filter((item) =>
-                                selectedItemIds.includes(item.id)
-                              );
-
-                              if (itemsToPrint.length === 0) {
-                                alert("No selected items to print.");
-                                return;
-                              }
-
-                              generateLabels(itemsToPrint);
-                            }}
+                            onClick={addSelectedToPrintQueue}
                           >
-                            Print Labels
+                            Add to Print Queue
                           </button>
 
                           <button
@@ -9546,6 +9596,14 @@ function renderUserManagement() {
   Mark Labels Printed
 </button>
 
+<button
+  className="secondary"
+  disabled={labelItems.length === 0}
+  onClick={() => removeFromPrintQueue(labelItems)}
+>
+  Remove Visible from Queue
+</button>
+
           <p>
   {labelItems.length} titles waiting for labels
 </p>
@@ -9570,6 +9628,9 @@ function renderUserManagement() {
                 <p><strong>Labels queued:</strong> {getQueuedLabelQuantity(item)}</p>
                 <p><strong>Category:</strong> {item.category}</p>
                 <p><strong>Queued:</strong> {formatDateAdded(item.label_queued_at || item.created_at)}</p>
+                <button type="button" className="secondary" onClick={() => removeFromPrintQueue([item])}>
+                  Remove from Queue
+                </button>
               </div>
             </div>
           ))}

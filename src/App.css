@@ -1171,18 +1171,6 @@ button:disabled {
   margin: 0;
 }
 
-.curriculum-bundle-choice {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin-top: 0.45rem;
-  font-weight: 700;
-}
-
-.curriculum-bundle-choice input {
-  width: auto;
-}
-
 @media (max-width: 720px) {
   .curriculum-bundle-action {
     grid-template-columns: 1fr;
@@ -2839,6 +2827,11 @@ button:disabled {
 
 .curriculum-row.is-checked h4 {
   text-decoration: line-through;
+}
+
+.curriculum-row.is-selected {
+  background: #f2f7ef;
+  box-shadow: inset 3px 0 0 var(--sage-dark);
 }
 
 .curriculum-check {
