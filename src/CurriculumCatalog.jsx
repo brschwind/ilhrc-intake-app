@@ -994,7 +994,9 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                 {staffMode ? "Close curriculum tools" : "Curriculum List Tools"}
               </button>
             )}
-            <button className="secondary" type="button" onClick={clearChecks}>Clear checks</button>
+            <button className="secondary" type="button" onClick={isAuthenticated ? () => setBundleSelectionIds([]) : clearChecks}>
+              {isAuthenticated ? "Clear selection" : "Clear checks"}
+            </button>
             <button className="primary" type="button" onClick={() => window.print()}>Print checklist</button>
           </div>
         </div>
@@ -1017,7 +1019,10 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
             <div><strong>{packageItems.length}</strong><span>listed materials</span></div>
             <div><strong>{requiredCount}</strong><span>required</span></div>
             <div><strong>{availableCount}</strong><span>found in store</span></div>
-            <div><strong>{checkedIds.size}</strong><span>checked off</span></div>
+            <div>
+              <strong>{isAuthenticated ? selectedBundleItems.length : checkedIds.size}</strong>
+              <span>{isAuthenticated ? "selected for actions" : "checked off"}</span>
+            </div>
           </div>
         )}
 
@@ -1054,12 +1059,19 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
             </div>
             {entries.map((entry) => {
               const { material, match, inventoryMatches } = entry;
-              const isChecked = checkedIds.has(entry.id);
+              const isChecklistChecked = checkedIds.has(entry.id);
+              const bundleItem = getBundleableItem(entry);
+              const isBulkSelected = Boolean(bundleItem && bundleSelectionIds.includes(String(bundleItem.id)));
               return (
-                <article className={`curriculum-row ${isChecked ? "is-checked" : ""}`} key={entry.id}>
+                <article className={`curriculum-row ${!isAuthenticated && isChecklistChecked ? "is-checked" : ""} ${isBulkSelected ? "is-selected" : ""}`} key={entry.id}>
                   <label className="curriculum-check">
-                    <input type="checkbox" checked={isChecked} onChange={() => toggleChecked(entry.id)} />
-                    <span className="sr-only">Check off {material.title}</span>
+                    <input
+                      type="checkbox"
+                      checked={isAuthenticated ? isBulkSelected : isChecklistChecked}
+                      disabled={isAuthenticated && !bundleItem}
+                      onChange={() => isAuthenticated ? toggleBundleSelection(bundleItem.id) : toggleChecked(entry.id)}
+                    />
+                    <span className="sr-only">{isAuthenticated ? `Select ${material.title} for bulk actions` : `Check off ${material.title}`}</span>
                   </label>
                   <div className="curriculum-book-info">
                     <div className="curriculum-book-heading">
@@ -1101,12 +1113,6 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                                   <button className="secondary curriculum-confirm-button no-print" type="button" disabled={matchSaving} onClick={() => removeConfirmedInventoryMatch(material, item)}>
                                     {matchSaving ? "Removing…" : "Undo confirmation"}
                                   </button>
-                                )}
-                                {isAuthenticated && onBuildBundle && item.item_type !== "bundle" && item.status === "Available" && Number(item.quantity || 0) > 0 && (
-                                  <label className="curriculum-bundle-choice no-print">
-                                    <input type="checkbox" checked={bundleSelectionIds.includes(String(item.id))} onChange={() => toggleBundleSelection(item.id)} />
-                                    <span>Include this copy in bundle</span>
-                                  </label>
                                 )}
                                 {!isAuthenticated && onReserveBook && (
                                   <button className="primary curriculum-reserve-button no-print" type="button" onClick={() => onReserveBook(item)}>

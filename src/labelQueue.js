@@ -27,3 +27,19 @@ export function buildDuplicateLabelQueueUpdate(item, receivedQuantity, queuedAt)
     label_queued_at: queuedAt,
   };
 }
+
+export function buildSelectedLabelQueueUpdate(item, queuedAt) {
+  const currentPendingQuantity = getQueuedLabelQuantity(item);
+  const inventoryQuantity = Number(item?.quantity);
+  const quantityToQueue = currentPendingQuantity > 0
+    ? currentPendingQuantity
+    : Number.isFinite(inventoryQuantity) && inventoryQuantity > 0
+      ? inventoryQuantity
+      : 1;
+
+  return {
+    label_printed: false,
+    pending_label_quantity: quantityToQueue,
+    label_queued_at: item?.label_queued_at || queuedAt,
+  };
+}

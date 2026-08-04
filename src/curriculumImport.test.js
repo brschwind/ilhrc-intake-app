@@ -138,7 +138,8 @@ test("staff can manually attach inventory and build a matched curriculum bundle"
   assert.match(curriculumCatalogSource, /manualInventoryChoices/);
   assert.match(curriculumCatalogSource, /Build Bundle from \{selectedBundleItems\.length\} Selected/);
   assert.match(curriculumCatalogSource, /Select Available \$\{group\} for Bundle/);
-  assert.match(curriculumCatalogSource, /Include this copy in bundle/);
+  assert.match(curriculumCatalogSource, /Select \$\{material\.title\} for bulk actions/);
+  assert.doesNotMatch(curriculumCatalogSource, /Include this copy in bundle/);
   assert.match(curriculumCatalogSource, /One copy of each selected listing is included by default/);
 });
 
