@@ -401,6 +401,8 @@ export default function App() {
   const [coverCameraOpen, setCoverCameraOpen] = useState(false);
   const [coverCameraReady, setCoverCameraReady] = useState(false);
   const [coverCameraError, setCoverCameraError] = useState("");
+  const [coverCameraDevices, setCoverCameraDevices] = useState([]);
+  const [coverCameraDeviceId, setCoverCameraDeviceId] = useState("");
   const [isbnPhoto, setIsbnPhoto] = useState(null);
   const [bookData, setBookData] = useState(null);
 
@@ -2805,6 +2807,33 @@ function stopCoverCamera() {
 
   setCoverCameraReady(false);
   setCoverCameraOpen(false);
+  setCoverCameraDevices([]);
+  setCoverCameraDeviceId("");
+  setAnalysisStatus("");
+}
+
+async function attachCoverCameraStream(stream) {
+  coverCameraStreamRef.current = stream;
+
+  if (!coverCameraVideoRef.current) {
+    stream.getTracks().forEach((track) => track.stop());
+    throw new Error("The camera view could not be opened.");
+  }
+
+  coverCameraVideoRef.current.srcObject = stream;
+  await coverCameraVideoRef.current.play();
+
+  const activeDeviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId || "";
+  setCoverCameraDeviceId(activeDeviceId);
+
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    setCoverCameraDevices(devices.filter((device) => device.kind === "videoinput"));
+  } catch {
+    setCoverCameraDevices([]);
+  }
+
+  setCoverCameraReady(true);
   setAnalysisStatus("");
 }
 
@@ -2827,26 +2856,33 @@ async function startCoverCamera() {
   }
 
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video: {
-        facingMode: { ideal: "environment" },
-        width: { ideal: 1280 },
-        height: { ideal: 960 },
-      },
-      audio: false,
-    });
+    let stream;
 
-    coverCameraStreamRef.current = stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { exact: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 960 },
+        },
+        audio: false,
+      });
+    } catch (error) {
+      if (error?.name !== "OverconstrainedError" && error?.name !== "NotFoundError") {
+        throw error;
+      }
 
-    if (!coverCameraVideoRef.current) {
-      stream.getTracks().forEach((track) => track.stop());
-      throw new Error("The camera view could not be opened.");
+      stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: "environment" },
+          width: { ideal: 1280 },
+          height: { ideal: 960 },
+        },
+        audio: false,
+      });
     }
 
-    coverCameraVideoRef.current.srcObject = stream;
-    await coverCameraVideoRef.current.play();
-    setCoverCameraReady(true);
-    setAnalysisStatus("");
+    await attachCoverCameraStream(stream);
   } catch (error) {
     coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
     coverCameraStreamRef.current = null;
@@ -2856,6 +2892,40 @@ async function startCoverCamera() {
         ? "Camera access was blocked. Allow camera access for this site, or choose an existing photo below."
         : "The camera could not start. Choose an existing photo below."
     );
+  }
+}
+
+async function switchCoverCamera() {
+  if (coverCameraDevices.length < 2) {
+    setCoverCameraError("No other camera is available in this browser.");
+    return;
+  }
+
+  const currentIndex = coverCameraDevices.findIndex(
+    (device) => device.deviceId === coverCameraDeviceId
+  );
+  const nextDevice = coverCameraDevices[(currentIndex + 1) % coverCameraDevices.length];
+
+  setCoverCameraReady(false);
+  setCoverCameraError("");
+  setAnalysisStatus("Switching camera...");
+  coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
+  coverCameraStreamRef.current = null;
+
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        deviceId: { exact: nextDevice.deviceId },
+        width: { ideal: 1280 },
+        height: { ideal: 960 },
+      },
+      audio: false,
+    });
+
+    await attachCoverCameraStream(stream);
+  } catch {
+    setAnalysisStatus("");
+    setCoverCameraError("The other camera could not start. Please try again.");
   }
 }
 
@@ -7105,6 +7175,19 @@ function renderUserManagement() {
         onClick={captureCoverCameraPhoto}
       >
         {coverCameraReady ? "Take Cover Photo" : "Starting Camera..."}
+      </button>
+      <button
+        className="secondary"
+        type="button"
+        disabled={!coverCameraReady || coverCameraDevices.length < 2}
+        onClick={switchCoverCamera}
+        title={
+          coverCameraDevices.length < 2
+            ? "No additional camera is available"
+            : "Switch between front and rear cameras"
+        }
+      >
+        Switch Camera
       </button>
       <label htmlFor="cover-upload" className="secondary file-upload-button">
         Choose Existing Photo
