@@ -1,21 +1,24 @@
 :root {
-  --background: #f6f7f4;
+  --background: #fbfaf8;
   --surface: #ffffff;
-  --surface-soft: #f5f7f5;
-  --surface-sage: #edf2f1;
-  --sage: #748d88;
-  --sage-dark: #5b6555;
-  --sage-light: #edf2f1;
-  --brown: #7b462b;
-  --brown-dark: #5b6555;
+  --surface-soft: #f8f5f1;
+  --surface-sage: #edf2f0;
+  --sage: #708a81;
+  --sage-dark: #5d766d;
+  --sage-light: #eef3f1;
+  --orange: #dd8e58;
+  --brown: #a85f34;
+  --brown-dark: #2b2129;
+  --cream: #e5d1b8;
+  --tan: #c2956e;
   --rust: #a9403d;
-  --border: #dde3df;
-  --border-strong: #c9d3cd;
-  --text: #18211c;
-  --muted: #66706a;
+  --border: #dedfdd;
+  --border-strong: #b9bfbc;
+  --text: #2b2129;
+  --muted: #6f666b;
   --danger: #a9403d;
   --danger-dark: #872e2c;
-  --shadow: 0 8px 24px rgba(24, 33, 28, 0.045);
+  --shadow: 0 8px 24px rgba(43, 33, 41, 0.06);
 }
 
 body {
@@ -146,33 +149,37 @@ button:disabled {
 
 .back-to-top {
   position: fixed;
-  right: 24px;
-  bottom: 24px;
+  right: 18px;
+  bottom: 18px;
   z-index: 35;
   display: inline-flex;
-  min-height: 42px;
+  width: auto;
+  min-height: 38px;
   margin: 0;
-  padding: 9px 13px;
+  padding: 8px 12px;
   align-items: center;
-  gap: 7px;
-  border: 1px solid var(--sage-dark);
+  justify-content: center;
+  gap: 6px;
+  box-sizing: border-box;
+  border: 1px solid var(--border-strong);
   border-radius: 999px;
-  background: var(--sage-dark);
-  color: white;
-  box-shadow: 0 8px 24px rgba(24, 33, 28, 0.16);
-  font-size: 0.78rem;
-  font-weight: 800;
+  background: var(--surface);
+  color: var(--sage-dark);
+  box-shadow: 0 4px 14px rgba(43, 33, 41, 0.12);
+  font-size: 0.75rem;
+  font-weight: 700;
   cursor: pointer;
 }
 
 .back-to-top:hover {
   border-color: var(--sage);
   background: var(--sage);
+  color: white;
 }
 
 .back-to-top:focus-visible {
-  outline: 3px solid rgba(91, 101, 85, 0.28);
-  outline-offset: 3px;
+  outline: 3px solid rgba(112, 138, 129, 0.45);
+  outline-offset: -4px;
 }
 
 .back-to-top svg {
@@ -285,7 +292,7 @@ button:disabled {
 }
 
 .staff-sidebar-toggle:focus-visible {
-  outline: 3px solid rgba(91, 101, 85, 0.24);
+  outline: 3px solid rgba(112, 138, 129, 0.38);
   outline-offset: 2px;
 }
 
@@ -326,7 +333,7 @@ button:disabled {
   border: 1px solid transparent;
   border-radius: 8px;
   background: transparent;
-  color: #354039;
+  color: var(--text);
   font-size: 0.9rem;
   font-weight: 600;
   text-align: left;
@@ -352,11 +359,12 @@ button:disabled {
 .staff-nav-link.active {
   background: var(--sage-light);
   color: var(--sage-dark);
+  border-left-color: var(--border-strong);
 }
 
 .staff-nav-link:focus-visible,
 .staff-topbar-action:focus-visible {
-  outline: 3px solid rgba(91, 101, 85, 0.24);
+  outline: 3px solid rgba(112, 138, 129, 0.38);
   outline-offset: 2px;
 }
 
@@ -500,7 +508,7 @@ button:disabled {
   border: 1px solid transparent;
   border-radius: 5px;
   background: transparent;
-  color: #465149;
+  color: var(--muted);
   font-size: 0.78rem;
   font-weight: 700;
   cursor: pointer;
@@ -886,9 +894,19 @@ button:disabled {
 }
 
 .bundle-component-badge {
+  display: table;
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 3px 7px;
+  border-radius: 4px;
   background: var(--surface-sage);
   color: var(--sage-dark);
   border: 1px solid var(--sage);
+  font-size: 0.7rem;
+  font-weight: 700;
+  line-height: 1.25;
+  letter-spacing: 0;
 }
 
 .bundle-editor-summary,
@@ -2617,7 +2635,7 @@ button:disabled {
 
   .public-app .back-to-top {
     right: 12px;
-    bottom: 16px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
   }
 
   .staff-app > :not(.staff-sidebar):not(.staff-topbar):not(.staff-mobile-nav) {
@@ -2668,7 +2686,7 @@ button:disabled {
   }
 
   .staff-mobile-nav button:focus-visible {
-    outline: 3px solid rgba(91, 101, 85, 0.24);
+    outline: 3px solid rgba(112, 138, 129, 0.38);
     outline-offset: -2px;
   }
 
@@ -2798,9 +2816,9 @@ button:disabled {
 }
 
 .curriculum-shell {
-  --curriculum-ink: #243127;
-  --curriculum-green: #47624b;
-  --curriculum-cream: #f6f0e5;
+  --curriculum-ink: #2b2129;
+  --curriculum-green: #5d766d;
+  --curriculum-cream: #f8f1e8;
   color: var(--curriculum-ink);
 }
 
@@ -2824,7 +2842,7 @@ button:disabled {
 .curriculum-hero {
   padding: 26px;
   border-radius: 18px;
-  background: linear-gradient(135deg, #e7efe4, #f7efe2);
+  background: linear-gradient(135deg, var(--sage-light), #f8eadf);
   margin-bottom: 22px;
 }
 
@@ -3565,6 +3583,7 @@ button:disabled {
 .public-app .public-nav button.active {
   background: var(--sage-light);
   color: var(--sage-dark);
+  box-shadow: inset 0 -2px 0 var(--border-strong);
 }
 
 .public-app .public-nav .public-header-request {
