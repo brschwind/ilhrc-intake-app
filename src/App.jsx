@@ -108,6 +108,7 @@ const EMPTY_BOOK_RESERVATION = {
   website: "",
 };
 const BUNDLE_DRAFT_STORAGE_KEY = "ilhrc-active-bundle-draft";
+const STAFF_SIDEBAR_STORAGE_KEY = "ilhrc-staff-sidebar-collapsed";
 
 function loadSavedBundleDraft() {
   try {
@@ -163,6 +164,18 @@ function StaffNavIcon({ name }) {
     filters: (
       <>
         <path d="M4 6h16M7 12h10M10 18h4" />
+      </>
+    ),
+    labels: (
+      <>
+        <path d="M5 4h10l4 4v12H5z" />
+        <path d="M15 4v4h4M8 12h8M8 16h6" />
+      </>
+    ),
+    settings: (
+      <>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-1.6v-.2h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" />
       </>
     ),
   };
@@ -341,6 +354,14 @@ export default function App() {
     return hashView === "catalog" ? "catalog" : "add";
   });
   const [items, setItems] = useState([]);
+  const [staffSidebarCollapsed, setStaffSidebarCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(STAFF_SIDEBAR_STORAGE_KEY) === "true";
+    } catch {
+      return false;
+    }
+  });
+  const [showBackToTop, setShowBackToTop] = useState(false);
   const [bundleComponents, setBundleComponents] = useState([]);
   const [bundleDraft, setBundleDraft] = useState(loadSavedBundleDraft);
   const [bundleReviewOpen, setBundleReviewOpen] = useState(false);
@@ -526,6 +547,9 @@ export default function App() {
     subject: "",
     grade: "",
   });
+  const [curriculumMergeFrom, setCurriculumMergeFrom] = useState("");
+  const [curriculumMergeInto, setCurriculumMergeInto] = useState("");
+  const [curriculumMergeLoading, setCurriculumMergeLoading] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [newCategoryPrice, setNewCategoryPrice] = useState("");
   const [editCategoryName, setEditCategoryName] = useState("");
@@ -558,6 +582,23 @@ export default function App() {
   const shouldShowPasswordRecovery = Boolean(session && passwordRecoveryMode);
   const showStaffShell =
     isAuthenticated && !shouldShowPasswordSetup && !shouldShowPasswordRecovery;
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(STAFF_SIDEBAR_STORAGE_KEY, String(staffSidebarCollapsed));
+    } catch {
+      // The menu still works when browser storage is unavailable.
+    }
+  }, [staffSidebarCollapsed]);
+
+  useEffect(() => {
+    const updateBackToTopVisibility = () => setShowBackToTop(window.scrollY > 500);
+
+    updateBackToTopVisibility();
+    window.addEventListener("scroll", updateBackToTopVisibility, { passive: true });
+
+    return () => window.removeEventListener("scroll", updateBackToTopVisibility);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -1247,9 +1288,9 @@ async function loadOptionLists() {
       ? await supabase.from("location_options").select("*").order("name")
       : { data: [], error: null };
 
-  setCurriculumOptions(curricula?.map((x) => x.name) || []);
-  setSubjectOptions(subjects?.map((x) => x.name) || []);
-  setGradeOptions(grades?.map((x) => x.name) || []);
+  setCurriculumOptions([...new Set(curricula?.map((x) => x.name) || [])]);
+  setSubjectOptions([...new Set(subjects?.map((x) => x.name) || [])]);
+  setGradeOptions([...new Set(grades?.map((x) => x.name) || [])]);
   setCategoryOptions(categories || []);
   setLocationOptions(locations || []);
 }
@@ -2086,6 +2127,57 @@ async function deleteManagedTextOption(optionType) {
 
   setOptionDeleteSelections((current) => ({ ...current, [optionType]: "" }));
   await loadOptionLists();
+}
+
+async function mergeCurriculumOptions() {
+  const sourceName = curriculumMergeFrom;
+  const targetName = curriculumMergeInto;
+
+  if (!sourceName || !targetName) {
+    alert("Choose the curriculum to merge and the curriculum name to keep.");
+    return;
+  }
+
+  if (sourceName === targetName) {
+    alert("Choose two different curriculum names.");
+    return;
+  }
+
+  const affectedItemIds = getItemIdsByOptionValue("curriculum", sourceName);
+  const confirmed = confirm(
+    `Merge "${sourceName}" into "${targetName}"? ${affectedItemIds.length} inventory ${affectedItemIds.length === 1 ? "item" : "items"} will be updated, and "${sourceName}" will be removed from the dropdown.`
+  );
+
+  if (!confirmed) return;
+
+  setCurriculumMergeLoading(true);
+
+  try {
+    await updateItemsOptionValue("curriculum", sourceName, targetName);
+
+    const { error } = await supabase
+      .from("curriculum_options")
+      .delete()
+      .eq("name", sourceName);
+
+    if (error) throw error;
+
+    await logAudit("curriculum_option_merged", "curriculum_option", null, {
+      merged_from: sourceName,
+      merged_into: targetName,
+      updated_item_count: affectedItemIds.length,
+    });
+
+    setCurriculumMergeFrom("");
+    setCurriculumMergeInto("");
+    await loadItems();
+    await loadOptionLists();
+    alert(`Curriculum merged into "${targetName}".`);
+  } catch (error) {
+    alert("Could not merge curriculum names: " + error.message);
+  } finally {
+    setCurriculumMergeLoading(false);
+  }
 }
 
 async function addCategoryOption() {
@@ -5930,6 +6022,50 @@ function renderManagedTextOptionPanel(optionType) {
         Rename
       </button>
 
+      {optionType === "curriculum" && (
+        <div className="option-merge-tools">
+          <h4>Merge Curriculum Names</h4>
+          <p>Move inventory from a duplicate name into the curriculum name you want to keep.</p>
+
+          <label>Duplicate name to merge</label>
+          <select
+            value={curriculumMergeFrom}
+            onChange={(e) => {
+              const nextSource = e.target.value;
+              setCurriculumMergeFrom(nextSource);
+              if (curriculumMergeInto === nextSource) setCurriculumMergeInto("");
+            }}
+          >
+            <option value="">Choose duplicate name</option>
+            {curriculumOptions.map((option) => (
+              <option key={option} value={option}>{option}</option>
+            ))}
+          </select>
+
+          <label>Curriculum name to keep</label>
+          <select
+            value={curriculumMergeInto}
+            onChange={(e) => setCurriculumMergeInto(e.target.value)}
+          >
+            <option value="">Choose name to keep</option>
+            {curriculumOptions
+              .filter((option) => option !== curriculumMergeFrom)
+              .map((option) => (
+                <option key={option} value={option}>{option}</option>
+              ))}
+          </select>
+
+          <button
+            type="button"
+            className="secondary"
+            disabled={!curriculumMergeFrom || !curriculumMergeInto || curriculumMergeLoading}
+            onClick={mergeCurriculumOptions}
+          >
+            {curriculumMergeLoading ? "Merging..." : "Merge Curriculum"}
+          </button>
+        </div>
+      )}
+
       <label>Remove From Dropdown</label>
       <select
         value={optionDeleteSelections[optionType]}
@@ -6821,9 +6957,9 @@ function renderUserManagement() {
 }
 
   return (
-    <main className={`app ${showStaffShell ? "staff-app" : "public-app"}`}>
+    <main className={`app ${showStaffShell ? `staff-app ${staffSidebarCollapsed ? "staff-sidebar-collapsed" : ""}` : "public-app"}`}>
       {showStaffShell && (
-        <aside className="staff-sidebar" aria-label="Staff navigation">
+        <aside className={`staff-sidebar ${staffSidebarCollapsed ? "is-collapsed" : ""}`} aria-label="Staff navigation">
           <div className="staff-sidebar-brand">
             <img
               className="staff-brand-logo"
@@ -6832,60 +6968,79 @@ function renderUserManagement() {
             />
           </div>
 
-          <nav className="staff-sidebar-nav">
+          <button
+            type="button"
+            className="staff-sidebar-toggle"
+            aria-controls="staff-sidebar-navigation"
+            aria-expanded={!staffSidebarCollapsed}
+            aria-label={staffSidebarCollapsed ? "Expand staff menu" : "Collapse staff menu"}
+            title={staffSidebarCollapsed ? "Expand menu" : "Collapse menu"}
+            onClick={() => setStaffSidebarCollapsed((current) => !current)}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d={staffSidebarCollapsed ? "m9 5 7 7-7 7" : "m15 5-7 7 7 7"} />
+            </svg>
+            <span>{staffSidebarCollapsed ? "Expand menu" : "Collapse menu"}</span>
+          </button>
+
+          <nav className="staff-sidebar-nav" id="staff-sidebar-navigation">
             <button
               type="button"
               className={`staff-nav-link ${view === "add" ? "active" : ""}`}
               aria-current={view === "add" ? "page" : undefined}
+              title={staffSidebarCollapsed ? "Add Item" : undefined}
               onClick={() => {
                 setView("add");
                 cancelEditing();
               }}
             >
-              <span className="staff-nav-dot" aria-hidden="true" />
-              Add Item
+              <StaffNavIcon name="add" />
+              <span className="staff-nav-label">Add Item</span>
             </button>
 
             <button
               type="button"
               className={`staff-nav-link ${view === "inventory" ? "active" : ""}`}
               aria-current={view === "inventory" ? "page" : undefined}
+              title={staffSidebarCollapsed ? "Inventory" : undefined}
               onClick={() => {
                 setView("inventory");
                 cancelEditing();
                 loadItems();
               }}
             >
-              <span className="staff-nav-dot" aria-hidden="true" />
-              Inventory
+              <StaffNavIcon name="inventory" />
+              <span className="staff-nav-label">Inventory</span>
             </button>
 
             <button
               type="button"
               className={`staff-nav-link staff-nav-subitem ${view === "labels" ? "active" : ""}`}
               aria-current={view === "labels" ? "page" : undefined}
+              title={staffSidebarCollapsed ? "Print Labels" : undefined}
               onClick={() => {
                 setView("labels");
                 cancelEditing();
                 loadItems();
               }}
             >
-              <span className="staff-nav-dot" aria-hidden="true" />
-              Print Labels
+              <StaffNavIcon name="labels" />
+              <span className="staff-nav-label">Print Labels</span>
             </button>
 
             <button
               type="button"
               className={`staff-nav-link ${view === "requests" ? "active" : ""}`}
               aria-current={view === "requests" ? "page" : undefined}
+              title={staffSidebarCollapsed ? "Requests & Reservations" : undefined}
               onClick={() => {
                 setView("requests");
                 cancelEditing();
                 loadItems();
               }}
             >
-              <span className="staff-nav-dot" aria-hidden="true" />
-              <span>Requests & Reservations</span>
+              <StaffNavIcon name="requests" />
+              <span className="staff-nav-label">Requests & Reservations</span>
               {staffRequestAttentionCount > 0 && (
                 <span className="nav-count-badge">{staffRequestAttentionCount}</span>
               )}
@@ -6896,13 +7051,14 @@ function renderUserManagement() {
                 type="button"
                 className={`staff-nav-link ${view === "users" ? "active" : ""}`}
                 aria-current={view === "users" ? "page" : undefined}
+                title={staffSidebarCollapsed ? "Team Management" : undefined}
                 onClick={() => {
                   setView("users");
                   cancelEditing();
                 }}
               >
-                <span className="staff-nav-dot" aria-hidden="true" />
-                Team Management
+                <StaffNavIcon name="team" />
+                <span className="staff-nav-label">Team Management</span>
               </button>
             )}
 
@@ -6910,14 +7066,15 @@ function renderUserManagement() {
               type="button"
               className={`staff-nav-link ${view === "curricula" ? "active" : ""}`}
               aria-current={view === "curricula" ? "page" : undefined}
+              title={staffSidebarCollapsed ? "Curriculum Lists" : undefined}
               onClick={() => {
                 setView("curricula");
                 cancelEditing();
                 loadItems();
               }}
             >
-              <span className="staff-nav-dot" aria-hidden="true" />
-              Curriculum Lists
+              <StaffNavIcon name="lists" />
+              <span className="staff-nav-label">Curriculum Lists</span>
             </button>
           </nav>
 
@@ -6926,6 +7083,7 @@ function renderUserManagement() {
               type="button"
               className={`staff-nav-link ${view === "options" ? "active" : ""}`}
               aria-current={view === "options" ? "page" : undefined}
+              title={staffSidebarCollapsed ? "Settings" : undefined}
               onClick={() => {
                 setView("options");
                 cancelEditing();
@@ -6933,8 +7091,8 @@ function renderUserManagement() {
                 loadOptionLists();
               }}
             >
-              <span className="staff-nav-dot" aria-hidden="true" />
-              Settings
+              <StaffNavIcon name="settings" />
+              <span className="staff-nav-label">Settings</span>
             </button>
           </div>
         </aside>
@@ -9779,7 +9937,7 @@ function renderUserManagement() {
           <div>
             <h3>{item.title}</h3>
             {item.item_type === "bundle" && (
-              <p className="bundle-badge">Complete set · {item.bundle_piece_count || 0} pieces</p>
+              <p className="bundle-badge">Set · {item.bundle_piece_count || 0} pieces</p>
             )}
 
             {item.curriculum && <p>{item.curriculum}</p>}
@@ -9935,6 +10093,22 @@ function renderUserManagement() {
 )}
   </section>
 )}
+      {showBackToTop && (
+        <button
+          type="button"
+          className="back-to-top"
+          aria-label="Back to top"
+          onClick={() => {
+            const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+            window.scrollTo({ top: 0, behavior: reduceMotion ? "auto" : "smooth" });
+          }}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 10 6-6 6 6M12 4v16" />
+          </svg>
+          <span>Back to top</span>
+        </button>
+      )}
     </main>
   );
 }
