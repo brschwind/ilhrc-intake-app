@@ -1573,6 +1573,28 @@ button:disabled {
   margin-top: 12px;
 }
 
+.reservation-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.reservation-print-button {
+  margin-top: 0;
+}
+
+.reservation-print-summary {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.reservation-pull-sheets {
+  display: none;
+}
+
 .reservation-staff-card {
   display: flex;
   justify-content: space-between;
@@ -1616,6 +1638,234 @@ button:disabled {
 .reservation-status.picked_up { background: #e6e8e7; color: #3f4943; }
 .reservation-status.cancelled,
 .reservation-status.expired { background: #f4e3e1; color: var(--danger); }
+
+@media print {
+  @page {
+    size: letter portrait;
+    margin: 0.45in;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  body {
+    background: #fff !important;
+  }
+
+  .staff-app {
+    padding: 0 !important;
+  }
+
+  .staff-app > * {
+    display: none !important;
+  }
+
+  .staff-app > .customer-requests-page,
+  .customer-requests-page > .reservation-staff-section,
+  .reservation-staff-section > .reservation-pull-sheets {
+    display: block !important;
+  }
+
+  .staff-app > .customer-requests-page {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    box-shadow: none !important;
+  }
+
+  .customer-requests-page > *:not(.reservation-staff-section),
+  .reservation-staff-section > *:not(.reservation-pull-sheets) {
+    display: none !important;
+  }
+
+  .customer-requests-page > .reservation-staff-section {
+    margin: 0;
+    padding: 0;
+    border: 0;
+    background: #fff;
+  }
+
+  .reservation-pull-sheets,
+  .reservation-pull-sheets * {
+    visibility: visible !important;
+  }
+
+  .reservation-pull-sheets {
+    display: block;
+    color: #20251f;
+    font-family: Arial, Helvetica, sans-serif;
+  }
+
+  .reservation-pull-sheet {
+    min-height: 9.9in;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .reservation-pull-sheet:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+
+  .pull-sheet-header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+    padding: 0 0 16px;
+    border-bottom: 3px solid #477256;
+  }
+
+  .pull-sheet-header img {
+    width: 72px;
+    height: 72px;
+    object-fit: contain;
+  }
+
+  .pull-sheet-header h1,
+  .pull-sheet-header p {
+    margin: 0;
+  }
+
+  .pull-sheet-header h1 {
+    margin: 3px 0;
+    color: #273c2d;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 26pt;
+    line-height: 1.05;
+  }
+
+  .pull-sheet-kicker {
+    color: #477256;
+    font-size: 9pt;
+    font-weight: 800;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+  }
+
+  .pull-sheet-customer {
+    display: grid;
+    grid-template-columns: 2fr 1fr 1fr;
+    gap: 10px;
+    margin: 14px 0 18px;
+    padding: 11px 13px;
+    border: 1px solid #bdc8bd;
+    background: #f2f6f1;
+  }
+
+  .pull-sheet-customer div,
+  .pull-sheet-customer strong,
+  .pull-sheet-customer span {
+    display: block;
+  }
+
+  .pull-sheet-customer span,
+  .pull-sheet-book dt {
+    color: #647066;
+    font-size: 7.5pt;
+    font-weight: 800;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .pull-sheet-customer strong {
+    margin-top: 3px;
+    font-size: 10pt;
+    overflow-wrap: anywhere;
+  }
+
+  .pull-sheet-books {
+    display: grid;
+    gap: 10px;
+  }
+
+  .pull-sheet-book {
+    display: grid;
+    grid-template-columns: 23px 24px minmax(0, 1fr);
+    gap: 9px;
+    padding: 11px 12px;
+    border: 1.5px solid #9daa9e;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .pull-sheet-checkbox {
+    width: 18px;
+    height: 18px;
+    margin-top: 1px;
+    border: 2px solid #273c2d;
+  }
+
+  .pull-sheet-book-number {
+    padding-top: 2px;
+    color: #477256;
+    font-size: 10pt;
+    font-weight: 800;
+  }
+
+  .pull-sheet-book h2,
+  .pull-sheet-book p,
+  .pull-sheet-book dl,
+  .pull-sheet-book dd {
+    margin: 0;
+  }
+
+  .pull-sheet-book h2 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 14pt;
+    line-height: 1.15;
+  }
+
+  .pull-sheet-book-details > p {
+    margin-top: 3px;
+    color: #59635b;
+    font-size: 9pt;
+  }
+
+  .pull-sheet-book dl {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 8px;
+    margin-top: 9px;
+  }
+
+  .pull-sheet-book dd {
+    margin-top: 2px;
+    font-size: 9pt;
+    font-weight: 700;
+  }
+
+  .pull-sheet-book .pull-sheet-reference {
+    margin-top: 7px;
+    font-size: 7.5pt;
+  }
+
+  .pull-sheet-footer {
+    display: grid;
+    grid-template-columns: 1fr 0.6fr 1.25fr;
+    gap: 18px;
+    margin-top: 22px;
+    padding-top: 12px;
+    border-top: 2px solid #477256;
+  }
+
+  .pull-sheet-footer div {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    font-size: 8pt;
+    font-weight: 800;
+    text-transform: uppercase;
+  }
+
+  .pull-sheet-footer i {
+    flex: 1;
+    height: 18px;
+    border-bottom: 1px solid #647066;
+  }
+}
 
 .customer-match-card,
 .customer-request-card {
