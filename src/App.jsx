@@ -32,6 +32,8 @@ import {
   getBundlePieceCount,
 } from "./bundleInventory";
 import { groupReservationsByCustomer } from "./reservationPrint";
+import { CONNECTIONS_ENABLED } from "./connections/connectionsConfig.js";
+import { navigateToPath } from "./routing/appRoutes.js";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -7320,6 +7322,14 @@ function renderUserManagement() {
                     >
                       Curriculum Lists
                     </button>
+                    {CONNECTIONS_ENABLED && (
+                      <button
+                        type="button"
+                        onClick={() => navigateToPath("/connections")}
+                      >
+                        Connections
+                      </button>
+                    )}
                     <button
                       className="public-header-request"
                       type="button"
