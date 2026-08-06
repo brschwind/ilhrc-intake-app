@@ -256,13 +256,25 @@ test("Connections Milestone 1 migration and anon/team/admin security matrix", as
       "select public.update_connection_review_controls($1, 'public', 'core_county', '', true)",
       [resourceId],
     );
-    await asRole(
+    const phoneVerification = await asRole(
       db,
       "authenticated",
       TEAM_ID,
-      "select public.record_connection_verification($1, current_date, 'phone', 'Resource Director', 'verified', 'public', 'Confirmed for annual review.')",
+      "select method, performed_by from public.record_connection_verification($1, current_date, 'phone', 'Resource Director', 'verified', 'public', 'Confirmed for annual review.')",
       [resourceId],
     );
+    assert.equal(phoneVerification.rows[0].method, "phone");
+    assert.equal(phoneVerification.rows[0].performed_by, TEAM_ID);
+
+    const inPersonVerification = await asRole(
+      db,
+      "authenticated",
+      TEAM_ID,
+      "select method, performed_by from public.record_connection_verification($1, current_date, 'in_person', 'Resource Director', 'changes_required', null, 'Follow-up changes recorded in person.')",
+      [resourceId],
+    );
+    assert.equal(inPersonVerification.rows[0].method, "in_person");
+    assert.equal(inPersonVerification.rows[0].performed_by, TEAM_ID);
     await asRole(
       db,
       "authenticated",
@@ -271,16 +283,20 @@ test("Connections Milestone 1 migration and anon/team/admin security matrix", as
       [resourceId],
     );
 
-    await assert.rejects(
-      asRole(
-        db,
-        "authenticated",
-        TEAM_ID,
-        "select public.admin_approve_connection($1, 'public')",
-        [resourceId],
-      ),
-      /Admin access is required/i,
-    );
+    const adminOnlyActions = [
+      ["approve", "select public.admin_approve_connection($1, 'public')"],
+      ["publish", "select public.admin_publish_connection($1)"],
+      ["pause", "select public.admin_pause_connection($1, 'Team cannot pause')"],
+      ["decline", "select public.admin_decline_connection($1, 'Team cannot decline')"],
+      ["archive", "select public.admin_archive_connection($1, 'Team cannot archive')"],
+    ];
+    for (const [action, sql] of adminOnlyActions) {
+      await assert.rejects(
+        asRole(db, "authenticated", TEAM_ID, sql, [resourceId]),
+        /Admin access is required/i,
+        `team member must not ${action} a connection`,
+      );
+    }
     await assert.rejects(
       asRole(
         db,
