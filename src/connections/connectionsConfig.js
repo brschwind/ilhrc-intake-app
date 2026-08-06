@@ -6,4 +6,5 @@ const runtimeEnvironment = import.meta.env || {};
 
 export const CONNECTIONS_ENABLED = isConnectionsFeatureEnabled(runtimeEnvironment);
 export const CONNECTIONS_FIXTURES_ENABLED =
-  CONNECTIONS_ENABLED && (runtimeEnvironment.DEV === true || runtimeEnvironment.MODE === "test");
+  CONNECTIONS_ENABLED && runtimeEnvironment.VITE_CONNECTIONS_DATA_SOURCE === "fixtures" &&
+  (runtimeEnvironment.DEV === true || runtimeEnvironment.MODE === "test");

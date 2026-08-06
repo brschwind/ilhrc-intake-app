@@ -13,6 +13,13 @@ import {
   validatePublicConnectionResource,
 } from "./connections/connectionsModel.js";
 import { createConnectionsService } from "./connections/connectionsService.js";
+import {
+  CONNECTIONS_CONTACT_SELECT,
+  CONNECTIONS_DIRECTORY_SELECT,
+  CONNECTIONS_LOCATION_SELECT,
+  CONNECTIONS_PUBLIC_VIEWS,
+  createConnectionsSupabaseAdapter,
+} from "./connections/connectionsSupabaseAdapter.js";
 import { connectionFixtures } from "./connections/connectionsFixtures.js";
 import {
   getAuthUrlTypeFromLocation,
@@ -153,6 +160,60 @@ test("fixtures are validated and only public-safe service fields are consumed", 
   });
   const loaded = await service.listResources();
   assert.equal("internal_notes" in loaded[0], false);
+});
+
+test("Supabase adapter reads only approved public views and public response fields", async () => {
+  const calls = [];
+  const responses = {
+    [CONNECTIONS_PUBLIC_VIEWS.directory]: [{
+      ...connectionFixtures[0],
+      internal_notes: "must never enter the client model",
+      locations: undefined,
+      contacts: undefined,
+    }],
+    [CONNECTIONS_PUBLIC_VIEWS.locations]: [{
+      resource_slug: connectionFixtures[0].slug,
+      ...connectionFixtures[0].locations[0],
+      private_instructions: "must be removed",
+    }],
+    [CONNECTIONS_PUBLIC_VIEWS.contacts]: [{
+      resource_slug: connectionFixtures[0].slug,
+      ...connectionFixtures[0].contacts[0],
+      consent_status: "must be removed",
+    }],
+  };
+  const expectedSelects = {
+    [CONNECTIONS_PUBLIC_VIEWS.directory]: CONNECTIONS_DIRECTORY_SELECT,
+    [CONNECTIONS_PUBLIC_VIEWS.locations]: CONNECTIONS_LOCATION_SELECT,
+    [CONNECTIONS_PUBLIC_VIEWS.contacts]: CONNECTIONS_CONTACT_SELECT,
+  };
+  const client = {
+    from(view) {
+      assert.ok(Object.values(CONNECTIONS_PUBLIC_VIEWS).includes(view));
+      return {
+        select(fields) {
+          calls.push({ view, fields });
+          return {
+            async order() {
+              return { data: responses[view], error: null };
+            },
+          };
+        },
+      };
+    },
+  };
+
+  const adapter = createConnectionsSupabaseAdapter(client);
+  const resources = await adapter.listResources();
+  assert.equal(resources.length, 1);
+  assert.deepEqual(calls, Object.values(CONNECTIONS_PUBLIC_VIEWS).map((view) => ({
+    view,
+    fields: expectedSelects[view],
+  })));
+  assert.equal("internal_notes" in resources[0], false);
+  assert.equal("resource_slug" in resources[0].locations[0], false);
+  assert.equal("private_instructions" in resources[0].locations[0], false);
+  assert.equal("consent_status" in resources[0].contacts[0], false);
 });
 
 test("public Connections markup supports mobile and keyboard access", () => {

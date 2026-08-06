@@ -1,22 +1,26 @@
 import { toPublicConnectionResource, validatePublicConnectionResource } from "./connectionsModel.js";
 
-export function createConnectionsService({ enabled = false, fixturesEnabled = false, fixtureLoader } = {}) {
+export function createConnectionsService({ enabled = false, adapter, fixturesEnabled = false, fixtureLoader } = {}) {
   let cachedResources;
 
-  async function loadFixtureResources() {
+  async function loadResources() {
     if (!enabled) return [];
-    if (!fixturesEnabled) throw new Error("Connections data is not configured for this environment.");
     if (!cachedResources) {
-      if (!fixtureLoader) throw new Error("Connections fixture loading is unavailable in this environment.");
-      const module = await fixtureLoader();
-      cachedResources = (module.connectionFixtures || []).map(validatePublicConnectionResource);
+      if (fixturesEnabled) {
+        if (!fixtureLoader) throw new Error("Connections fixture loading is unavailable in this environment.");
+        const module = await fixtureLoader();
+        cachedResources = (module.connectionFixtures || []).map(validatePublicConnectionResource);
+      } else {
+        if (!adapter?.listResources) throw new Error("Connections data is not configured for this environment.");
+        cachedResources = (await adapter.listResources()).map(validatePublicConnectionResource);
+      }
     }
     return cachedResources.map(toPublicConnectionResource);
   }
 
   return {
     async listResources() {
-      return loadFixtureResources();
+      return loadResources();
     },
   };
 }
