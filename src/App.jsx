@@ -31,6 +31,7 @@ import {
   getBundleIndividualValue,
   getBundlePieceCount,
 } from "./bundleInventory";
+import { groupReservationsByCustomer } from "./reservationPrint";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -6677,6 +6678,11 @@ function renderCustomerRequests() {
     }
     return reservationFilter === "all" || reservation.status === reservationFilter;
   });
+  const pullSheetReservations = bookReservations.filter((reservation) =>
+    reservation.status === "pending" &&
+    new Date(reservation.expires_at).getTime() > Date.now()
+  );
+  const reservationPullGroups = groupReservationsByCustomer(pullSheetReservations);
 
   return (
     <section className="card customer-requests-page">
@@ -6699,16 +6705,32 @@ function renderCustomerRequests() {
             </h3>
             <p>Each active reservation holds one copy out of the public catalog until pickup or expiration.</p>
           </div>
-          <select value={reservationFilter} onChange={(e) => setReservationFilter(e.target.value)}>
-            <option value="active">Active</option>
-            <option value="pending">Pending</option>
-            <option value="ready">Ready</option>
-            <option value="expired">Expired</option>
-            <option value="picked_up">Picked Up</option>
-            <option value="cancelled">Cancelled</option>
-            <option value="all">All</option>
-          </select>
+          <div className="reservation-heading-actions">
+            <button
+              type="button"
+              className="secondary reservation-print-button"
+              onClick={() => window.print()}
+              disabled={reservationPullGroups.length === 0}
+            >
+              Print Pull Sheets
+            </button>
+            <select value={reservationFilter} onChange={(e) => setReservationFilter(e.target.value)}>
+              <option value="active">Active</option>
+              <option value="pending">Pending</option>
+              <option value="ready">Ready</option>
+              <option value="expired">Expired</option>
+              <option value="picked_up">Picked Up</option>
+              <option value="cancelled">Cancelled</option>
+              <option value="all">All</option>
+            </select>
+          </div>
         </div>
+
+        {reservationPullGroups.length > 0 && (
+          <p className="reservation-print-summary">
+            Print {pullSheetReservations.length} pending {pullSheetReservations.length === 1 ? "book" : "books"} on {reservationPullGroups.length} {reservationPullGroups.length === 1 ? "customer sheet" : "customer sheets"}.
+          </p>
+        )}
 
         {visibleReservations.length === 0 && <p>No reservations in this section.</p>}
         <div className="reservation-staff-list">
@@ -6744,6 +6766,62 @@ function renderCustomerRequests() {
                   )}
                 </div>
               </article>
+            );
+          })}
+        </div>
+
+        <div className="reservation-pull-sheets" aria-hidden="true">
+          {reservationPullGroups.map((group) => {
+            const emails = [...new Set(group.reservations.map(({ email }) => email?.trim()).filter(Boolean))];
+            const phones = [...new Set(group.reservations.map(({ phone }) => phone?.trim()).filter(Boolean))];
+            const customerName = group.customer.customer_name || "Customer";
+            return (
+              <section className="reservation-pull-sheet" key={group.reservations.map(({ id }) => id).join("-")}>
+                <header className="pull-sheet-header">
+                  <img src="/ilhrc-logo.png" alt="" />
+                  <div>
+                    <p className="pull-sheet-kicker">Reservation pull sheet</p>
+                    <h1>{customerName}</h1>
+                    <p>{group.reservations.length} {group.reservations.length === 1 ? "book" : "books"} to pull</p>
+                  </div>
+                </header>
+
+                <div className="pull-sheet-customer">
+                  <div><span>Contact</span><strong>{[...emails, ...phones].join(" · ")}</strong></div>
+                  <div><span>Preferred</span><strong>{group.customer.preferred_contact || "Either"}</strong></div>
+                  <div><span>Printed</span><strong>{new Date().toLocaleDateString()}</strong></div>
+                </div>
+
+                <div className="pull-sheet-books">
+                  {group.reservations.map((reservation, index) => {
+                    const item = itemById[String(reservation.item_id)];
+                    const details = [item?.curriculum, item?.subject, item?.grade_level, item?.edition].filter(Boolean);
+                    return (
+                      <article className="pull-sheet-book" key={reservation.id}>
+                        <div className="pull-sheet-checkbox" aria-hidden="true" />
+                        <div className="pull-sheet-book-number">{index + 1}</div>
+                        <div className="pull-sheet-book-details">
+                          <h2>{item?.title || "Reserved book"}</h2>
+                          {details.length > 0 && <p>{details.join(" · ")}</p>}
+                          <dl>
+                            <div><dt>Location</dt><dd>{item?.location || "—"}</dd></div>
+                            <div><dt>SKU</dt><dd>{item?.sku || "—"}</dd></div>
+                            <div><dt>ISBN</dt><dd>{item?.isbn || "—"}</dd></div>
+                            <div><dt>Hold through</dt><dd>{new Date(reservation.expires_at).toLocaleDateString()}</dd></div>
+                          </dl>
+                          <p className="pull-sheet-reference">Reservation {String(reservation.id).slice(0, 8).toUpperCase()}</p>
+                        </div>
+                      </article>
+                    );
+                  })}
+                </div>
+
+                <footer className="pull-sheet-footer">
+                  <div><span>Pulled by</span><i /></div>
+                  <div><span>Date</span><i /></div>
+                  <div><span>Pile / desk location</span><i /></div>
+                </footer>
+              </section>
             );
           })}
         </div>
