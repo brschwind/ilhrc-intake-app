@@ -651,7 +651,7 @@ export default function App() {
       mounted = false;
       listener.subscription.unsubscribe();
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- subscribe once; auth events supply the current session
 
   useEffect(() => {
     if (passwordRecoveryMode) return;
@@ -734,18 +734,18 @@ export default function App() {
       loadIntakeRules();
       loadCustomerRequestData();
     }
-  }, [authLoading, shouldShowPasswordSetup, isAuthenticated]);
+  }, [authLoading, shouldShowPasswordSetup, isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps -- reload only when access state changes
 
   useEffect(() => {
     if (view === "users" && isAdmin) {
       loadUsers();
       loadAuditLogs();
     }
-  }, [view, isAdmin]);
+  }, [view, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps -- load when the admin opens this view
 
   useEffect(() => {
     if (view === "options" && isAdmin) loadRuleSuggestionData();
-  }, [view, isAdmin]);
+  }, [view, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps -- load when the admin opens this view
 
   useEffect(() => {
     if (view === "requests" && isAuthenticated) loadCustomerRequestData();
