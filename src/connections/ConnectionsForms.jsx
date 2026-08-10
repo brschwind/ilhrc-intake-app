@@ -1,7 +1,12 @@
 import { useState } from "react";
 import { ConnectionsHeader } from "./ConnectionsPublic.jsx";
 import { CONNECTION_CATEGORY_OPTIONS } from "./connectionsWorkflowModel.js";
-import { CONNECTIONS_BASE_PATH } from "../routing/appRoutes.js";
+import {
+  CONNECTIONS_BASE_PATH,
+  CONNECTIONS_REFERRAL_PATH,
+  CONNECTIONS_SUBMIT_PATH,
+} from "../routing/appRoutes.js";
+import { useConnectionsMetadata } from "./connectionsMetadata.js";
 import "./ConnectionsWorkflows.css";
 
 function FormStatus({ status }) {
@@ -25,7 +30,8 @@ function submitForm(event, action, setStatus) {
   });
 }
 
-function WorkflowPage({ children, onNavigate, eyebrow, title, intro }) {
+function WorkflowPage({ children, onNavigate, eyebrow, title, intro, metadataPage, pathname }) {
+  useConnectionsMetadata({ page: metadataPage, pathname, enabled: true });
   return (
     <div className="connections-app">
       <a className="connections-skip-link" href="#main-content">Skip to main content</a>
@@ -54,6 +60,8 @@ export function ConnectionsSubmissionPage({ workflowService, onNavigate }) {
       eyebrow="Native Connections intake"
       title="Suggest a resource"
       intro="Send a homeschool-friendly resource for IL HRC to research. Every submission is reviewed and personally verified before an administrator can publish it."
+      metadataPage="submit"
+      pathname={CONNECTIONS_SUBMIT_PATH}
     >
       <aside className="connections-privacy-note"><strong>Please do not include information about children or minors.</strong> Submit only adult or organizational contact information needed for IL HRC to follow up.</aside>
       <form className="connections-workflow-form" onSubmit={(event) => submitForm(event, (values) => workflowService.submitResource(values), setStatus)}>
@@ -126,7 +134,7 @@ export function ConnectionsSubmissionPage({ workflowService, onNavigate }) {
 export function ConnectionsCorrectionPage({ resourceSlug, workflowService, onNavigate }) {
   const [status, setStatus] = useState({ kind: "idle", message: "" });
   return (
-    <WorkflowPage onNavigate={onNavigate} eyebrow="Listing accuracy and privacy" title="Request a correction or removal" intro="Tell IL HRC what needs to change. Privacy-related removal requests are prioritized for prompt review.">
+    <WorkflowPage onNavigate={onNavigate} eyebrow="Listing accuracy and privacy" title="Request a correction or removal" intro="Tell IL HRC what needs to change. Privacy-related removal requests are prioritized for prompt review." metadataPage="correction" pathname={`${CONNECTIONS_BASE_PATH}/${resourceSlug}/correction`}>
       <form className="connections-workflow-form" onSubmit={(event) => submitForm(event, (values) => workflowService.submitCorrection(resourceSlug, values), setStatus)}>
         <div className="connections-form-grid">
           <label>Your name<input name="requester_name" required maxLength="200" /></label>
@@ -148,7 +156,7 @@ export function ConnectionsCorrectionPage({ resourceSlug, workflowService, onNav
 export function ConnectionsReferralPage({ workflowService, onNavigate }) {
   const [status, setStatus] = useState({ kind: "idle", message: "" });
   return (
-    <WorkflowPage onNavigate={onNavigate} eyebrow="Resource matching" title="Request help finding a resource" intro="Tell IL HRC what kind of resource you are looking for. When a resource uses a private-introduction process, IL HRC contacts its leader. The leader must approve each introduction before any private contact information is shared.">
+    <WorkflowPage onNavigate={onNavigate} eyebrow="Resource matching" title="Request help finding a resource" intro="Tell IL HRC what kind of resource you are looking for. When a resource uses a private-introduction process, IL HRC contacts its leader. The leader must approve each introduction before any private contact information is shared." metadataPage="referral" pathname={CONNECTIONS_REFERRAL_PATH}>
       <form className="connections-workflow-form" onSubmit={(event) => submitForm(event, (values) => workflowService.submitReferral(values), setStatus)}>
         <div className="connections-form-grid">
           <label>Your name<input name="requester_name" required maxLength="200" /></label>

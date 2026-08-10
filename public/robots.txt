@@ -1,0 +1,5 @@
+User-agent: *
+Disallow: /connections/admin
+Disallow: /connections/submit
+Disallow: /connections/referral
+Disallow: /connections/*/correction

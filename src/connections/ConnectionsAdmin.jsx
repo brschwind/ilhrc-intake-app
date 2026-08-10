@@ -8,6 +8,8 @@ import {
   formatWorkflowStatus,
   suggestedConnectionSlug,
 } from "./connectionsWorkflowModel.js";
+import { CONNECTIONS_ADMIN_PATH } from "../routing/appRoutes.js";
+import { useConnectionsMetadata } from "./connectionsMetadata.js";
 import "./ConnectionsWorkflows.css";
 
 const EMPTY_QUEUES = { submissions: [], corrections: [], referrals: [], resources: [], verifications: [], notes: [], activity: [] };
@@ -94,6 +96,7 @@ function ResourceCard({ item, isAdmin, verifications, notes, activity, service, 
 }
 
 export default function ConnectionsAdmin({ workflowService, onNavigate }) {
+  useConnectionsMetadata({ page: "admin", pathname: CONNECTIONS_ADMIN_PATH, enabled: true });
   const [session, setSession] = useState(null);
   const [profile, setProfile] = useState(null);
   const [queues, setQueues] = useState(EMPTY_QUEUES);

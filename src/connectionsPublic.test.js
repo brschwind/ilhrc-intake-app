@@ -29,6 +29,7 @@ import {
 } from "./routing/appRoutes.js";
 
 const componentSource = await readFile(new URL("./connections/ConnectionsPublic.jsx", import.meta.url), "utf8");
+const metadataSource = await readFile(new URL("./connections/connectionsMetadata.js", import.meta.url), "utf8");
 const styleSource = await readFile(new URL("./connections/ConnectionsPublic.css", import.meta.url), "utf8");
 const routerSource = await readFile(new URL("./AppRouter.jsx", import.meta.url), "utf8");
 const appSource = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
@@ -110,7 +111,7 @@ test("resource detail lookup supports shareable slugs and invalid slugs", () => 
   assert.equal(matchConnectionsPath("/connections/UPPERCASE").kind, "invalid");
   assert.equal(matchConnectionsPath("/connections/%2Fprivate").kind, "invalid");
   assert.match(componentSource, /Resource not found/);
-  assert.match(componentSource, /document\.title = `\$\{resource\.name\} \| IL HRC Connections`/);
+  assert.match(metadataSource, /title: `\$\{resource\.name\} \| IL HRC Connections`/);
 });
 
 test("approved public disclosures are presented verbatim", () => {

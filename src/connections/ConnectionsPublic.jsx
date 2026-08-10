@@ -13,6 +13,7 @@ import {
   CONNECTIONS_REFERRAL_PATH,
   CONNECTIONS_SUBMIT_PATH,
 } from "../routing/appRoutes.js";
+import { useConnectionsMetadata } from "./connectionsMetadata.js";
 import "./ConnectionsPublic.css";
 
 export function ConnectionsHeader({ onNavigate, showDirectory = true, showConnectionsLinks = true }) {
@@ -58,6 +59,7 @@ function ConnectionsNotFound({ onNavigate }) {
 }
 
 export function ConnectionsUnavailable({ onNavigate }) {
+  useConnectionsMetadata({ page: "invalid", pathname: CONNECTIONS_BASE_PATH, enabled: false });
   return (
     <div className="connections-app">
       <ConnectionsHeader onNavigate={onNavigate} showDirectory={false} showConnectionsLinks={false} />
@@ -177,12 +179,6 @@ function contactHref(contact) {
 }
 
 function ConnectionsDetail({ resource, onNavigate }) {
-  useEffect(() => {
-    const previousTitle = document.title;
-    document.title = `${resource.name} | IL HRC Connections`;
-    return () => { document.title = previousTitle; };
-  }, [resource.name]);
-
   return (
     <main id="main-content" className="connections-main connections-detail">
       <a className="connections-back-link" href={CONNECTIONS_BASE_PATH} onClick={(event) => onNavigate(event, CONNECTIONS_BASE_PATH)}>← Back to all resources</a>
@@ -262,12 +258,26 @@ export default function ConnectionsPublic({ route, service, onNavigate }) {
     return () => { active = false; };
   }, [route.page, service]);
 
+  const resource = status === "ready" && route.page === "detail"
+    ? findConnectionBySlug(resources, route.slug)
+    : null;
+  const metadataPage = status === "error"
+    ? "error"
+    : route.page === "detail" && !resource
+      ? "invalid"
+      : route.page;
+  useConnectionsMetadata({
+    page: metadataPage,
+    pathname: route.pathname,
+    resource,
+    enabled: true,
+  });
+
   let content;
   if (route.page === "invalid") content = <ConnectionsNotFound onNavigate={onNavigate} />;
   else if (status === "loading") content = <main id="main-content" className="connections-status-page" aria-live="polite"><p>Loading Connections…</p></main>;
   else if (status === "error") content = <main id="main-content" className="connections-status-page" role="alert"><h1>Connections is temporarily unavailable</h1><p>{message}</p></main>;
   else if (route.page === "detail") {
-    const resource = findConnectionBySlug(resources, route.slug);
     content = resource ? <ConnectionsDetail resource={resource} onNavigate={onNavigate} /> : <ConnectionsNotFound onNavigate={onNavigate} />;
   } else content = <ConnectionsDirectory resources={resources} onNavigate={onNavigate} />;
 

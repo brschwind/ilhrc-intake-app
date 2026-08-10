@@ -36,7 +36,7 @@
 .connections-back-link { color: #5d766d; font-weight: 500; }
 .connections-staff-access { min-height: 38px; padding: 9px 0; color: #6f666b; font-size: 0.86rem; font-weight: 400; text-decoration: none; }
 .connections-staff-access:hover { color: #2b2129; text-decoration: underline; }
-.connections-site-header a:focus-visible, .connections-app button:focus-visible, .connections-app input:focus-visible, .connections-app select:focus-visible { outline: 3px solid #86664e; outline-offset: 3px; }
+.connections-app a:focus-visible, .connections-app button:focus-visible, .connections-app input:focus-visible, .connections-app select:focus-visible, .connections-app textarea:focus-visible { outline: 3px solid #86664e; outline-offset: 3px; }
 
 .connections-skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 10px 14px; transform: translateY(-150%); background: #fff; color: #302c27; }
 .connections-skip-link:focus { transform: translateY(0); }
