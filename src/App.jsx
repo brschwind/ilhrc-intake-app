@@ -32,6 +32,9 @@ import {
   getBundlePieceCount,
 } from "./bundleInventory";
 import { groupReservationsByCustomer } from "./reservationPrint";
+import { CONNECTIONS_ENABLED } from "./connections/connectionsConfig.js";
+import ConnectionsAdmin from "./connections/ConnectionsAdmin.jsx";
+import { navigateToPath } from "./routing/appRoutes.js";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -75,7 +78,7 @@ const LEGACY_PUBLIC_CATALOG_COLUMNS = [
   "bundle_contents",
 ].join(",");
 
-const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "requests", "users"]);
+const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "requests", "users", "connections"]);
 const PASSWORD_MIN_LENGTH = 10;
 const INTAKE_LEARNING_FIELDS = [
   "title",
@@ -165,6 +168,13 @@ function StaffNavIcon({ name }) {
     filters: (
       <>
         <path d="M4 6h16M7 12h10M10 18h4" />
+      </>
+    ),
+    connections: (
+      <>
+        <circle cx="8" cy="12" r="3" />
+        <circle cx="16" cy="12" r="3" />
+        <path d="M11 12h2M5.5 16.5c1.5 2 3.7 3 6.5 3s5-1 6.5-3" />
       </>
     ),
     labels: (
@@ -348,8 +358,9 @@ function BookCoverImage({
   );
 }
 
-export default function App() {
+export default function App({ connectionsWorkflowService, connectionsStaffEnabled = false, initialStaffView = "" }) {
   const [view, setView] = useState(() => {
+    if (initialStaffView === "connections" && connectionsStaffEnabled) return "connections";
     const hashView = window.location.hash.replace("#", "");
     if (hashView === "curricula") return "curricula";
     return hashView === "catalog" ? "catalog" : "add";
@@ -388,7 +399,7 @@ export default function App() {
   const [changePasswordError, setChangePasswordError] = useState("");
   const [changePasswordMessage, setChangePasswordMessage] = useState("");
   const [authMessage, setAuthMessage] = useState("");
-  const [staffSignInOpen, setStaffSignInOpen] = useState(false);
+  const [staffSignInOpen, setStaffSignInOpen] = useState(initialStaffView === "connections");
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
@@ -651,7 +662,7 @@ export default function App() {
       mounted = false;
       listener.subscription.unsubscribe();
     };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps -- subscribe once; auth events supply the current session
 
   useEffect(() => {
     if (passwordRecoveryMode) return;
@@ -704,6 +715,11 @@ export default function App() {
     if (authLoading || profileLoading || shouldShowPasswordSetup) return;
 
     if (isInternalView && !isAuthenticated) {
+      if (view === "connections" && connectionsStaffEnabled) {
+        setStaffSignInOpen(true);
+        if (!session) setAuthMessage("Please sign in to use Connections staff tools.");
+        return;
+      }
       setView("catalog");
       if (!session) {
         setAuthMessage("Please sign in to use internal tools.");
@@ -724,6 +740,7 @@ export default function App() {
     isInternalView,
     session,
     view,
+    connectionsStaffEnabled,
   ]);
 
   useEffect(() => {
@@ -734,18 +751,18 @@ export default function App() {
       loadIntakeRules();
       loadCustomerRequestData();
     }
-  }, [authLoading, shouldShowPasswordSetup, isAuthenticated]);
+  }, [authLoading, shouldShowPasswordSetup, isAuthenticated]); // eslint-disable-line react-hooks/exhaustive-deps -- reload only when access state changes
 
   useEffect(() => {
     if (view === "users" && isAdmin) {
       loadUsers();
       loadAuditLogs();
     }
-  }, [view, isAdmin]);
+  }, [view, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps -- load when the admin opens this view
 
   useEffect(() => {
     if (view === "options" && isAdmin) loadRuleSuggestionData();
-  }, [view, isAdmin]);
+  }, [view, isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps -- load when the admin opens this view
 
   useEffect(() => {
     if (view === "requests" && isAuthenticated) loadCustomerRequestData();
@@ -7124,6 +7141,22 @@ function renderUserManagement() {
               )}
             </button>
 
+            {connectionsStaffEnabled && connectionsWorkflowService && (
+              <button
+                type="button"
+                className={`staff-nav-link ${view === "connections" ? "active" : ""}`}
+                aria-current={view === "connections" ? "page" : undefined}
+                title={staffSidebarCollapsed ? "Connections" : undefined}
+                onClick={() => {
+                  setView("connections");
+                  cancelEditing();
+                }}
+              >
+                <StaffNavIcon name="connections" />
+                <span className="staff-nav-label">Connections</span>
+              </button>
+            )}
+
             {isAdmin && (
               <button
                 type="button"
@@ -7177,7 +7210,7 @@ function renderUserManagement() {
       )}
 
       {showStaffShell && (
-        <nav className="staff-mobile-nav" aria-label="Primary staff navigation">
+        <nav className={`staff-mobile-nav ${connectionsStaffEnabled && connectionsWorkflowService ? "has-connections" : ""}`} aria-label="Primary staff navigation">
           <button
             type="button"
             className={view === "add" ? "active" : ""}
@@ -7250,6 +7283,20 @@ function renderUserManagement() {
             </span>
             <span>Requests</span>
           </button>
+          {connectionsStaffEnabled && connectionsWorkflowService && (
+            <button
+              type="button"
+              className={view === "connections" ? "active" : ""}
+              aria-current={view === "connections" ? "page" : undefined}
+              onClick={() => {
+                setView("connections");
+                cancelEditing();
+              }}
+            >
+              <StaffNavIcon name="connections" />
+              <span>Connections</span>
+            </button>
+          )}
         </nav>
       )}
 
@@ -7320,6 +7367,14 @@ function renderUserManagement() {
                     >
                       Curriculum Lists
                     </button>
+                    {CONNECTIONS_ENABLED && (
+                      <button
+                        type="button"
+                        onClick={() => navigateToPath("/connections")}
+                      >
+                        Connections
+                      </button>
+                    )}
                     <button
                       className="public-header-request"
                       type="button"
@@ -7575,6 +7630,7 @@ function renderUserManagement() {
           )}
         </>
       )}
+
     </section>
 
     <div className="intake-actions">
@@ -8000,6 +8056,20 @@ function renderUserManagement() {
           )}
         </>
       )}
+
+      {!authLoading &&
+        !shouldShowPasswordSetup &&
+        isAuthenticated &&
+        view === "connections" &&
+        connectionsStaffEnabled &&
+        connectionsWorkflowService && (
+          <ConnectionsAdmin
+            embedded
+            session={session}
+            profile={profile}
+            workflowService={connectionsWorkflowService}
+          />
+        )}
 
       {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "inventory" && (
         <section className="card">

@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
+    "test": "node --test src/*.test.js server/*.test.js",
+    "check:connections-readiness": "node scripts/check-connections-readiness.mjs",
+    "check": "npm run lint && npm test && npm run check:connections-readiness && npm run build",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -24,6 +27,7 @@
     "square": "^44.1.0"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.5.4",
     "@eslint/js": "^10.0.1",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",

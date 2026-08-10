@@ -2909,6 +2909,10 @@ button:disabled {
     backdrop-filter: blur(12px);
   }
 
+  .staff-mobile-nav.has-connections {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+  }
+
   .staff-mobile-nav button {
     position: relative;
     display: flex;

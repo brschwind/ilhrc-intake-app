@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 server/.npm-cache
+supabase/.temp
 *.local
 
 # Editor directories and files

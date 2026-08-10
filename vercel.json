@@ -1,0 +1,6 @@
+{
+  "rewrites": [
+    { "source": "/connections", "destination": "/index.html" },
+    { "source": "/connections/:path*", "destination": "/index.html" }
+  ]
+}
