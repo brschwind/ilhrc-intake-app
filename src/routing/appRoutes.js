@@ -51,7 +51,7 @@ export function matchConnectionsPath(pathname = "/") {
   };
 }
 
-export function resolveAppRoute(locationLike = {}, connectionsEnabled = false) {
+export function resolveAppRoute(locationLike = {}, connectionsEnabled = false, connectionsStaffEnabled = false) {
   const authType = getAuthUrlTypeFromLocation(locationLike);
   if (AUTH_URL_TYPES.has(authType)) {
     return { kind: "bookstore", legacyView: getLegacyPublicView(locationLike.hash), authType };
@@ -66,7 +66,12 @@ export function resolveAppRoute(locationLike = {}, connectionsEnabled = false) {
     };
   }
 
-  if (!connectionsEnabled) return { kind: "connections-unavailable", pathname: connectionsRoute.pathname };
+  if (!connectionsEnabled) {
+    if (connectionsRoute.kind === "admin" && connectionsStaffEnabled) {
+      return { kind: "connections", page: "admin", pathname: connectionsRoute.pathname };
+    }
+    return { kind: "connections-unavailable", pathname: connectionsRoute.pathname };
+  }
   return { kind: "connections", page: connectionsRoute.kind, pathname: connectionsRoute.pathname, slug: connectionsRoute.slug };
 }
 

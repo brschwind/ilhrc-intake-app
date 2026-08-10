@@ -4,7 +4,9 @@ import { readFile } from "node:fs/promises";
 import {
   normalizeConnectionCorrection,
   normalizeConnectionReferral,
+  normalizeConnectionResourceEditor,
   normalizeConnectionSubmission,
+  getAnnualCheckInResources,
   suggestedConnectionSlug,
 } from "./connections/connectionsWorkflowModel.js";
 import { createConnectionsWorkflowService } from "./connections/connectionsWorkflowService.js";
@@ -23,7 +25,9 @@ import { matchConnectionsPath, resolveAppRoute } from "./routing/appRoutes.js";
 
 const formsSource = await readFile(new URL("./connections/ConnectionsForms.jsx", import.meta.url), "utf8");
 const adminSource = await readFile(new URL("./connections/ConnectionsAdmin.jsx", import.meta.url), "utf8");
+const editorSource = await readFile(new URL("./connections/ConnectionsResourceEditor.jsx", import.meta.url), "utf8");
 const routerSource = await readFile(new URL("./AppRouter.jsx", import.meta.url), "utf8");
+const appSource = await readFile(new URL("./App.jsx", import.meta.url), "utf8");
 const workflowStyleSource = await readFile(new URL("./connections/ConnectionsWorkflows.css", import.meta.url), "utf8");
 const publicStyleSource = await readFile(new URL("./connections/ConnectionsPublic.css", import.meta.url), "utf8");
 
@@ -48,10 +52,48 @@ test("Milestone 3 routes are modular and remain feature-flag protected", () => {
   });
   assert.equal(resolveAppRoute({ pathname: "/connections/submit" }, false).kind, "connections-unavailable");
   assert.equal(resolveAppRoute({ pathname: "/connections/admin" }, false).kind, "connections-unavailable");
+  assert.equal(resolveAppRoute({ pathname: "/connections/admin" }, false, true).page, "admin");
+  assert.equal(resolveAppRoute({ pathname: "/connections/submit" }, false, true).kind, "connections-unavailable");
   assert.match(routerSource, /route\.page === "submit"/);
   assert.match(routerSource, /route\.page === "correction"/);
   assert.match(routerSource, /route\.page === "referral"/);
   assert.match(routerSource, /route\.page === "admin"/);
+});
+
+test("Connections staff tools use the existing authenticated staff workspace", () => {
+  assert.match(appSource, /staff-nav-label">Connections/);
+  assert.match(appSource, /<ConnectionsAdmin\s+embedded\s+session=\{session\}\s+profile=\{profile\}/);
+  assert.match(routerSource, /createConnectionsWorkflowSupabaseAdapter\(supabase\)/);
+  assert.match(routerSource, /initialStaffView="connections"/);
+  assert.doesNotMatch(routerSource, /import ConnectionsAdmin/);
+});
+
+test("staff resource editor validates consent-safe drafts and annual check-in dates", () => {
+  const resource = normalizeConnectionResourceEditor({
+    name: "Fictional Learning Center", slug: "fictional-learning-center",
+    category_slug: "classes-tutors-academic-support",
+    short_description: "A fictional resource for staff testing.",
+    description: "A fictional resource description that is long enough for staff validation.",
+    website_value: "https://example.invalid", website_consent_status: "granted",
+    website_consented_by_name: "Fictional Director", website_consented_at: "2026-08-10T10:00",
+    website_consent_method: "phone", address_display: "town_only",
+  });
+  assert.equal(resource.contacts.website.consent_status, "granted");
+  assert.throws(() => normalizeConnectionResourceEditor({
+    ...resource, category_slug: resource.category_slug,
+    website_value: "https://example.invalid", website_consent_status: "granted",
+    website_consented_by_name: "", website_consented_at: "", website_consent_method: "",
+  }), /Document who granted website/i);
+
+  const due = getAnnualCheckInResources([
+    { id: "later", verification_due_on: "2026-10-01" },
+    { id: "soon", verification_due_on: "2026-08-20" },
+    { id: "overdue", verification_due_on: "2026-08-01" },
+    { id: "unscheduled", verification_due_on: null },
+  ], new Date("2026-08-10T12:00:00Z"));
+  assert.deepEqual(due.map(({ id }) => id), ["overdue", "soon"]);
+  assert.match(editorSource, /Saving creates or updates a private staff draft/);
+  assert.match(editorSource, /Only organization-approved fields with granted consent/);
 });
 
 test("representative submissions require explicit field consent while suggestions cannot grant it", () => {
@@ -154,6 +196,12 @@ test("Supabase workflow adapter uses public RPCs for intake and staff-only queue
     "submit_connection_resource", "submit_connection_correction", "submit_connection_referral",
   ]);
 
+  await adapter.getResourceEditor("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  await adapter.saveResource({ name: "Fictional" });
+  assert.deepEqual(rpcCalls.slice(-2).map(({ name }) => name), [
+    "get_connection_resource_editor", "save_connection_resource",
+  ]);
+
   await adapter.listQueues();
   assert.deepEqual(selectCalls, [
     { table: CONNECTIONS_WORKFLOW_TABLES.submissions, fields: CONNECTIONS_SUBMISSION_SELECT },
@@ -171,8 +219,11 @@ test("workflow screens disclose privacy limits and keep administrator controls r
   assert.match(formsSource, /leader must approve each introduction/);
   assert.match(formsSource, /Nothing has been published automatically/);
   assert.doesNotMatch(formsSource, /name="(?:child|minor|diagnosis|date_of_birth)/i);
-  assert.match(adminSource, /profile\?\.role === "admin"/);
+  assert.match(adminSource, /effectiveProfile\?\.role === "admin"/);
   assert.match(adminSource, /Record phone or in-person verification/);
+  assert.match(adminSource, /Annual check-ins/);
+  assert.match(adminSource, /Complete annual check-in/);
+  assert.match(adminSource, /Add resource/);
   assert.match(adminSource, /Administrator publication controls/);
   assert.match(publicStyleSource, /connections-app button:focus-visible/);
   assert.match(workflowStyleSource, /@media \(max-width: 760px\)/);

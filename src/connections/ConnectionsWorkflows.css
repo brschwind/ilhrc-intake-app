@@ -29,8 +29,52 @@
 .connections-admin-login { min-height: 65vh; padding-top: 80px; }
 .connections-admin-login form { display: grid; gap: 16px; max-width: 430px; padding: 26px; border: 1px solid #d8cebd; border-radius: 10px; background: #fffdf8; }
 .connections-admin-page { padding-top: 42px; padding-bottom: 90px; }
+.connections-admin-embedded { min-height: 0; margin-top: 34px; padding: 0; background: transparent; color: var(--text); font-family: inherit; }
+.connections-admin-embedded > .connections-main { width: 100%; margin: 0; padding: 22px; box-sizing: border-box; border: 1px solid var(--border); background: var(--surface); box-shadow: var(--shadow); }
+.connections-admin-embedded .connections-admin-header { padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.connections-admin-embedded .connections-admin-header h1 { margin: 0 0 10px; color: var(--brown); font-size: clamp(2rem, 4vw, 2.8rem); letter-spacing: -0.02em; }
+.connections-admin-embedded .connections-eyebrow { margin-bottom: 8px; color: var(--sage-dark); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; }
+.connections-admin-embedded .connections-admin-header p:last-child,
+.connections-admin-embedded .connections-resource-editor > header p:last-child { color: var(--muted); font-size: 1rem; }
+.connections-admin-embedded button { min-height: 42px; padding: 8px 14px; border: 1px solid var(--sage); border-radius: 2px; background: #fff; color: var(--sage-dark); font: inherit; font-weight: 700; cursor: pointer; }
+.connections-admin-embedded .connections-admin-header button,
+.connections-admin-embedded .connections-submit-button,
+.connections-admin-embedded .connections-admin-card button { border-color: var(--sage-dark); border-radius: 2px; background: var(--sage-dark); color: #fff; }
+.connections-admin-embedded button:focus-visible,
+.connections-admin-embedded input:focus-visible,
+.connections-admin-embedded select:focus-visible,
+.connections-admin-embedded textarea:focus-visible { outline: none; border-color: var(--sage); box-shadow: 0 0 0 2px rgba(115, 139, 132, 0.18); }
+.connections-admin-embedded .connections-admin-tabs { margin: 22px 0; border-color: var(--border); }
+.connections-admin-embedded .connections-admin-tabs button { min-height: 38px; padding: 7px 12px; border-color: var(--border); border-radius: 2px; background: var(--surface-soft); color: var(--text); }
+.connections-admin-embedded .connections-admin-tabs button[aria-current="page"] { border-color: var(--sage-dark); background: var(--sage-dark); color: #fff; }
+.connections-admin-embedded .connections-admin-section > header h2 { margin: 0; color: var(--brown-dark); font-size: 1.35rem; font-weight: 600; }
+.connections-admin-embedded .connections-admin-section > header span { background: var(--surface-soft); }
+.connections-admin-embedded .connections-admin-card,
+.connections-admin-embedded .connections-admin-empty { border-color: var(--border); border-radius: 2px; background: var(--surface); box-shadow: none; }
+.connections-admin-embedded .connections-admin-card dl div,
+.connections-admin-embedded .connections-admin-card details,
+.connections-admin-embedded .connections-convert-action { border-color: var(--border); }
+.connections-admin-embedded .connections-admin-card input,
+.connections-admin-embedded .connections-admin-card select,
+.connections-admin-embedded .connections-admin-card textarea,
+.connections-admin-embedded .connections-resource-editor input,
+.connections-admin-embedded .connections-resource-editor select,
+.connections-admin-embedded .connections-resource-editor textarea { min-height: 38px; padding: 7px 9px; border: 1px solid var(--border); border-radius: 2px; color: var(--text); }
+.connections-admin-embedded .connections-resource-editor { margin-top: 24px; }
+.connections-admin-embedded .connections-resource-editor > header { padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.connections-admin-embedded .connections-resource-editor h2 { margin: 0 0 8px; color: var(--brown); font-size: clamp(2rem, 4vw, 2.8rem); letter-spacing: -0.02em; }
+.connections-admin-embedded .connections-resource-editor fieldset { padding: 18px; border-color: var(--border); border-radius: 2px; background: var(--surface-soft); }
+.connections-admin-embedded .connections-resource-editor legend { color: var(--brown-dark); font-family: inherit; font-size: 1rem; font-weight: 700; }
+.connections-admin-embedded .connections-resource-editor label,
+.connections-admin-embedded .connections-admin-card label { color: var(--brown-dark); font-weight: 700; }
+.connections-admin-embedded .connections-editor-contact,
+.connections-admin-embedded .connections-history-columns section { border-color: var(--border); }
+.connections-admin-embedded .connections-editor-consent,
+.connections-admin-embedded .connections-history-columns section { border-radius: 2px; background: var(--surface); }
 .connections-admin-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
 .connections-admin-header p { margin: 4px 0; }
+.connections-admin-header-actions, .connections-admin-card-heading-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; }
+.connections-admin-card-heading-actions { justify-content: flex-end; }
 .connections-admin-tabs { display: flex; gap: 8px; margin: 28px 0; padding-bottom: 10px; overflow-x: auto; border-bottom: 1px solid #d8cebd; }
 .connections-admin-tabs button { display: inline-flex; min-height: 44px; padding: 9px 14px; align-items: center; gap: 8px; white-space: nowrap; border: 1px solid #bfb4a3; border-radius: 5px; background: #fffdf8; color: #41382f; font-weight: 600; cursor: pointer; }
 .connections-admin-tabs button[aria-current="page"] { border-color: #526d61; background: #526d61; color: #fff; }
@@ -54,6 +98,20 @@
 .connections-admin-card summary { margin-bottom: 14px; color: #526d61; font-weight: 600; cursor: pointer; }
 .connections-admin-contact { color: #6a6259; }
 .connections-admin-empty { padding: 38px; text-align: center; border: 1px dashed #bfb4a3; border-radius: 9px; background: #fffaf1; }
+.connections-resource-editor { display: grid; gap: 22px; margin-top: 30px; }
+.connections-resource-editor > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+.connections-resource-editor h2 { margin: 0 0 8px; color: #a85f34; font-family: Georgia, "Times New Roman", serif; font-size: clamp(1.8rem, 4vw, 2.8rem); font-weight: 400; }
+.connections-resource-editor form { display: grid; gap: 20px; }
+.connections-resource-editor fieldset { min-width: 0; margin: 0; padding: 20px; border: 1px solid #d8cebd; border-radius: 10px; background: #fffdf8; }
+.connections-resource-editor legend { padding: 0 8px; color: #526d61; font-family: Georgia, "Times New Roman", serif; font-size: 1.25rem; }
+.connections-resource-editor label { display: grid; gap: 6px; color: #514a43; font-size: 0.84rem; font-weight: 500; }
+.connections-resource-editor input, .connections-resource-editor select, .connections-resource-editor textarea { width: 100%; min-height: 44px; padding: 9px 10px; box-sizing: border-box; border: 1px solid #bfb4a3; border-radius: 7px; background: #fff; color: #302c27; font: inherit; }
+.connections-resource-editor .connections-check-grid label { display: flex; min-height: 38px; margin: 0; align-items: center; gap: 9px; }
+.connections-resource-editor .connections-check-grid input[type="checkbox"] { width: 18px; height: 18px; min-height: 0; margin: 0; padding: 0; flex: 0 0 18px; accent-color: var(--sage-dark); }
+.connections-resource-editor textarea { resize: vertical; }
+.connections-editor-contact { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(0, 2fr); gap: 16px; padding: 16px 0; border-top: 1px solid #e7dfd2; }
+.connections-editor-consent { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; padding: 12px !important; }
+.connections-editor-consent legend { font-family: inherit; font-size: 0.92rem; font-weight: 600; }
 .connections-history-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin-top: 18px; }
 .connections-history-columns section { min-width: 0; padding: 14px; border: 1px solid #ebe3d7; border-radius: 8px; background: #fffaf1; }
 .connections-history-columns h4 { margin: 0 0 10px; font-family: Georgia, serif; }
@@ -64,10 +122,13 @@
 @media (max-width: 760px) {
   .connections-form-grid, .connections-check-grid { grid-template-columns: 1fr; }
   .connections-form-grid .is-wide { grid-column: auto; }
-  .connections-admin-header, .connections-admin-card > header { flex-direction: column; }
+  .connections-admin-header, .connections-admin-card > header, .connections-resource-editor > header { flex-direction: column; }
   .connections-admin-card dl div { grid-template-columns: 1fr; gap: 2px; }
   .connections-admin-actions, .connections-convert-action, .connections-admin-button-row { align-items: stretch; flex-direction: column; }
   .connections-admin-card button { width: 100%; }
+  .connections-admin-header-actions, .connections-admin-card-heading-actions { width: 100%; justify-content: stretch; }
+  .connections-admin-header-actions button, .connections-admin-card-heading-actions button { flex: 1; }
+  .connections-editor-contact, .connections-editor-consent { grid-template-columns: 1fr; }
   .connections-history-columns { grid-template-columns: 1fr; }
 }
 

@@ -1,25 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
 import App from "./App.jsx";
 import ConnectionsPublic, { ConnectionsUnavailable } from "./connections/ConnectionsPublic.jsx";
-import ConnectionsAdmin from "./connections/ConnectionsAdmin.jsx";
 import {
   ConnectionsCorrectionPage,
   ConnectionsReferralPage,
   ConnectionsSubmissionPage,
 } from "./connections/ConnectionsForms.jsx";
-import { CONNECTIONS_ENABLED, CONNECTIONS_FIXTURES_ENABLED } from "./connections/connectionsConfig.js";
+import {
+  CONNECTIONS_ENABLED,
+  CONNECTIONS_FIXTURES_ENABLED,
+  CONNECTIONS_STAFF_ENABLED,
+} from "./connections/connectionsConfig.js";
 import { createConnectionsService } from "./connections/connectionsService.js";
 import { createConnectionsSupabaseAdapterFromEnvironment } from "./connections/connectionsSupabaseAdapter.js";
 import { createConnectionsWorkflowService } from "./connections/connectionsWorkflowService.js";
-import { createConnectionsWorkflowSupabaseAdapterFromEnvironment } from "./connections/connectionsWorkflowSupabaseAdapter.js";
+import {
+  createConnectionsWorkflowSupabaseAdapter,
+  createConnectionsWorkflowSupabaseAdapterFromEnvironment,
+} from "./connections/connectionsWorkflowSupabaseAdapter.js";
 import { APP_NAVIGATION_EVENT, navigateToPath, resolveAppRoute } from "./routing/appRoutes.js";
+import { supabase } from "./supabaseClient.js";
 
 const developmentFixtureLoader = import.meta.env.DEV
   ? () => import("./connections/connectionsFixtures.js")
   : undefined;
 
 function currentRoute() {
-  return resolveAppRoute(window.location, CONNECTIONS_ENABLED);
+  return resolveAppRoute(window.location, CONNECTIONS_ENABLED, CONNECTIONS_STAFF_ENABLED);
 }
 
 function handlePublicNavigation(event, path) {
@@ -35,9 +42,11 @@ function getConnectionsServices() {
     const adapter = CONNECTIONS_ENABLED && !CONNECTIONS_FIXTURES_ENABLED
       ? createConnectionsSupabaseAdapterFromEnvironment(import.meta.env)
       : undefined;
-    const workflowAdapter = CONNECTIONS_ENABLED && !CONNECTIONS_FIXTURES_ENABLED
-      ? createConnectionsWorkflowSupabaseAdapterFromEnvironment(import.meta.env)
-      : undefined;
+    const workflowAdapter = CONNECTIONS_STAFF_ENABLED
+      ? createConnectionsWorkflowSupabaseAdapter(supabase)
+      : CONNECTIONS_ENABLED && !CONNECTIONS_FIXTURES_ENABLED
+        ? createConnectionsWorkflowSupabaseAdapterFromEnvironment(import.meta.env)
+        : undefined;
     connectionsServices = {
       publicService: createConnectionsService({
         enabled: CONNECTIONS_ENABLED,
@@ -46,7 +55,7 @@ function getConnectionsServices() {
         fixtureLoader: developmentFixtureLoader,
       }),
       workflowService: createConnectionsWorkflowService({
-        enabled: CONNECTIONS_ENABLED && !CONNECTIONS_FIXTURES_ENABLED,
+        enabled: (CONNECTIONS_ENABLED || CONNECTIONS_STAFF_ENABLED) && !CONNECTIONS_FIXTURES_ENABLED,
         adapter: workflowAdapter,
       }),
     };
@@ -75,8 +84,8 @@ export default function AppRouter() {
     if (route.page === "submit") return <ConnectionsSubmissionPage workflowService={services.workflowService} onNavigate={handlePublicNavigation} />;
     if (route.page === "correction") return <ConnectionsCorrectionPage resourceSlug={route.slug} workflowService={services.workflowService} onNavigate={handlePublicNavigation} />;
     if (route.page === "referral") return <ConnectionsReferralPage workflowService={services.workflowService} onNavigate={handlePublicNavigation} />;
-    if (route.page === "admin") return <ConnectionsAdmin workflowService={services.workflowService} onNavigate={handlePublicNavigation} />;
+    if (route.page === "admin") return <App connectionsWorkflowService={services.workflowService} connectionsStaffEnabled initialStaffView="connections" />;
     return <ConnectionsPublic route={route} service={services.publicService} onNavigate={handlePublicNavigation} />;
   }
-  return <App />;
+  return <App connectionsWorkflowService={services.workflowService} connectionsStaffEnabled={CONNECTIONS_STAFF_ENABLED} />;
 }

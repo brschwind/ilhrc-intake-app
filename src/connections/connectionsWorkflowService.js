@@ -1,6 +1,7 @@
 import {
   normalizeConnectionCorrection,
   normalizeConnectionReferral,
+  normalizeConnectionResourceEditor,
   normalizeConnectionSubmission,
 } from "./connectionsWorkflowModel.js";
 
@@ -26,6 +27,8 @@ export function createConnectionsWorkflowService({ enabled = false, adapter } = 
     signOut: () => requireAdapter().signOut(),
     getStaffProfile: (userId) => requireAdapter().getStaffProfile(userId),
     listQueues: () => requireAdapter().listQueues(),
+    getResourceEditor: (id) => requireAdapter().getResourceEditor(id),
+    saveResource: (source) => requireAdapter().saveResource(normalizeConnectionResourceEditor(source)),
     setSubmissionStatus: (id, status, notes) => requireAdapter().setSubmissionStatus(id, status, notes),
     convertSubmission: (id, slug) => requireAdapter().convertSubmission(id, slug),
     setCorrectionStatus: (id, status, notes) => requireAdapter().setCorrectionStatus(id, status, notes),

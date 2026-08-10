@@ -28,6 +28,12 @@ export const RESOURCE_REVIEW_STATUSES = Object.freeze([
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const CATEGORY_SLUGS = new Set(CONNECTION_CATEGORY_OPTIONS.map(({ value }) => value));
+const WORLDVIEWS = new Set(["christian", "faith_based_other", "secular", "no_stated_religious_affiliation", "information_not_provided"]);
+const DELIVERY_MODES = new Set(["in_person", "online", "hybrid"]);
+const ACCEPTING_STATUSES = new Set(["accepting", "waitlist", "closed", "unknown"]);
+const COST_TYPES = new Set(["free", "paid", "variable", "contact"]);
+const CONSENT_STATUSES = new Set(["not_requested", "granted", "denied", "withdrawn"]);
+const CONSENT_METHODS = new Set(["written", "phone", "in_person"]);
 
 function text(value, maxLength = 5000) {
   return String(value || "").trim().slice(0, maxLength);
@@ -43,6 +49,110 @@ function requireText(value, label, minimum = 2) {
 
 function requireEmail(value) {
   if (!EMAIL_PATTERN.test(value)) throw new Error("Enter a valid email address.");
+}
+
+function optionalNumber(value, minimum, maximum, label) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(value);
+  if (!Number.isInteger(number) || number < minimum || number > maximum) {
+    throw new Error(`${label} is invalid.`);
+  }
+  return number;
+}
+
+function normalizeContact(source, kind) {
+  const value = text(source[`${kind}_value`], 500);
+  const consentStatus = text(source[`${kind}_consent_status`], 30) || "not_requested";
+  const consentedByName = text(source[`${kind}_consented_by_name`], 200);
+  const consentedAt = text(source[`${kind}_consented_at`], 40);
+  const consentMethod = text(source[`${kind}_consent_method`], 30);
+  if (!CONSENT_STATUSES.has(consentStatus)) throw new Error(`${kind} consent status is invalid.`);
+  if (consentStatus === "granted" && (!consentedByName || !consentedAt || !CONSENT_METHODS.has(consentMethod))) {
+    throw new Error(`Document who granted ${kind} publication consent, when, and how.`);
+  }
+  return {
+    value,
+    consent_status: consentStatus,
+    consented_by_name: consentedByName,
+    consented_at: consentedAt || null,
+    consent_method: consentMethod || null,
+  };
+}
+
+export function normalizeConnectionResourceEditor(source = {}) {
+  const resource = {
+    id: text(source.id, 80) || null,
+    slug: text(source.slug, 100),
+    name: text(source.name, 200),
+    short_description: text(source.short_description, 500),
+    description: text(source.description),
+    worldview: text(source.worldview, 80) || "information_not_provided",
+    worldview_details: text(source.worldview_details, 1000),
+    age_min: optionalNumber(source.age_min, 0, 120, "Minimum age"),
+    age_max: optionalNumber(source.age_max, 0, 120, "Maximum age"),
+    grade_min: optionalNumber(source.grade_min, -1, 12, "Minimum grade"),
+    grade_max: optionalNumber(source.grade_max, -1, 12, "Maximum grade"),
+    age_grade_notes: text(source.age_grade_notes, 1000),
+    delivery_mode: text(source.delivery_mode, 30) || "in_person",
+    accepting_status: text(source.accepting_status, 30) || "unknown",
+    cost_type: text(source.cost_type, 30) || "contact",
+    homeschool_specific: checked(source.homeschool_specific),
+    daytime_available: checked(source.daytime_available),
+    homeschool_discount: checked(source.homeschool_discount),
+    service_area_summary: text(source.service_area_summary, 1000),
+    category_slug: text(source.category_slug, 100),
+    location: {
+      name: text(source.location_name, 200),
+      location_kind: text(source.location_kind, 30) || "physical",
+      address_line_1: text(source.address_line_1, 300),
+      city: text(source.city, 120),
+      county: text(source.county, 120),
+      state: text(source.state, 20) || "IL",
+      postal_code: text(source.postal_code, 30),
+      service_area: text(source.service_area, 1000),
+      address_display: text(source.address_display, 30) || "town_only",
+      address_consent_status: text(source.address_consent_status, 30) || "not_requested",
+      address_consented_by_name: text(source.address_consented_by_name, 200),
+      address_consented_at: text(source.address_consented_at, 40) || null,
+      address_consent_method: text(source.address_consent_method, 30) || null,
+    },
+    contacts: {
+      website: normalizeContact(source, "website"),
+      email: normalizeContact(source, "email"),
+      phone: normalizeContact(source, "phone"),
+    },
+  };
+
+  requireText(resource.slug, "URL slug");
+  if (!SLUG_PATTERN.test(resource.slug)) throw new Error("Use lowercase letters, numbers, and hyphens for the URL slug.");
+  requireText(resource.name, "Resource name");
+  requireText(resource.short_description, "Short description", 10);
+  requireText(resource.description, "Full description", 20);
+  if (!CATEGORY_SLUGS.has(resource.category_slug)) throw new Error("Choose a resource category.");
+  if (!WORLDVIEWS.has(resource.worldview)) throw new Error("Choose a valid worldview description.");
+  if (!DELIVERY_MODES.has(resource.delivery_mode)) throw new Error("Choose a valid delivery mode.");
+  if (!ACCEPTING_STATUSES.has(resource.accepting_status)) throw new Error("Choose a valid availability status.");
+  if (!COST_TYPES.has(resource.cost_type)) throw new Error("Choose a valid cost type.");
+  if (resource.age_min !== null && resource.age_max !== null && resource.age_min > resource.age_max) throw new Error("Minimum age cannot exceed maximum age.");
+  if (resource.grade_min !== null && resource.grade_max !== null && resource.grade_min > resource.grade_max) throw new Error("Minimum grade cannot exceed maximum grade.");
+  if (!new Set(["physical", "service_area", "online"]).has(resource.location.location_kind)) throw new Error("Choose a valid location type.");
+  if (!new Set(["full", "town_only", "none"]).has(resource.location.address_display)) throw new Error("Choose a valid address display setting.");
+  if (!CONSENT_STATUSES.has(resource.location.address_consent_status)) throw new Error("Address consent status is invalid.");
+  if (resource.location.address_display === "full" && resource.location.address_consent_status !== "granted") throw new Error("Full addresses require documented publication consent.");
+  if (resource.location.address_consent_status === "granted" && (!resource.location.address_consented_by_name || !resource.location.address_consented_at || !CONSENT_METHODS.has(resource.location.address_consent_method))) {
+    throw new Error("Document who granted address publication consent, when, and how.");
+  }
+  return resource;
+}
+
+export function getAnnualCheckInResources(resources = [], today = new Date(), noticeDays = 30) {
+  const start = new Date(`${today.toISOString().slice(0, 10)}T00:00:00Z`);
+  const cutoff = new Date(start);
+  cutoff.setUTCDate(cutoff.getUTCDate() + noticeDays);
+  return resources
+    .filter((resource) => resource.verification_due_on)
+    .filter((resource) => new Date(`${resource.verification_due_on}T00:00:00Z`) <= cutoff)
+    .sort((left, right) => String(left.verification_due_on).localeCompare(String(right.verification_due_on)));
 }
 
 export function normalizeConnectionSubmission(source = {}) {

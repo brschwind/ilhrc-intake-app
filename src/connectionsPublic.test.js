@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { isConnectionsFeatureEnabled } from "./connections/connectionsConfig.js";
+import { isConnectionsFeatureEnabled, isConnectionsStaffFeatureEnabled } from "./connections/connectionsConfig.js";
 import {
   CONNECTIONS_DISCLOSURES,
   PUBLIC_CONTACT_FIELDS,
@@ -42,6 +42,9 @@ test("Connections feature flag is disabled unless explicitly enabled", () => {
   assert.equal(isConnectionsFeatureEnabled({ VITE_CONNECTIONS_ENABLED: "false" }), false);
   assert.equal(isConnectionsFeatureEnabled({ VITE_CONNECTIONS_ENABLED: "TRUE" }), false);
   assert.equal(isConnectionsFeatureEnabled({ VITE_CONNECTIONS_ENABLED: "true" }), true);
+  assert.equal(isConnectionsStaffFeatureEnabled({}), false);
+  assert.equal(isConnectionsStaffFeatureEnabled({ VITE_CONNECTIONS_STAFF_ENABLED: "TRUE" }), false);
+  assert.equal(isConnectionsStaffFeatureEnabled({ VITE_CONNECTIONS_STAFF_ENABLED: "true" }), true);
   assert.match(appSource, /CONNECTIONS_ENABLED\s*&&/);
   assert.match(componentSource, /<ConnectionsHeader onNavigate=\{onNavigate\} showDirectory=\{false\}/);
 });
@@ -59,6 +62,10 @@ test("disabled Connections routes do not load a data service", async () => {
   assert.deepEqual(await service.listResources(), []);
   assert.equal(loaderCalls, 0);
   assert.equal(resolveAppRoute({ pathname: "/connections", search: "", hash: "" }, false).kind, "connections-unavailable");
+  assert.equal(resolveAppRoute({ pathname: "/connections", search: "", hash: "" }, false, true).kind, "connections-unavailable");
+  assert.deepEqual(resolveAppRoute({ pathname: "/connections/admin", search: "", hash: "" }, false, true), {
+    kind: "connections", page: "admin", pathname: "/connections/admin",
+  });
   assert.match(routerSource, /route\.kind === "connections-unavailable"[\s\S]*<ConnectionsUnavailable/);
   assert.doesNotMatch(serviceSource, /supabase|\.from\s*\(/i);
 });

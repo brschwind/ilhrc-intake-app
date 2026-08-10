@@ -2,6 +2,17 @@
 
 This runbook covers the controlled three-month Connections pilot. It does not authorize a production migration, deployment, feature-flag change or public launch. Each production action requires explicit approval after the previous checkpoint passes.
 
+## Private collection mode
+
+The first resources may be compiled through the deployed staff workspace before the public directory launches:
+
+- Set `VITE_CONNECTIONS_STAFF_ENABLED=true` only after the staff editor migration and deployed code pass production validation.
+- Keep `VITE_CONNECTIONS_ENABLED` absent or `false` so public navigation, directory, submission, correction and referral routes remain unavailable.
+- Give the private `/connections/admin` URL only to active IL HRC team members and administrators.
+- Staff may create and edit private drafts, document consent, and complete phone or in-person annual check-ins.
+- Administrators retain approval, publication, pausing, declining and archiving authority.
+- Even administrator-published database records remain inaccessible through the application while the public flag is disabled.
+
 ## Release gates
 
 1. **Code checkpoint**

@@ -152,6 +152,17 @@ export function createConnectionsWorkflowSupabaseAdapter(client) {
       };
     },
 
+    async getResourceEditor(id) {
+      const result = await client.rpc("get_connection_resource_editor", { p_resource_id: id });
+      return requireResult(result, "Resource details could not be loaded.");
+    },
+
+    async saveResource(resource) {
+      return rpcReference(requireResult(await client.rpc("save_connection_resource", {
+        p_resource: resource,
+      }), "Resource could not be saved."));
+    },
+
     async setSubmissionStatus(id, status, notes = "") {
       return requireResult(await client.rpc("set_connection_submission_status", {
         p_submission_id: id, p_status: status, p_staff_notes: notes,
