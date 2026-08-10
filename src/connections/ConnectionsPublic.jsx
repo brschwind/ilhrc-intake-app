@@ -7,20 +7,30 @@ import {
   findConnectionBySlug,
   formatConnectionValue,
 } from "./connectionsModel.js";
-import { CONNECTIONS_BASE_PATH } from "../routing/appRoutes.js";
+import {
+  CONNECTIONS_ADMIN_PATH,
+  CONNECTIONS_BASE_PATH,
+  CONNECTIONS_REFERRAL_PATH,
+  CONNECTIONS_SUBMIT_PATH,
+} from "../routing/appRoutes.js";
 import "./ConnectionsPublic.css";
 
-function ConnectionsHeader({ onNavigate, showDirectory = true }) {
+export function ConnectionsHeader({ onNavigate, showDirectory = true, showConnectionsLinks = true }) {
   return (
     <header className="connections-site-header">
       <a className="connections-brand" href="/#catalog" onClick={(event) => onNavigate(event, "/#catalog")}>
         <img src="/ilhrc-logo.png" alt="" aria-hidden="true" />
         <span>Illinois Homeschool Resource Center</span>
       </a>
-      <nav aria-label="Public pages">
-        {showDirectory && <a href={CONNECTIONS_BASE_PATH} onClick={(event) => onNavigate(event, CONNECTIONS_BASE_PATH)}>Directory</a>}
-        <a href="/#catalog" onClick={(event) => onNavigate(event, "/#catalog")}>Bookstore</a>
-      </nav>
+      <div className="connections-header-actions">
+        <nav aria-label="Public pages">
+          {showConnectionsLinks && showDirectory && <a href={CONNECTIONS_BASE_PATH} onClick={(event) => onNavigate(event, CONNECTIONS_BASE_PATH)}>Directory</a>}
+          {showConnectionsLinks && <a href={CONNECTIONS_SUBMIT_PATH} onClick={(event) => onNavigate(event, CONNECTIONS_SUBMIT_PATH)}>Suggest a resource</a>}
+          {showConnectionsLinks && <a href={CONNECTIONS_REFERRAL_PATH} onClick={(event) => onNavigate(event, CONNECTIONS_REFERRAL_PATH)}>Resource matching</a>}
+          <a href="/#catalog" onClick={(event) => onNavigate(event, "/#catalog")}>Bookstore</a>
+        </nav>
+        {showConnectionsLinks && <a className="connections-staff-access" href={CONNECTIONS_ADMIN_PATH} onClick={(event) => onNavigate(event, CONNECTIONS_ADMIN_PATH)}>Staff access</a>}
+      </div>
     </header>
   );
 }
@@ -50,7 +60,7 @@ function ConnectionsNotFound({ onNavigate }) {
 export function ConnectionsUnavailable({ onNavigate }) {
   return (
     <div className="connections-app">
-      <ConnectionsHeader onNavigate={onNavigate} showDirectory={false} />
+      <ConnectionsHeader onNavigate={onNavigate} showDirectory={false} showConnectionsLinks={false} />
       <main id="main-content" className="connections-status-page">
         <p className="connections-eyebrow">IL HRC Connections</p>
         <h1>This resource guide is not available yet</h1>
@@ -81,6 +91,11 @@ function ConnectionsDirectory({ resources, onNavigate }) {
       </section>
 
       <DisclosurePanel />
+
+      <aside className="connections-contribute" aria-labelledby="connections-contribute-heading">
+        <div><h2 id="connections-contribute-heading">Know a helpful local resource?</h2><p>Representatives and families can send a resource for IL HRC to research. Submissions never publish automatically.</p></div>
+        <a className="connections-primary-link" href={CONNECTIONS_SUBMIT_PATH} onClick={(event) => onNavigate(event, CONNECTIONS_SUBMIT_PATH)}>Suggest a resource</a>
+      </aside>
 
       <form className="connections-filters" role="search" onSubmit={(event) => event.preventDefault()}>
         <div className="connections-search-field">
@@ -216,6 +231,7 @@ function ConnectionsDetail({ resource, onNavigate }) {
               <div><dt>Religious affiliation</dt><dd>{resource.worldview_details || formatConnectionValue(resource.worldview)}</dd></div>
             </dl>
             <p className="connections-worldview-note">{CONNECTIONS_DISCLOSURES.worldview}</p>
+            <a className="connections-secondary-link" href={`${CONNECTIONS_BASE_PATH}/${resource.slug}/correction`} onClick={(event) => onNavigate(event, `${CONNECTIONS_BASE_PATH}/${resource.slug}/correction`)}>Request a correction or removal</a>
           </aside>
         </div>
       </article>

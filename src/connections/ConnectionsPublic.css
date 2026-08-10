@@ -1,34 +1,41 @@
 .connections-app {
   min-height: 100vh;
-  background: #f4efe5;
-  color: #302c27;
-  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #f2f0ec;
+  color: #2b2129;
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 .connections-site-header {
   display: flex;
-  min-height: 72px;
-  padding: 12px clamp(18px, 5vw, 72px);
+  width: min(1216px, calc(100% - 64px));
+  min-height: 88px;
+  margin: 0 auto;
+  padding: 0 0 18px;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  border-bottom: 1px solid #d8cebd;
-  background: rgba(255, 252, 246, 0.96);
+  gap: 28px;
+  border-bottom: 1px solid #dedfdd;
 }
 
 .connections-brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  color: #40382f;
-  font-family: Georgia, serif;
-  font-weight: 700;
+  gap: 13px;
+  color: #2b2129;
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 400;
   text-decoration: none;
 }
 
-.connections-brand img { width: 44px; height: 44px; object-fit: contain; }
-.connections-site-header nav { display: flex; gap: 20px; }
-.connections-site-header nav a, .connections-back-link { color: #526d61; font-weight: 700; }
+.connections-brand img { width: 64px; height: 64px; object-fit: contain; }
+.connections-brand span { max-width: 220px; font-size: 1.05rem; line-height: 1.15; letter-spacing: 0.01em; }
+.connections-header-actions { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: 14px; }
+.connections-site-header nav { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
+.connections-site-header nav a { min-height: 38px; padding: 9px 14px; border-radius: 5px; color: #6f666b; font-weight: 400; text-decoration: none; }
+.connections-site-header nav a:hover { background: #eef3f1; color: #2b2129; }
+.connections-back-link { color: #5d766d; font-weight: 500; }
+.connections-staff-access { min-height: 38px; padding: 9px 0; color: #6f666b; font-size: 0.86rem; font-weight: 400; text-decoration: none; }
+.connections-staff-access:hover { color: #2b2129; text-decoration: underline; }
 .connections-site-header a:focus-visible, .connections-app button:focus-visible, .connections-app input:focus-visible, .connections-app select:focus-visible { outline: 3px solid #86664e; outline-offset: 3px; }
 
 .connections-skip-link { position: fixed; top: 8px; left: 8px; z-index: 100; padding: 10px 14px; transform: translateY(-150%); background: #fff; color: #302c27; }
@@ -38,8 +45,8 @@
 .connections-status-page { min-height: 62vh; padding: clamp(70px, 12vw, 140px) 0; text-align: center; }
 .connections-status-page > p { max-width: 650px; margin-inline: auto; }
 .connections-hero { padding: clamp(56px, 8vw, 96px) 0 38px; max-width: 820px; }
-.connections-eyebrow, .connections-card-category { margin-bottom: 8px; color: #7b5942; font-size: 0.76rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
-.connections-hero h1, .connections-detail h1, .connections-status-page h1 { margin: 0; color: #41382f; font-family: Georgia, serif; font-size: clamp(2.3rem, 7vw, 4.8rem); line-height: 1.02; }
+.connections-eyebrow, .connections-card-category { margin-bottom: 8px; color: #a85f34; font-size: 0.76rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; }
+.connections-hero h1, .connections-detail h1, .connections-status-page h1 { margin: 0; color: #a85f34; font-family: Georgia, "Times New Roman", serif; font-size: clamp(2.3rem, 7vw, 4.8rem); font-weight: 400; line-height: 1.02; }
 .connections-subtitle { margin: 10px 0 24px; color: #526d61; font-family: Georgia, serif; font-size: clamp(1.25rem, 3vw, 2rem); }
 .connections-hero > p:last-child, .connections-detail-summary { font-size: 1.08rem; line-height: 1.7; }
 
@@ -48,24 +55,24 @@
 .connections-disclosures p + p { margin-top: 10px; color: #665f57; font-size: 0.9rem; }
 
 .connections-filters { display: grid; grid-template-columns: minmax(240px, 1.6fr) repeat(3, minmax(150px, 1fr)) auto; gap: 12px; padding: 20px; align-items: end; border: 1px solid #d8cebd; border-radius: 12px; background: #fffdf8; }
-.connections-filters label { display: grid; gap: 6px; color: #514a43; font-size: 0.79rem; font-weight: 800; }
+.connections-filters label { display: grid; gap: 6px; color: #514a43; font-size: 0.79rem; font-weight: 500; }
 .connections-filters input, .connections-filters select { width: 100%; min-height: 44px; margin: 0; padding: 9px 10px; box-sizing: border-box; border: 1px solid #bfb4a3; border-radius: 7px; background: #fff; color: #302c27; font: inherit; }
-.connections-clear { min-height: 44px; margin: 0; padding: 8px 14px; border: 1px solid #748d7e; border-radius: 7px; background: transparent; color: #526d61; font-weight: 800; cursor: pointer; }
+.connections-clear { min-height: 44px; margin: 0; padding: 8px 14px; border: 1px solid #748d7e; border-radius: 5px; background: transparent; color: #526d61; font-weight: 600; cursor: pointer; }
 
 .connections-results { padding: 42px 0 80px; }
 .connections-results-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
-.connections-results-heading h2, .connections-detail h2 { color: #41382f; font-family: Georgia, serif; }
+.connections-results-heading h2, .connections-detail h2 { color: #2b2129; font-family: Georgia, "Times New Roman", serif; font-weight: 600; }
 .connections-results-heading span { color: #6e665d; }
 .connections-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
 .connections-card { display: flex; min-height: 310px; padding: 24px; flex-direction: column; border: 1px solid #d8cebd; border-radius: 11px; background: #fffdf8; box-shadow: 0 8px 22px rgba(67, 54, 42, 0.06); }
-.connections-card h3 { margin: 0 0 10px; font-family: Georgia, serif; font-size: 1.35rem; }
+.connections-card h3 { margin: 0 0 10px; font-family: Georgia, "Times New Roman", serif; font-size: 1.35rem; font-weight: 600; }
 .connections-card h3 a { color: #41382f; }
 .connections-card > p:not(.connections-card-category) { color: #625a52; line-height: 1.55; }
 .connections-card-facts, .connections-fact-panel dl { margin: 10px 0 20px; }
 .connections-card-facts div, .connections-fact-panel dl div { display: grid; grid-template-columns: 90px 1fr; gap: 8px; padding: 7px 0; border-top: 1px solid #ebe3d7; }
-.connections-card-facts dt, .connections-fact-panel dt { color: #756c63; font-size: 0.78rem; font-weight: 800; }
+.connections-card-facts dt, .connections-fact-panel dt { color: #756c63; font-size: 0.78rem; font-weight: 600; }
 .connections-card-facts dd, .connections-fact-panel dd { margin: 0; }
-.connections-card-link, .connections-primary-link { display: inline-flex; width: fit-content; margin-top: auto; color: #526d61; font-weight: 800; }
+.connections-card-link, .connections-primary-link { display: inline-flex; width: fit-content; margin-top: auto; color: #526d61; font-weight: 600; }
 .connections-primary-link { padding: 11px 18px; border-radius: 7px; background: #526d61; color: #fff; text-decoration: none; }
 .connections-empty { padding: 44px; text-align: center; border: 1px dashed #bfb4a3; border-radius: 10px; background: #fffaf1; }
 
@@ -82,6 +89,9 @@
 .connections-worldview-note { color: #6a6259; font-size: 0.8rem; }
 .connections-contact-list { padding-left: 20px; }
 .connections-contact-list li { margin-bottom: 8px; }
+.connections-secondary-link { display: inline-block; margin-top: 16px; color: #526d61; font-size: 0.86rem; font-weight: 500; }
+.connections-contribute { display: flex; margin: 0 0 34px; padding: 20px 24px; align-items: center; justify-content: space-between; gap: 24px; border: 1px solid #d8cebd; border-radius: 10px; background: #fffdf8; }
+.connections-contribute h2, .connections-contribute p { margin: 4px 0; }
 
 @media (max-width: 900px) {
   .connections-filters { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -90,14 +100,19 @@
 }
 
 @media (max-width: 620px) {
-  .connections-site-header { align-items: flex-start; flex-direction: column; gap: 10px; }
-  .connections-site-header nav { width: 100%; justify-content: space-between; }
-  .connections-brand span { font-size: 0.9rem; }
+  .connections-site-header { width: calc(100% - 24px); align-items: flex-start; flex-direction: column; gap: 12px; padding-top: 14px; padding-bottom: 14px; }
+  .connections-header-actions { display: grid; width: 100%; grid-template-columns: 1fr; gap: 6px; }
+  .connections-site-header nav { display: grid; width: 100%; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+  .connections-site-header nav a { display: grid; width: 100%; min-height: 40px; padding: 7px 8px; place-items: center; border: 1px solid #dedfdd; text-align: center; }
+  .connections-staff-access { justify-self: end; padding-right: 4px; }
+  .connections-brand img { width: 52px; height: 52px; }
+  .connections-brand span { max-width: none; font-size: 0.95rem; }
   .connections-filters, .connections-grid, .connections-detail-layout { grid-template-columns: 1fr; }
   .connections-search-field { grid-column: auto; }
   .connections-clear { width: 100%; }
   .connections-card { min-height: 0; }
   .connections-fact-panel { position: static; }
+  .connections-contribute { align-items: flex-start; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {

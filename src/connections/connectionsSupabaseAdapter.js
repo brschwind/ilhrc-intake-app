@@ -1,5 +1,5 @@
-import { createClient } from "@supabase/supabase-js";
 import { validatePublicConnectionResource } from "./connectionsModel.js";
+import { createConnectionsSupabaseClientFromEnvironment } from "./connectionsSupabaseClient.js";
 
 export const CONNECTIONS_PUBLIC_VIEWS = Object.freeze({
   directory: "public_connections_directory",
@@ -113,12 +113,6 @@ export function createConnectionsSupabaseAdapter(client) {
 }
 
 export function createConnectionsSupabaseAdapterFromEnvironment(environment = {}) {
-  const url = environment.VITE_CONNECTIONS_SUPABASE_URL;
-  const anonymousKey = environment.VITE_CONNECTIONS_SUPABASE_ANON_KEY;
-  if (!url || !anonymousKey) throw new Error("Connections data is not configured for this environment.");
-
-  const client = createClient(url, anonymousKey, {
-    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
-  });
+  const client = createConnectionsSupabaseClientFromEnvironment(environment);
   return createConnectionsSupabaseAdapter(client);
 }

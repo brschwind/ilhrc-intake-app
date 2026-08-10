@@ -1,5 +1,8 @@
 export const APP_NAVIGATION_EVENT = "ilhrc:navigate";
 export const CONNECTIONS_BASE_PATH = "/connections";
+export const CONNECTIONS_SUBMIT_PATH = `${CONNECTIONS_BASE_PATH}/submit`;
+export const CONNECTIONS_REFERRAL_PATH = `${CONNECTIONS_BASE_PATH}/referral`;
+export const CONNECTIONS_ADMIN_PATH = `${CONNECTIONS_BASE_PATH}/admin`;
 
 const CONNECTION_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const AUTH_URL_TYPES = new Set(["invite", "recovery"]);
@@ -23,9 +26,16 @@ export function getLegacyPublicView(hash = "") {
 export function matchConnectionsPath(pathname = "/") {
   const path = cleanPathname(pathname);
   if (path === CONNECTIONS_BASE_PATH) return { kind: "directory", pathname: path };
+  if (path === CONNECTIONS_SUBMIT_PATH) return { kind: "submit", pathname: path };
+  if (path === CONNECTIONS_REFERRAL_PATH) return { kind: "referral", pathname: path };
+  if (path === CONNECTIONS_ADMIN_PATH) return { kind: "admin", pathname: path };
   if (!path.startsWith(`${CONNECTIONS_BASE_PATH}/`)) return { kind: "none", pathname: path };
 
-  const encodedSlug = path.slice(CONNECTIONS_BASE_PATH.length + 1);
+  const relativePath = path.slice(CONNECTIONS_BASE_PATH.length + 1);
+  const correctionSuffix = "/correction";
+  const encodedSlug = relativePath.endsWith(correctionSuffix)
+    ? relativePath.slice(0, -correctionSuffix.length)
+    : relativePath;
   let slug;
   try {
     slug = decodeURIComponent(encodedSlug);
@@ -34,7 +44,11 @@ export function matchConnectionsPath(pathname = "/") {
   }
 
   if (!CONNECTION_SLUG_PATTERN.test(slug)) return { kind: "invalid", pathname: path };
-  return { kind: "detail", pathname: path, slug };
+  return {
+    kind: relativePath.endsWith(correctionSuffix) ? "correction" : "detail",
+    pathname: path,
+    slug,
+  };
 }
 
 export function resolveAppRoute(locationLike = {}, connectionsEnabled = false) {
