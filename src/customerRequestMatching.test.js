@@ -10,6 +10,7 @@ const precisionMigration = readFileSync(
   new URL("../supabase/migrations/20260719050000_tighten_customer_request_matching.sql", import.meta.url),
   "utf8"
 ).toLowerCase();
+const appSource = readFileSync(new URL("./App.jsx", import.meta.url), "utf8");
 
 test("new public or staff requests trigger one full-inventory scan", () => {
   assert.match(migration, /after insert on public\.customer_requests/);
@@ -47,6 +48,13 @@ test("only active requests and available inventory match without auto-reservatio
 test("public callers cannot invoke internal matching or read its result", () => {
   assert.match(migration, /revoke all on function public\.match_customer_request_inventory\(uuid, uuid\[\]\) from public, anon, authenticated/);
   assert.doesNotMatch(migration, /grant execute on function public\.run_customer_request_matching\([^)]*\) to anon/);
+});
+
+test("manual matching selects the batch-size RPC signature explicitly", () => {
+  assert.match(
+    appSource,
+    /\.rpc\("run_customer_request_matching",\s*\{\s*p_batch_size:\s*500\s*\}\)/
+  );
 });
 
 test("specific request fields take precedence over broad classification fields", () => {
