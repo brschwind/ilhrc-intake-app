@@ -6458,7 +6458,7 @@ async function updateCustomerRequestStatus(request, status) {
 async function runCustomerRequestCheck() {
   setCustomerRequestLoading(true);
   setCustomerRequestMessage("Checking queued inventory arrivals...");
-  const { data, error } = await supabase.rpc("run_customer_request_matching");
+  const { data, error } = await supabase.rpc("run_customer_request_matching", { p_batch_size: 500 });
   setCustomerRequestLoading(false);
   if (error) {
     setCustomerRequestMessage("Could not complete the check: " + error.message);
