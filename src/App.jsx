@@ -19,8 +19,10 @@ import {
   normalizePublisherItemNumber,
 } from "./barcodeIdentification";
 import {
+  buildEditedItemLabelQueueUpdate,
   buildDuplicateLabelQueueUpdate,
   buildSelectedLabelQueueUpdate,
+  getLabelAffectingEditFields,
   getQueuedLabelQuantity,
 } from "./labelQueue";
 import {
@@ -5275,6 +5277,19 @@ async function updateItem() {
     editData.status === "Sold" ||
     editData.status === "Removed" ||
     Number(editData.quantity || 0) <= 0;
+  const updatedItemLabelValues = {
+    sku: editData.sku || "",
+    final_price:
+      editData.final_price === "" || editData.final_price === null
+        ? null
+        : Number(editData.final_price),
+    quantity: Number(editData.quantity || 0),
+  };
+  const labelAffectingEditFields = getLabelAffectingEditFields(
+    editingItem,
+    updatedItemLabelValues
+  );
+  const shouldQueueUpdatedLabel = labelAffectingEditFields.length > 0 && !shouldArchive;
 
   // If restoring, create a NEW Square item instead of unarchiving
   if (isRestoringToAvailable) {
@@ -5375,6 +5390,11 @@ async function updateItem() {
     }
   }
 
+  const updatedAt = new Date().toISOString();
+  const labelQueueUpdate = shouldQueueUpdatedLabel
+    ? buildEditedItemLabelQueueUpdate(editingItem, updatedAt)
+    : {};
+
   const { error } = await supabase
     .from("items")
     .update({
@@ -5398,11 +5418,12 @@ async function updateItem() {
       status: editData.status || "Available",
       notes: editData.notes || "",
       sku: editData.sku || "",
-      updated_at: new Date().toISOString(),
+      updated_at: updatedAt,
       public_visible: editData.public_visible !== false,
       image_url: updatedImageUrl,
       square_item_id: squareItemId,
       square_variation_id: squareVariationId,
+      ...labelQueueUpdate,
     })
     .eq("id", editingItem.id);
 
@@ -5434,9 +5455,14 @@ async function updateItem() {
       "public_visible",
       "image_url",
     ],
+    label_queued_for_fields: shouldQueueUpdatedLabel ? labelAffectingEditFields : [],
   });
 
-  alert("Item updated!");
+  alert(
+    shouldQueueUpdatedLabel
+      ? "Item updated! One new sticker was added to the print queue."
+      : "Item updated!"
+  );
 
   setEditingItem(null);
   setEditData(null);

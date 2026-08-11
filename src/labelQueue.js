@@ -43,3 +43,33 @@ export function buildSelectedLabelQueueUpdate(item, queuedAt) {
     label_queued_at: item?.label_queued_at || queuedAt,
   };
 }
+
+function comparableNumber(value) {
+  if (value === "" || value === null || value === undefined) return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? number : value;
+}
+
+export function getLabelAffectingEditFields(originalItem, updatedItem) {
+  const changedFields = [];
+
+  if (String(originalItem?.sku || "") !== String(updatedItem?.sku || "")) {
+    changedFields.push("sku");
+  }
+  if (comparableNumber(originalItem?.final_price) !== comparableNumber(updatedItem?.final_price)) {
+    changedFields.push("final_price");
+  }
+  if (comparableNumber(originalItem?.quantity) !== comparableNumber(updatedItem?.quantity)) {
+    changedFields.push("quantity");
+  }
+
+  return changedFields;
+}
+
+export function buildEditedItemLabelQueueUpdate(item, queuedAt) {
+  return {
+    label_printed: false,
+    pending_label_quantity: getQueuedLabelQuantity(item) + 1,
+    label_queued_at: queuedAt,
+  };
+}
