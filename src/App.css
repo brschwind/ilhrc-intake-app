@@ -1838,29 +1838,29 @@ button:disabled {
     margin: 0.45in;
   }
 
-  body * {
+  body.reservation-print-mode * {
     visibility: hidden !important;
   }
 
-  body {
+  body.reservation-print-mode {
     background: #fff !important;
   }
 
-  .staff-app {
+  body.reservation-print-mode .staff-app {
     padding: 0 !important;
   }
 
-  .staff-app > * {
+  body.reservation-print-mode .staff-app > * {
     display: none !important;
   }
 
-  .staff-app > .customer-requests-page,
-  .customer-requests-page > .reservation-staff-section,
-  .reservation-staff-section > .reservation-pull-sheets {
+  body.reservation-print-mode .staff-app > .customer-requests-page,
+  body.reservation-print-mode .customer-requests-page > .reservation-staff-section,
+  body.reservation-print-mode .reservation-staff-section > .reservation-pull-sheets {
     display: block !important;
   }
 
-  .staff-app > .customer-requests-page {
+  body.reservation-print-mode .staff-app > .customer-requests-page {
     width: 100% !important;
     max-width: none !important;
     margin: 0 !important;
@@ -1869,24 +1869,24 @@ button:disabled {
     box-shadow: none !important;
   }
 
-  .customer-requests-page > *:not(.reservation-staff-section),
-  .reservation-staff-section > *:not(.reservation-pull-sheets) {
+  body.reservation-print-mode .customer-requests-page > *:not(.reservation-staff-section),
+  body.reservation-print-mode .reservation-staff-section > *:not(.reservation-pull-sheets) {
     display: none !important;
   }
 
-  .customer-requests-page > .reservation-staff-section {
+  body.reservation-print-mode .customer-requests-page > .reservation-staff-section {
     margin: 0;
     padding: 0;
     border: 0;
     background: #fff;
   }
 
-  .reservation-pull-sheets,
-  .reservation-pull-sheets * {
+  body.reservation-print-mode .reservation-pull-sheets,
+  body.reservation-print-mode .reservation-pull-sheets * {
     visibility: visible !important;
   }
 
-  .reservation-pull-sheets {
+  body.reservation-print-mode .reservation-pull-sheets {
     display: block;
     color: #20251f;
     font-family: Arial, Helvetica, sans-serif;

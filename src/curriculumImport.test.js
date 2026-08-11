@@ -156,6 +156,10 @@ test("curriculum printing uses a compact checklist layout", () => {
   assert.match(curriculumCatalogStyles, /@page\s*\{[^}]*margin:\s*0\.4in/s);
   assert.match(curriculumCatalogStyles, /\.curriculum-store-copies,[\s\S]*display:\s*none\s*!important/);
   assert.match(curriculumCatalogStyles, /@media print[\s\S]*\.curriculum-row\s*\{[^}]*padding:\s*4px 0/s);
+  assert.match(curriculumCatalogStyles, /body\.reservation-print-mode \*\s*\{[^}]*visibility:\s*hidden\s*!important/s);
+  assert.doesNotMatch(curriculumCatalogStyles, /\n\s*body \*\s*\{[^}]*visibility:\s*hidden\s*!important/s);
+  assert.match(appSource, /function printReservationPullSheets\(\)[\s\S]*classList\.add\(printModeClass\)/);
+  assert.match(appSource, /onClick=\{printReservationPullSheets\}/);
 });
 
 test("AI material records can be converted into the same CSV preview pipeline", () => {
