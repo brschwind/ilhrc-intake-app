@@ -581,6 +581,8 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [publicRequestSubmitting, setPublicRequestSubmitting] = useState(false);
   const [bookReservations, setBookReservations] = useState([]);
   const [reservationFilter, setReservationFilter] = useState("active");
+  const [expandedReservationCustomerId, setExpandedReservationCustomerId] = useState("");
+  const [expandedReservationBookId, setExpandedReservationBookId] = useState("");
   const [reservationItem, setReservationItem] = useState(null);
   const [reservationDraft, setReservationDraft] = useState(EMPTY_BOOK_RESERVATION);
   const [reservationMessage, setReservationMessage] = useState("");
@@ -6699,6 +6701,7 @@ function renderCustomerRequests() {
     reservation.status === "pending" &&
     new Date(reservation.expires_at).getTime() > Date.now()
   );
+  const reservationCustomerGroups = groupReservationsByCustomer(visibleReservations);
   const reservationPullGroups = groupReservationsByCustomer(pullSheetReservations);
 
   return (
@@ -6751,37 +6754,125 @@ function renderCustomerRequests() {
 
         {visibleReservations.length === 0 && <p>No reservations in this section.</p>}
         <div className="reservation-staff-list">
-          {visibleReservations.map((reservation) => {
-            const item = itemById[String(reservation.item_id)];
-            const isActive = ["pending", "ready"].includes(reservation.status) &&
-              new Date(reservation.expires_at).getTime() > Date.now();
+          {reservationCustomerGroups.map((group) => {
+            const customerId = group.reservations.map(({ id }) => id).sort().join("-");
+            const isExpanded = expandedReservationCustomerId === customerId;
+            const emails = [...new Set(group.reservations.map(({ email }) => email?.trim()).filter(Boolean))];
+            const phones = [...new Set(group.reservations.map(({ phone }) => phone?.trim()).filter(Boolean))];
+            const contactDetails = [...emails, ...phones];
+            const customerName = group.customer.customer_name || "Customer";
+            const readyCount = group.reservations.filter(({ status }) => status === "ready").length;
+
             return (
-              <article className="reservation-staff-card" key={reservation.id}>
-                <div>
-                  <span className={`reservation-status ${reservation.status}`}>{reservation.status.replace("_", " ")}</span>
-                  <h3>{item?.title || "Reserved book"}</h3>
-                  <p><strong>{reservation.customer_name}</strong> · {reservation.preferred_contact}</p>
-                  <p>{[reservation.email, reservation.phone].filter(Boolean).join(" · ")}</p>
-                  <p>
-                    {item?.sku && `SKU ${item.sku} · `}
-                    Expires {new Date(reservation.expires_at).toLocaleDateString()}
-                  </p>
-                  <p className="helper-text">Reference {String(reservation.id).slice(0, 8).toUpperCase()}</p>
+              <article className={`reservation-customer-card ${isExpanded ? "expanded" : ""}`} key={customerId}>
+                <div className="reservation-customer-summary">
+                  <div>
+                    <button
+                      type="button"
+                      className="reservation-customer-name"
+                      aria-expanded={isExpanded}
+                      aria-controls={`reservation-customer-${customerId}`}
+                      onClick={() => {
+                        setExpandedReservationCustomerId((current) => current === customerId ? "" : customerId);
+                        setExpandedReservationBookId("");
+                      }}
+                    >
+                      <span>{customerName}</span>
+                      <span className="reservation-customer-chevron" aria-hidden="true">⌄</span>
+                    </button>
+                    {contactDetails.length > 0 && <p>{contactDetails.join(" · ")}</p>}
+                    <p className="helper-text">Preferred contact: {group.customer.preferred_contact || "either"}</p>
+                  </div>
+                  <div className="reservation-customer-counts">
+                    {readyCount > 0 && <span className="reservation-ready-count">{readyCount} ready</span>}
+                    <span>{group.reservations.length} {group.reservations.length === 1 ? "reservation" : "reservations"}</span>
+                  </div>
                 </div>
-                <div className="reservation-staff-actions">
-                  {reservation.status === "pending" && isActive && (
-                    <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "ready")}>Mark Ready</button>
-                  )}
-                  {reservation.status === "ready" && isActive && (
-                    <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "picked_up")}>Picked Up</button>
-                  )}
-                  {(isActive || reservation.status === "expired") && (
-                    <button type="button" className="secondary" onClick={() => extendBookReservation(reservation)}>Extend 7 Days</button>
-                  )}
-                  {isActive && (
-                    <button type="button" className="secondary" onClick={() => updateBookReservationStatus(reservation, "cancelled")}>Cancel</button>
-                  )}
-                </div>
+
+                {isExpanded && (
+                  <div className="reservation-customer-books" id={`reservation-customer-${customerId}`}>
+                    {group.reservations.map((reservation) => {
+                      const item = itemById[String(reservation.item_id)];
+                      const isActive = ["pending", "ready"].includes(reservation.status) &&
+                        new Date(reservation.expires_at).getTime() > Date.now();
+                      const isBookExpanded = expandedReservationBookId === reservation.id;
+
+                      return (
+                        <article className="reservation-staff-card" key={reservation.id}>
+                          <div className="reservation-book-row">
+                            <div className="reservation-book-info">
+                              <span className={`reservation-status ${reservation.status}`}>{reservation.status.replace("_", " ")}</span>
+                              {item ? (
+                                <button
+                                  type="button"
+                                  className="reservation-book-title"
+                                  aria-expanded={isBookExpanded}
+                                  aria-controls={`reservation-book-${reservation.id}`}
+                                  onClick={() => setExpandedReservationBookId((current) => current === reservation.id ? "" : reservation.id)}
+                                >
+                                  {item.title || "Reserved book"}
+                                </button>
+                              ) : (
+                                <h3>Reserved book</h3>
+                              )}
+                              <p>
+                                {item?.sku && `SKU ${item.sku} · `}
+                                Expires {new Date(reservation.expires_at).toLocaleDateString()}
+                              </p>
+                              <p className="helper-text">Reference {String(reservation.id).slice(0, 8).toUpperCase()}</p>
+                            </div>
+                            <div className="reservation-staff-actions">
+                              {reservation.status === "pending" && isActive && (
+                                <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "ready")}>Mark Ready</button>
+                              )}
+                              {reservation.status === "ready" && isActive && (
+                                <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "picked_up")}>Picked Up</button>
+                              )}
+                              {(isActive || reservation.status === "expired") && (
+                                <button type="button" className="secondary" onClick={() => extendBookReservation(reservation)}>Extend 7 Days</button>
+                              )}
+                              {isActive && (
+                                <button type="button" className="secondary" onClick={() => updateBookReservationStatus(reservation, "cancelled")}>Cancel</button>
+                              )}
+                            </div>
+                          </div>
+
+                          {item && isBookExpanded && (
+                            <section className="reservation-book-preview" id={`reservation-book-${reservation.id}`}>
+                              <div className="reservation-book-cover">
+                                <BookCoverImage src={item.image_url} alt={item.title} width={360} height={480} eager />
+                                {!item.image_url && <div className="reservation-cover-placeholder">No cover image</div>}
+                              </div>
+                              <div>
+                                <div className="reservation-book-preview-heading">
+                                  <div>
+                                    <p className="reservation-preview-kicker">Listing details</p>
+                                    <h3>{item.title}</h3>
+                                  </div>
+                                  <button type="button" className="text-button" onClick={() => setExpandedReservationBookId("")}>Close</button>
+                                </div>
+                                <dl className="reservation-book-details">
+                                  <div><dt>Author</dt><dd>{item.author || "Not set"}</dd></div>
+                                  <div><dt>ISBN</dt><dd>{item.isbn || "Not set"}</dd></div>
+                                  <div><dt>Publisher</dt><dd>{item.publisher || "Not set"}</dd></div>
+                                  <div><dt>Curriculum</dt><dd>{item.curriculum || "Not set"}</dd></div>
+                                  <div><dt>Subject</dt><dd>{item.subject || "Not set"}</dd></div>
+                                  <div><dt>Grade level</dt><dd>{item.grade_level || "Not set"}</dd></div>
+                                  <div><dt>Category</dt><dd>{item.category || "Not set"}</dd></div>
+                                  <div><dt>Edition</dt><dd>{item.edition || "Not set"}</dd></div>
+                                  <div><dt>Location</dt><dd>{item.location || "Not set"}</dd></div>
+                                  <div><dt>SKU</dt><dd>{item.sku || "Not set"}</dd></div>
+                                  <div><dt>Quantity</dt><dd>{item.quantity ?? 0}</dd></div>
+                                  <div><dt>Price</dt><dd>${Number(item.final_price || 0).toFixed(2)}</dd></div>
+                                </dl>
+                              </div>
+                            </section>
+                          )}
+                        </article>
+                      );
+                    })}
+                  </div>
+                )}
               </article>
             );
           })}
