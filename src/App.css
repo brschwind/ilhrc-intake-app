@@ -1573,6 +1573,98 @@ button:disabled {
   margin-top: 12px;
 }
 
+.reservation-customer-card {
+  border: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.reservation-customer-card.expanded {
+  border-color: var(--border-strong);
+  box-shadow: 0 7px 22px rgba(41, 54, 48, 0.08);
+}
+
+.reservation-customer-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 15px 16px;
+}
+
+.reservation-customer-summary p {
+  margin: 4px 0 0;
+}
+
+.reservation-customer-name,
+.reservation-book-title {
+  width: fit-content;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-weight: 800;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--sage);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+
+.reservation-customer-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 1.05rem;
+}
+
+.reservation-customer-name:hover,
+.reservation-customer-name:focus-visible,
+.reservation-book-title:hover,
+.reservation-book-title:focus-visible {
+  color: var(--primary);
+}
+
+.reservation-customer-chevron {
+  display: inline-block;
+  font-size: 1.2rem;
+  line-height: 1;
+  text-decoration: none;
+  transition: transform 160ms ease;
+}
+
+.reservation-customer-card.expanded .reservation-customer-chevron {
+  transform: rotate(180deg);
+}
+
+.reservation-customer-counts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.86rem;
+  white-space: nowrap;
+}
+
+.reservation-ready-count {
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: #dcefe3;
+  color: #285c3d;
+  font-weight: 800;
+}
+
+.reservation-customer-books {
+  display: grid;
+  gap: 10px;
+  padding: 0 12px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
 .reservation-heading-actions {
   display: flex;
   align-items: center;
@@ -1596,12 +1688,30 @@ button:disabled {
 }
 
 .reservation-staff-card {
-  display: flex;
-  justify-content: space-between;
-  gap: 16px;
+  display: block;
   padding: 13px;
   border: 1px solid var(--border);
   background: var(--surface);
+}
+
+.reservation-customer-books > .reservation-staff-card:first-child {
+  margin-top: 12px;
+}
+
+.reservation-book-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.reservation-book-info {
+  min-width: 0;
+}
+
+.reservation-book-title {
+  display: block;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 1.05rem;
 }
 
 .reservation-staff-card h3,
@@ -1619,6 +1729,78 @@ button:disabled {
 
 .reservation-staff-actions button {
   margin-top: 0;
+}
+
+.reservation-book-preview {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 22px;
+  margin-top: 14px;
+  padding: 18px;
+  border-top: 1px solid var(--border);
+  background: var(--sage-light);
+}
+
+.reservation-book-cover img,
+.reservation-cover-placeholder {
+  display: block;
+  width: 100%;
+  max-height: 300px;
+  object-fit: contain;
+  background: var(--surface);
+}
+
+.reservation-cover-placeholder {
+  display: grid;
+  min-height: 230px;
+  place-items: center;
+  padding: 20px;
+  border: 1px dashed var(--border-strong);
+  color: var(--muted);
+  text-align: center;
+}
+
+.reservation-book-preview-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.reservation-book-preview-heading h3 {
+  margin: 2px 0 12px;
+}
+
+.reservation-preview-kicker {
+  color: var(--primary);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.reservation-book-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 18px;
+  margin: 0;
+}
+
+.reservation-book-details div {
+  min-width: 0;
+}
+
+.reservation-book-details dt {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.reservation-book-details dd {
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .reservation-status {
@@ -2541,6 +2723,14 @@ button:disabled {
     margin-top: 10px;
   }
 
+  .reservation-book-row {
+    display: block;
+  }
+
+  .reservation-book-preview {
+    grid-template-columns: 130px minmax(0, 1fr);
+  }
+
   .customer-match-actions {
     justify-content: flex-start;
     margin-top: 10px;
@@ -2846,6 +3036,29 @@ button:disabled {
 
   .customer-requests-heading {
     display: block;
+  }
+
+  .reservation-customer-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .reservation-customer-counts {
+    justify-content: flex-start;
+  }
+
+  .reservation-book-preview {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+
+  .reservation-book-cover img,
+  .reservation-cover-placeholder {
+    width: min(180px, 100%);
+  }
+
+  .reservation-book-details {
+    grid-template-columns: 1fr;
   }
 
   .public-catalog-heading,
