@@ -114,6 +114,21 @@ const EMPTY_BOOK_RESERVATION = {
 const BUNDLE_DRAFT_STORAGE_KEY = "ilhrc-active-bundle-draft";
 const STAFF_SIDEBAR_STORAGE_KEY = "ilhrc-staff-sidebar-collapsed";
 
+function printReservationPullSheets() {
+  const printModeClass = "reservation-print-mode";
+  const clearPrintMode = () => document.body.classList.remove(printModeClass);
+
+  document.body.classList.add(printModeClass);
+  window.addEventListener("afterprint", clearPrintMode, { once: true });
+
+  try {
+    window.print();
+  } catch (error) {
+    clearPrintMode();
+    throw error;
+  }
+}
+
 function loadSavedBundleDraft() {
   try {
     const saved = JSON.parse(localStorage.getItem(BUNDLE_DRAFT_STORAGE_KEY) || "null");
@@ -6729,7 +6744,7 @@ function renderCustomerRequests() {
             <button
               type="button"
               className="secondary reservation-print-button"
-              onClick={() => window.print()}
+              onClick={printReservationPullSheets}
               disabled={reservationPullGroups.length === 0}
             >
               Print Pull Sheets
