@@ -1,8 +1,12 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
+  catalogVariationWithInventoryTracking,
   inventoryCountsFromEvent,
   parseSquareQuantity,
+  soldQuantitiesByVariation,
+  startOfDayInTimeZone,
+  variationsWithoutInventoryTracking,
 } = require("./squareInventorySync");
 
 test("accepts whole Square inventory quantities, including oversold counts", () => {
@@ -41,4 +45,55 @@ test("extracts the newest in-stock count for the configured location", () => {
 test("ignores unrelated and malformed webhook events", () => {
   assert.deepEqual(inventoryCountsFromEvent({ type: "order.updated" }, "location-1"), []);
   assert.deepEqual(inventoryCountsFromEvent({ type: "inventory.count.updated", data: {} }, "location-1"), []);
+});
+
+test("finds linked Square variations that do not track inventory", () => {
+  const objects = [
+    { type: "ITEM_VARIATION", id: "off", item_variation_data: { track_inventory: false } },
+    { type: "ITEM_VARIATION", id: "on", item_variation_data: { track_inventory: true } },
+    { type: "ITEM_VARIATION", id: "missing", item_variation_data: {} },
+    { type: "ITEM_VARIATION", id: "unlinked", item_variation_data: {} },
+  ];
+  assert.deepEqual(
+    variationsWithoutInventoryTracking(objects, ["off", "on", "missing"]).map((object) => object.id),
+    ["off", "missing"]
+  );
+});
+
+test("totals completed Square order quantities for linked variations", () => {
+  const orders = [
+    { state: "COMPLETED", line_items: [
+      { catalog_object_id: "book-1", quantity: "1" },
+      { catalog_object_id: "book-1", quantity: "2" },
+      { catalog_object_id: "other", quantity: "5" },
+    ] },
+    { state: "OPEN", line_items: [{ catalog_object_id: "book-1", quantity: "9" }] },
+  ];
+  assert.deepEqual([...soldQuantitiesByVariation(orders, ["book-1"])], [["book-1", 3]]);
+});
+
+test("enables tracking without mutating or dropping variation fields", () => {
+  const original = {
+    type: "ITEM_VARIATION",
+    id: "variation-1",
+    version: 123,
+    created_at: "old",
+    updated_at: "old",
+    is_deleted: false,
+    present_at_all_locations: true,
+    item_variation_data: { item_id: "item-1", name: "Regular", sku: "ABC" },
+  };
+  const updated = catalogVariationWithInventoryTracking(original);
+  assert.equal(updated.item_variation_data.track_inventory, true);
+  assert.equal(updated.item_variation_data.sku, "ABC");
+  assert.equal(updated.version, 123);
+  assert.equal(updated.updated_at, undefined);
+  assert.equal(original.item_variation_data.track_inventory, undefined);
+});
+
+test("calculates the Chicago start of day for sale backfill", () => {
+  assert.equal(
+    startOfDayInTimeZone(new Date("2026-08-14T23:00:00Z"), "America/Chicago"),
+    "2026-08-14T05:00:00.000Z"
+  );
 });

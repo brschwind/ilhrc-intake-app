@@ -8,6 +8,63 @@ function parseSquareQuantity(value) {
   return Number.isSafeInteger(quantity) ? quantity : null;
 }
 
+function variationsWithoutInventoryTracking(objects, variationIds) {
+  const requested = new Set(variationIds || []);
+  return (objects || []).filter((object) => (
+    object?.type === "ITEM_VARIATION" &&
+    requested.has(object.id) &&
+    object.item_variation_data?.track_inventory !== true
+  ));
+}
+
+function soldQuantitiesByVariation(orders, variationIds) {
+  const requested = new Set(variationIds || []);
+  const sold = new Map();
+  for (const order of orders || []) {
+    if (order?.state !== "COMPLETED") continue;
+    for (const lineItem of order.line_items || []) {
+      const variationId = lineItem?.catalog_object_id;
+      const quantity = parseSquareQuantity(lineItem?.quantity);
+      if (!requested.has(variationId) || quantity === null || quantity <= 0) continue;
+      sold.set(variationId, (sold.get(variationId) || 0) + quantity);
+    }
+  }
+  return sold;
+}
+
+function catalogVariationWithInventoryTracking(object) {
+  const updated = structuredClone(object);
+  delete updated.created_at;
+  delete updated.updated_at;
+  delete updated.is_deleted;
+  updated.item_variation_data = {
+    ...updated.item_variation_data,
+    track_inventory: true,
+  };
+  return updated;
+}
+
+function startOfDayInTimeZone(now, timeZone) {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZoneName: "shortOffset",
+    }).formatToParts(now).map((part) => [part.type, part.value])
+  );
+  const match = parts.timeZoneName?.match(/^GMT([+-])(\d{1,2})(?::(\d{2}))?$/);
+  if (!match) throw new Error(`Could not determine the UTC offset for ${timeZone}.`);
+  const direction = match[1] === "+" ? 1 : -1;
+  const offsetMinutes = direction * (Number(match[2]) * 60 + Number(match[3] || 0));
+  return new Date(Date.UTC(
+    Number(parts.year),
+    Number(parts.month) - 1,
+    Number(parts.day)
+  ) - offsetMinutes * 60_000).toISOString();
+}
+
 function inventoryCountsFromEvent(event, locationId) {
   if (event?.type !== INVENTORY_EVENT_TYPE) return [];
 
@@ -65,7 +122,11 @@ async function applyInventoryCount(supabaseAdmin, eventId, count) {
 module.exports = {
   INVENTORY_EVENT_TYPE,
   applyInventoryCount,
+  catalogVariationWithInventoryTracking,
   inventoryCountsFromEvent,
   parseSquareQuantity,
+  soldQuantitiesByVariation,
+  startOfDayInTimeZone,
+  variationsWithoutInventoryTracking,
   verifySquareWebhook,
 };

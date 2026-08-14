@@ -5,7 +5,11 @@ const OpenAI = require("openai");
 const { createClient } = require("@supabase/supabase-js");
 const {
   applyInventoryCount,
+  catalogVariationWithInventoryTracking,
   inventoryCountsFromEvent,
+  soldQuantitiesByVariation,
+  startOfDayInTimeZone,
+  variationsWithoutInventoryTracking,
   verifySquareWebhook,
 } = require("./squareInventorySync");
 const {
@@ -118,6 +122,146 @@ async function retrieveSquareInventoryCounts(squareVariationIds) {
     } while (cursor);
   }
   return counts;
+}
+
+async function retrieveSquareCatalogVariations(squareVariationIds) {
+  const objects = [];
+  for (let start = 0; start < squareVariationIds.length; start += 1000) {
+    const response = await fetch(`${SQUARE_BASE_URL}/v2/catalog/batch-retrieve`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        object_ids: squareVariationIds.slice(start, start + 1000),
+        include_related_objects: false,
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`Square catalog lookup failed (${response.status}).`);
+    }
+    objects.push(...(data.objects || []));
+  }
+  return objects;
+}
+
+async function searchCompletedSquareOrders(startAt) {
+  const orders = [];
+  let cursor;
+  do {
+    const response = await fetch(`${SQUARE_BASE_URL}/v2/orders/search`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        location_ids: [process.env.SQUARE_LOCATION_ID],
+        return_entries: false,
+        limit: 500,
+        ...(cursor ? { cursor } : {}),
+        query: {
+          filter: {
+            state_filter: { states: ["COMPLETED"] },
+            date_time_filter: { created_at: { start_at: startAt } },
+          },
+          sort: { sort_field: "CREATED_AT", sort_order: "ASC" },
+        },
+      }),
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      throw new Error(`Square order lookup failed (${response.status}).`);
+    }
+    orders.push(...(data.orders || []));
+    cursor = data.cursor;
+  } while (cursor);
+  return orders;
+}
+
+async function enableSquareInventoryTracking(objects) {
+  if (objects.length === 0) return;
+  const response = await fetch(`${SQUARE_BASE_URL}/v2/catalog/batch-upsert`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      idempotency_key: `inventory-tracking-${Date.now()}`,
+      batches: Array.from({ length: Math.ceil(objects.length / 1000) }, (_, index) => ({
+        objects: objects.slice(index * 1000, (index + 1) * 1000)
+          .map(catalogVariationWithInventoryTracking),
+      })),
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok || data.errors?.length) {
+    throw new Error(`Square inventory tracking update failed (${response.status}).`);
+  }
+}
+
+let squareInventoryTrackingPrepared = false;
+
+async function prepareSquareInventoryTracking() {
+  if (squareInventoryTrackingPrepared) return { checked: 0, enabled: 0, backfilled: 0 };
+  const { data, error } = await supabaseAdmin
+    .from("items")
+    .select("square_variation_id")
+    .not("square_variation_id", "is", null);
+  if (error) throw error;
+  const variationIds = [...new Set(
+    (data || []).map((item) => String(item.square_variation_id || "").trim()).filter(Boolean)
+  )];
+  const catalogObjects = await retrieveSquareCatalogVariations(variationIds);
+  const disabled = variationsWithoutInventoryTracking(catalogObjects, variationIds);
+  const disabledIds = disabled.map((object) => object.id);
+
+  let backfilled = 0;
+  let skippedWithoutCount = 0;
+  if (disabledIds.length > 0) {
+    const startAt = process.env.SQUARE_TRACKING_BACKFILL_START_AT ||
+      startOfDayInTimeZone(new Date(), "America/Chicago");
+    const [orders, rawCounts] = await Promise.all([
+      searchCompletedSquareOrders(startAt),
+      retrieveSquareInventoryCounts(disabledIds),
+    ]);
+    const sold = soldQuantitiesByVariation(orders, disabledIds);
+    const counts = inventoryCountsFromEvent({
+      type: "inventory.count.updated",
+      created_at: new Date().toISOString(),
+      data: { object: { inventory_counts: rawCounts } },
+    }, process.env.SQUARE_LOCATION_ID);
+    const quantityByVariation = new Map(
+      counts.map((count) => [count.squareVariationId, count.quantity])
+    );
+
+    for (const [variationId, soldQuantity] of sold) {
+      const currentQuantity = quantityByVariation.get(variationId);
+      if (currentQuantity === undefined) {
+        skippedWithoutCount += 1;
+        continue;
+      }
+      await setSquareInventoryPhysicalCount(
+        variationId,
+        Math.max(0, currentQuantity - soldQuantity),
+        `tracking-backfill:${startAt.slice(0, 10)}:${variationId}`
+      );
+      backfilled += 1;
+    }
+
+    await enableSquareInventoryTracking(disabled);
+  }
+
+  squareInventoryTrackingPrepared = true;
+  return {
+    checked: variationIds.length,
+    enabled: disabledIds.length,
+    backfilled,
+    skipped_without_count: skippedWithoutCount,
+  };
 }
 
 async function setSquareInventoryPhysicalCount(squareVariationId, quantity, idempotencyKey) {
@@ -1117,6 +1261,7 @@ app.post("/update-square-item", requireAuth, async (req, res) => {
     variation.item_variation_data.name = "Regular";
     variation.item_variation_data.sku = sku || variation.item_variation_data.sku;
     variation.item_variation_data.pricing_type = "FIXED_PRICING";
+    variation.item_variation_data.track_inventory = true;
     variation.item_variation_data.price_money = {
       amount,
       currency: "USD",
@@ -1354,6 +1499,7 @@ app.post("/create-square-item", requireAuth, async (req, res) => {
                   item_variation_data: {
                     name: "Regular",
                     sku,
+                    track_inventory: true,
                     pricing_type: "FIXED_PRICING",
                     price_money: {
                       amount,
@@ -1700,9 +1846,11 @@ server.on("error", (error) => {
 async function runScheduledSquareReconciliation() {
   if (!squareInventoryIsConfigured()) return;
   try {
+    const trackingResult = await prepareSquareInventoryTracking();
     const inventoryResult = await reconcileSquareInventory();
     const reservationResult = await synchronizeSquareReservationAvailability();
     console.info("[Square inventory reconciled]", {
+      tracking: trackingResult,
       inventory: inventoryResult,
       reservations: reservationResult,
     });
