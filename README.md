@@ -37,9 +37,25 @@ OPENAI_API_KEY=
 SQUARE_ACCESS_TOKEN=
 SQUARE_LOCATION_ID=
 SQUARE_ENVIRONMENT=sandbox
+SQUARE_WEBHOOK_SIGNATURE_KEY=
+SQUARE_WEBHOOK_NOTIFICATION_URL=http://localhost:5001/square/webhooks/inventory
 ```
 
 The model overrides `CURRICULUM_IMPORT_MODEL` and `CURRICULUM_LINK_MODEL` are optional. Never expose service-role, OpenAI, or Square secrets through a `VITE_` variable.
+
+For production inventory updates, add an `inventory.count.updated` webhook in
+the Square Developer Console. Its notification URL must exactly match
+`SQUARE_WEBHOOK_NOTIFICATION_URL` (for example,
+`https://ilhrc-intake-app.onrender.com/square/webhooks/inventory`) and its
+signature key must be stored in `SQUARE_WEBHOOK_SIGNATURE_KEY`. The API also
+reconciles all Square-linked inventory at startup and every five minutes to
+repair missed events and existing stock drift.
+
+Active pickup reservations are also removed from Square's sellable in-stock
+count. Because Square's `RESERVED_FOR_SALE` state is read-only to integrations,
+staff use **Start Square Checkout** on a ready reservation before ringing up the
+book, then **Picked Up** after Square records the sale. Cancellation, expiration,
+and extension changes are synchronized automatically.
 
 For authentication roles, security policies, and first-admin setup, see [docs/auth-rbac-setup.md](docs/auth-rbac-setup.md).
 

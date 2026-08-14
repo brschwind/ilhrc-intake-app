@@ -37,6 +37,8 @@ Backend on Render:
 - `SUPABASE_INVITE_REDIRECT_URL`, for example your Vercel app URL
 - `ALLOWED_ORIGINS`, comma-separated, for example `https://your-vercel-app.vercel.app,http://localhost:5173`
 - Existing `OPENAI_API_KEY`, `SQUARE_ACCESS_TOKEN`, `SQUARE_LOCATION_ID`, `SQUARE_ENVIRONMENT`
+- `SQUARE_WEBHOOK_SIGNATURE_KEY` and the exact public
+  `SQUARE_WEBHOOK_NOTIFICATION_URL` for `/square/webhooks/inventory`
 
 Never put `SUPABASE_SERVICE_ROLE_KEY`, Square secrets, or OpenAI keys in Vercel frontend variables.
 
@@ -92,7 +94,8 @@ Frontend views:
 Backend endpoints:
 
 - Public: `GET /`
-- Team/Admin: `POST /analyze-book`, `POST /create-square-item`, `POST /update-square-item`, `POST /update-square-inventory`, `POST /archive-square-item`, `POST /unarchive-square-item`, `GET /auth/me`
+- Public reservation finalization: `POST /square/reservations/:id/hold` (the unguessable reservation ID is returned only after the database has accepted the reservation)
+- Team/Admin: `POST /analyze-book`, `POST /create-square-item`, `POST /update-square-item`, `POST /update-square-inventory`, `POST /sync-square-inventory`, reservation resync/checkout/sale-verification routes, `POST /archive-square-item`, `POST /unarchive-square-item`, `GET /auth/me`
 - Admin only: `GET /test-square`, `GET /test-square-item`, `GET /admin/users`, `POST /admin/users/invite`, `PATCH /admin/users/:id`, `GET /admin/audit-logs`
 
 Database:

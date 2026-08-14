@@ -4,6 +4,11 @@ const multer = require("multer");
 const OpenAI = require("openai");
 const { createClient } = require("@supabase/supabase-js");
 const {
+  applyInventoryCount,
+  inventoryCountsFromEvent,
+  verifySquareWebhook,
+} = require("./squareInventorySync");
+const {
   MAX_SOURCE_TEXT,
   curriculumAnalysisPrompt,
   curriculumAnalysisSchema,
@@ -45,7 +50,14 @@ app.use(
     },
   })
 );
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({
+  limit: "1mb",
+  verify(req, _res, buffer) {
+    if (req.originalUrl === "/square/webhooks/inventory") {
+      req.rawBody = buffer.toString("utf8");
+    }
+  },
+}));
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseAnonKey =
@@ -69,6 +81,252 @@ const supabaseAdmin =
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
+
+function squareInventoryIsConfigured() {
+  return Boolean(
+    supabaseAdmin &&
+    process.env.SQUARE_ACCESS_TOKEN &&
+    process.env.SQUARE_LOCATION_ID
+  );
+}
+
+async function retrieveSquareInventoryCounts(squareVariationIds) {
+  const counts = [];
+  for (let start = 0; start < squareVariationIds.length; start += 1000) {
+    const catalogObjectIds = squareVariationIds.slice(start, start + 1000);
+    let cursor;
+    do {
+      const response = await fetch(`${SQUARE_BASE_URL}/v2/inventory/counts/batch-retrieve`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          catalog_object_ids: catalogObjectIds,
+          location_ids: [process.env.SQUARE_LOCATION_ID],
+          states: ["IN_STOCK"],
+          ...(cursor ? { cursor } : {}),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(`Square inventory lookup failed (${response.status}).`);
+      }
+      counts.push(...(data.counts || []));
+      cursor = data.cursor;
+    } while (cursor);
+  }
+  return counts;
+}
+
+async function setSquareInventoryPhysicalCount(squareVariationId, quantity, idempotencyKey) {
+  const occurredAt = new Date().toISOString();
+  let lastError;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(`${SQUARE_BASE_URL}/v2/inventory/changes/batch-create`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          idempotency_key: idempotencyKey,
+          changes: [{
+            type: "PHYSICAL_COUNT",
+            physical_count: {
+              catalog_object_id: squareVariationId,
+              location_id: process.env.SQUARE_LOCATION_ID,
+              quantity: String(quantity),
+              state: "IN_STOCK",
+              occurred_at: occurredAt,
+            },
+          }],
+        }),
+      });
+      const data = await response.json();
+      if (response.ok) return data;
+      lastError = new Error(`Square inventory hold failed (${response.status}).`);
+      if (response.status < 500) lastError.nonRetryable = true;
+      if (lastError.nonRetryable) throw lastError;
+    } catch (error) {
+      lastError = error;
+      if (error.nonRetryable || attempt === 1) throw error;
+    }
+  }
+  throw lastError;
+}
+
+async function prepareSquareAvailableQuantity(squareVariationId, physicalQuantity) {
+  const { data: item, error: itemError } = await supabaseAdmin
+    .from("items")
+    .select("id,square_expected_quantity")
+    .eq("square_variation_id", squareVariationId)
+    .maybeSingle();
+  if (itemError) throw itemError;
+  if (!item) {
+    return {
+      itemId: null,
+      previousExpected: null,
+      availableQuantity: Math.max(Number(physicalQuantity || 0), 0),
+    };
+  }
+
+  const { count, error: holdError } = await supabaseAdmin
+    .from("book_reservations")
+    .select("id", { count: "exact", head: true })
+    .eq("item_id", String(item.id))
+    .in("status", ["pending", "ready"])
+    .gt("expires_at", new Date().toISOString())
+    .not("square_hold_synced_at", "is", null)
+    .is("square_hold_released_at", null);
+  if (holdError) throw holdError;
+
+  const availableQuantity = Math.max(Number(physicalQuantity || 0) - Number(count || 0), 0);
+  const { error: expectationError } = await supabaseAdmin
+    .from("items")
+    .update({ square_expected_quantity: availableQuantity })
+    .eq("id", item.id);
+  if (expectationError) throw expectationError;
+  return {
+    itemId: item.id,
+    previousExpected: item.square_expected_quantity,
+    availableQuantity,
+  };
+}
+
+async function restoreSquareExpectation(prepared) {
+  if (!prepared.itemId) return;
+  await supabaseAdmin
+    .from("items")
+    .update({ square_expected_quantity: prepared.previousExpected })
+    .eq("id", prepared.itemId)
+    .eq("square_expected_quantity", prepared.availableQuantity);
+}
+
+async function synchronizeSquareReservationAvailability(requestedItemIds = null) {
+  if (!squareInventoryIsConfigured()) {
+    throw new Error("Square inventory synchronization is not configured.");
+  }
+
+  let itemQuery = supabaseAdmin
+    .from("items")
+    .select("id,square_variation_id,quantity,square_expected_quantity")
+    .not("square_variation_id", "is", null);
+  if (requestedItemIds?.length) {
+    itemQuery = itemQuery.in("id", requestedItemIds);
+  }
+  const { data: itemsToSync, error: itemError } = await itemQuery;
+  if (itemError) throw itemError;
+  if (!itemsToSync?.length) return { checked: 0, updated: 0 };
+
+  const itemIds = itemsToSync.map((item) => String(item.id));
+  const { data: holds, error: holdError } = await supabaseAdmin
+    .from("book_reservations")
+    .select("item_id")
+    .in("item_id", itemIds)
+    .in("status", ["pending", "ready"])
+    .gt("expires_at", new Date().toISOString())
+    .not("square_hold_synced_at", "is", null)
+    .is("square_hold_released_at", null);
+  if (holdError) throw holdError;
+
+  const holdCountByItem = (holds || []).reduce((counts, hold) => {
+    const itemId = String(hold.item_id);
+    counts.set(itemId, (counts.get(itemId) || 0) + 1);
+    return counts;
+  }, new Map());
+
+  let updated = 0;
+  for (const item of itemsToSync) {
+    const desiredQuantity = Math.max(
+      Number(item.quantity || 0) - (holdCountByItem.get(String(item.id)) || 0),
+      0
+    );
+    const previousExpected = item.square_expected_quantity;
+    if (previousExpected !== null && Number(previousExpected) === desiredQuantity) continue;
+
+    const { error: expectationError } = await supabaseAdmin
+      .from("items")
+      .update({ square_expected_quantity: desiredQuantity })
+      .eq("id", item.id);
+    if (expectationError) throw expectationError;
+
+    try {
+      await setSquareInventoryPhysicalCount(
+        item.square_variation_id,
+        desiredQuantity,
+        `reservation-availability-${item.id}-${desiredQuantity}-${Date.now()}`
+      );
+      updated += 1;
+    } catch (error) {
+      await supabaseAdmin
+        .from("items")
+        .update({ square_expected_quantity: previousExpected })
+        .eq("id", item.id)
+        .eq("square_expected_quantity", desiredQuantity);
+      throw error;
+    }
+  }
+
+  return { checked: itemsToSync.length, updated };
+}
+
+async function reconcileSquareInventory(requestedVariationIds = null) {
+  if (!squareInventoryIsConfigured()) {
+    throw new Error("Square inventory synchronization is not configured.");
+  }
+
+  let variationIds = requestedVariationIds;
+  if (!variationIds) {
+    const { data, error } = await supabaseAdmin
+      .from("items")
+      .select("square_variation_id")
+      .not("square_variation_id", "is", null);
+    if (error) throw error;
+    variationIds = (data || []).map((item) => item.square_variation_id);
+  }
+
+  const uniqueVariationIds = [...new Set(
+    (variationIds || []).map((id) => String(id || "").trim()).filter(Boolean)
+  )];
+  if (uniqueVariationIds.length === 0) return { checked: 0, updated: 0 };
+
+  const rawCounts = await retrieveSquareInventoryCounts(uniqueVariationIds);
+  const counts = inventoryCountsFromEvent({
+    type: "inventory.count.updated",
+    created_at: new Date().toISOString(),
+    data: { object: { inventory_counts: rawCounts } },
+  }, process.env.SQUARE_LOCATION_ID);
+
+  let updated = 0;
+  for (const count of counts) {
+    const eventId = `reconcile:${count.squareVariationId}:${count.calculatedAt}`;
+    const { data, error } = await applyInventoryCount(supabaseAdmin, eventId, count);
+    if (error) throw error;
+    updated += Number(data?.updated_items || 0);
+  }
+  return { checked: uniqueVariationIds.length, updated };
+}
+
+async function loadReservationAndItem(reservationId) {
+  const { data: reservation, error: reservationError } = await supabaseAdmin
+    .from("book_reservations")
+    .select("*")
+    .eq("id", reservationId)
+    .maybeSingle();
+  if (reservationError) throw reservationError;
+  if (!reservation) return { reservation: null, item: null };
+
+  const { data: item, error: itemError } = await supabaseAdmin
+    .from("items")
+    .select("*")
+    .eq("id", reservation.item_id)
+    .maybeSingle();
+  if (itemError) throw itemError;
+  return { reservation, item };
+}
 
 function sendSafeError(res, status, message) {
   res.status(status).json({
@@ -482,6 +740,205 @@ app.get("/admin/audit-logs", requireAuth, requireAdmin, async (req, res) => {
   res.json({ audit_logs: data || [] });
 });
 
+app.post("/square/webhooks/inventory", async (req, res) => {
+  const signatureKey = process.env.SQUARE_WEBHOOK_SIGNATURE_KEY;
+  const notificationUrl = process.env.SQUARE_WEBHOOK_NOTIFICATION_URL;
+  if (
+    !signatureKey ||
+    !notificationUrl ||
+    !process.env.SQUARE_LOCATION_ID ||
+    !supabaseAdmin
+  ) {
+    sendSafeError(res, 503, "Square inventory webhook is not configured.");
+    return;
+  }
+
+  try {
+    const valid = await verifySquareWebhook({
+      requestBody: req.rawBody,
+      signatureHeader: req.get("x-square-hmacsha256-signature") || "",
+      signatureKey,
+      notificationUrl,
+    });
+    if (!valid) {
+      sendSafeError(res, 403, "Invalid Square webhook signature.");
+      return;
+    }
+
+    const event = req.body;
+    if (event?.type !== "inventory.count.updated") {
+      res.json({ success: true, ignored: true });
+      return;
+    }
+    if (!event?.event_id) {
+      sendSafeError(res, 400, "Square webhook is missing an event ID.");
+      return;
+    }
+
+    const counts = inventoryCountsFromEvent(event, process.env.SQUARE_LOCATION_ID);
+    const results = await Promise.all(counts.map(async (count) => {
+      const result = await applyInventoryCount(
+        supabaseAdmin,
+        event.event_id,
+        count
+      );
+      if (result.error) throw result.error;
+      return result.data;
+    }));
+    const updated = results.reduce(
+      (total, result) => total + Number(result?.updated_items || 0),
+      0
+    );
+
+    res.json({ success: true, processed_counts: counts.length, updated_items: updated });
+  } catch (error) {
+    console.error("[Square inventory webhook failed]", error?.message || error);
+    sendSafeError(res, 500, "Could not apply the Square inventory update.");
+  }
+});
+
+app.post("/sync-square-inventory", requireAuth, async (req, res) => {
+  try {
+    const requestedIds = Array.isArray(req.body?.square_variation_ids)
+      ? req.body.square_variation_ids
+      : null;
+    const result = await reconcileSquareInventory(requestedIds);
+    await writeAudit(req, "square_inventory_reconciled", "inventory", null, result);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error("[Square inventory reconciliation failed]", error?.message || error);
+    sendSafeError(res, 502, "Could not reconcile inventory with Square.");
+  }
+});
+
+app.post("/square/reservations/:id/hold", async (req, res) => {
+  try {
+    const { reservation, item } = await loadReservationAndItem(req.params.id);
+    if (
+      !reservation ||
+      !item ||
+      !["pending", "ready"].includes(reservation.status) ||
+      new Date(reservation.expires_at).getTime() <= Date.now()
+    ) {
+      sendSafeError(res, 409, "This reservation is no longer active.");
+      return;
+    }
+
+    if (!item.square_variation_id) {
+      res.json({ success: true, square_linked: false });
+      return;
+    }
+
+    const { error: markError } = await supabaseAdmin
+      .from("book_reservations")
+      .update({
+        square_hold_synced_at: reservation.square_hold_synced_at || new Date().toISOString(),
+        square_hold_released_at: null,
+        square_hold_error: null,
+      })
+      .eq("id", reservation.id);
+    if (markError) throw markError;
+
+    await synchronizeSquareReservationAvailability([item.id]);
+    res.json({ success: true, square_linked: true });
+  } catch (error) {
+    console.error("[Square reservation hold failed]", error?.message || error);
+    await supabaseAdmin
+      ?.from("book_reservations")
+      .update({ square_hold_error: "Square hold failed; retry required." })
+      .eq("id", req.params.id);
+    sendSafeError(res, 502, "Square could not hold this copy. Please try again.");
+  }
+});
+
+app.post("/square/reservations/:id/resync", requireAuth, async (req, res) => {
+  try {
+    const { reservation, item } = await loadReservationAndItem(req.params.id);
+    if (!reservation || !item) {
+      sendSafeError(res, 404, "Reservation not found.");
+      return;
+    }
+    const result = item.square_variation_id
+      ? await synchronizeSquareReservationAvailability([item.id])
+      : { checked: 0, updated: 0 };
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error("[Square reservation resync failed]", error?.message || error);
+    sendSafeError(res, 502, "Could not synchronize this reservation with Square.");
+  }
+});
+
+app.post("/square/reservations/:id/release-for-checkout", requireAuth, async (req, res) => {
+  try {
+    const { reservation, item } = await loadReservationAndItem(req.params.id);
+    if (!reservation || !item || reservation.status !== "ready") {
+      sendSafeError(res, 409, "Only a ready reservation can be released for checkout.");
+      return;
+    }
+    if (!item.square_variation_id) {
+      res.json({ success: true, square_linked: false });
+      return;
+    }
+
+    const { error: releaseError } = await supabaseAdmin
+      .from("book_reservations")
+      .update({ square_hold_released_at: new Date().toISOString(), square_hold_error: null })
+      .eq("id", reservation.id);
+    if (releaseError) throw releaseError;
+
+    await synchronizeSquareReservationAvailability([item.id]);
+    const { data: refreshedItem, error: refreshError } = await supabaseAdmin
+      .from("items")
+      .select("square_expected_quantity")
+      .eq("id", item.id)
+      .single();
+    if (refreshError) throw refreshError;
+    await supabaseAdmin
+      .from("book_reservations")
+      .update({ square_checkout_quantity: refreshedItem.square_expected_quantity })
+      .eq("id", reservation.id);
+
+    res.json({ success: true, square_linked: true });
+  } catch (error) {
+    console.error("[Square checkout release failed]", error?.message || error);
+    sendSafeError(res, 502, "Could not release this copy for Square checkout.");
+  }
+});
+
+app.post("/square/reservations/:id/verify-sale", requireAuth, async (req, res) => {
+  try {
+    const { reservation, item } = await loadReservationAndItem(req.params.id);
+    if (!reservation || !item || reservation.status !== "ready") {
+      sendSafeError(res, 409, "Only a ready reservation can be completed.");
+      return;
+    }
+    if (!item.square_variation_id) {
+      res.json({ success: true, sale_verified: false, square_linked: false });
+      return;
+    }
+    if (!reservation.square_hold_released_at || reservation.square_checkout_quantity === null) {
+      sendSafeError(res, 409, "Release this reservation for Square checkout first.");
+      return;
+    }
+
+    await reconcileSquareInventory([item.square_variation_id]);
+    const counts = await retrieveSquareInventoryCounts([item.square_variation_id]);
+    const current = inventoryCountsFromEvent({
+      type: "inventory.count.updated",
+      created_at: new Date().toISOString(),
+      data: { object: { inventory_counts: counts } },
+    }, process.env.SQUARE_LOCATION_ID)[0];
+    if (!current || current.quantity >= Number(reservation.square_checkout_quantity)) {
+      sendSafeError(res, 409, "Square has not recorded this sale yet.");
+      return;
+    }
+    res.json({ success: true, sale_verified: true, square_linked: true });
+  } catch (error) {
+    console.error("[Square reservation sale verification failed]", error?.message || error);
+    sendSafeError(res, 502, "Could not verify this sale with Square.");
+  }
+});
+
 app.get("/test-square", requireAuth, requireAdmin, async (req, res) => {
   try {
     const response = await fetch(`${SQUARE_BASE_URL}/v2/locations`, {
@@ -578,43 +1035,22 @@ app.post("/update-square-inventory", requireAuth, async (req, res) => {
       });
     }
 
-    const inventoryResponse = await fetch(
-      `${SQUARE_BASE_URL}/v2/inventory/changes/batch-create`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          idempotency_key: `${square_variation_id}-inventory-${Date.now()}`,
-          changes: [
-            {
-              type: "PHYSICAL_COUNT",
-              physical_count: {
-                catalog_object_id: square_variation_id,
-                location_id: process.env.SQUARE_LOCATION_ID,
-                quantity: String(quantity),
-                state: "IN_STOCK",
-                occurred_at: new Date().toISOString(),
-              },
-            },
-          ],
-        }),
-      }
-    );
-
-    const inventoryData = await inventoryResponse.json();
-
-    if (!inventoryResponse.ok) {
-      return res.status(inventoryResponse.status).json({
-        success: false,
-        error: inventoryData,
-      });
+    const prepared = await prepareSquareAvailableQuantity(square_variation_id, quantity);
+    let inventoryData;
+    try {
+      inventoryData = await setSquareInventoryPhysicalCount(
+        square_variation_id,
+        prepared.availableQuantity,
+        `${square_variation_id}-inventory-${Date.now()}`
+      );
+    } catch (error) {
+      await restoreSquareExpectation(prepared);
+      throw error;
     }
 
     await writeAudit(req, "square_inventory_synced", "square_variation", square_variation_id, {
-      quantity,
+      physical_quantity: quantity,
+      square_available_quantity: prepared.availableQuantity,
     });
 
     res.json({
@@ -711,39 +1147,16 @@ app.post("/update-square-item", requireAuth, async (req, res) => {
     }
 
     if (quantity !== undefined && quantity !== null) {
-      const inventoryResponse = await fetch(
-        `${SQUARE_BASE_URL}/v2/inventory/changes/batch-create`,
-        {
-          method: "POST",
-          headers: {
-            Authorization: `Bearer ${process.env.SQUARE_ACCESS_TOKEN}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            idempotency_key: `${square_variation_id}-edit-inventory-${Date.now()}`,
-            changes: [
-              {
-                type: "PHYSICAL_COUNT",
-                physical_count: {
-                  catalog_object_id: square_variation_id,
-                  location_id: process.env.SQUARE_LOCATION_ID,
-                  quantity: String(quantity),
-                  state: "IN_STOCK",
-                  occurred_at: new Date().toISOString(),
-                },
-              },
-            ],
-          }),
-        }
-      );
-
-      const inventoryData = await inventoryResponse.json();
-
-      if (!inventoryResponse.ok) {
-        return res.status(inventoryResponse.status).json({
-          success: false,
-          error: inventoryData,
-        });
+      const prepared = await prepareSquareAvailableQuantity(square_variation_id, quantity);
+      try {
+        await setSquareInventoryPhysicalCount(
+          square_variation_id,
+          prepared.availableQuantity,
+          `${square_variation_id}-edit-inventory-${Date.now()}`
+        );
+      } catch (error) {
+        await restoreSquareExpectation(prepared);
+        throw error;
       }
     }
 
@@ -1284,4 +1697,19 @@ server.on("error", (error) => {
   console.error("Server error:", error);
 });
 
-setInterval(() => {}, 1000);
+async function runScheduledSquareReconciliation() {
+  if (!squareInventoryIsConfigured()) return;
+  try {
+    const inventoryResult = await reconcileSquareInventory();
+    const reservationResult = await synchronizeSquareReservationAvailability();
+    console.info("[Square inventory reconciled]", {
+      inventory: inventoryResult,
+      reservations: reservationResult,
+    });
+  } catch (error) {
+    console.error("[Square inventory reconciliation failed]", error?.message || error);
+  }
+}
+
+setTimeout(runScheduledSquareReconciliation, 5000).unref();
+setInterval(runScheduledSquareReconciliation, 5 * 60 * 1000).unref();
