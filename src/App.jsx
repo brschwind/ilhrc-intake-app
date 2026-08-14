@@ -6531,7 +6531,7 @@ async function updateCustomerMatchStatus(match, status) {
 async function updateBookReservationStatus(reservation, status) {
   if (
     status === "picked_up" &&
-    !confirm("Mark this reservation picked up? This will remove one copy from inventory.")
+    !confirm("Mark this reservation picked up? Confirm the sale has already been completed in Square.")
   ) return;
   if (
     status === "cancelled" &&
@@ -6539,6 +6539,20 @@ async function updateBookReservationStatus(reservation, status) {
   ) return;
 
   setCustomerRequestMessage("");
+  if (status === "picked_up") {
+    const reservedItem = items.find((item) => String(item.id) === String(reservation.item_id));
+    if (reservedItem?.square_variation_id) {
+      try {
+        const response = await authFetch(`/square/reservations/${reservation.id}/verify-sale`, {
+          method: "POST",
+        });
+        await requireSuccessfulApiResponse(response, "Could not verify the sale with Square.");
+      } catch (error) {
+        setCustomerRequestMessage(error.message);
+        return;
+      }
+    }
+  }
   const { error } = await supabase.rpc("update_book_reservation_status", {
     p_reservation_id: reservation.id,
     p_status: status,
@@ -6548,7 +6562,30 @@ async function updateBookReservationStatus(reservation, status) {
     return;
   }
   if (status === "picked_up") await loadItems();
+  if (["cancelled", "expired"].includes(status)) {
+    const response = await authFetch(`/square/reservations/${reservation.id}/resync`, {
+      method: "POST",
+    }).catch(() => null);
+    if (!response?.ok) {
+      setCustomerRequestMessage("Reservation updated, but Square availability will retry automatically.");
+    }
+  }
   await loadCustomerRequestData();
+}
+
+async function releaseReservationForCheckout(reservation) {
+  if (!confirm("Release this held copy in Square so it can be checked out now?")) return;
+  setCustomerRequestMessage("");
+  try {
+    const response = await authFetch(`/square/reservations/${reservation.id}/release-for-checkout`, {
+      method: "POST",
+    });
+    await requireSuccessfulApiResponse(response, "Could not release this copy for checkout.");
+    setCustomerRequestMessage("Square checkout is ready. Complete the sale in Square, then click Picked Up.");
+    await loadCustomerRequestData();
+  } catch (error) {
+    setCustomerRequestMessage(error.message);
+  }
 }
 
 async function extendBookReservation(reservation) {
@@ -6560,6 +6597,12 @@ async function extendBookReservation(reservation) {
   if (error) {
     setCustomerRequestMessage("Could not extend reservation: " + error.message);
     return;
+  }
+  const syncResponse = await authFetch(`/square/reservations/${reservation.id}/resync`, {
+    method: "POST",
+  }).catch(() => null);
+  if (!syncResponse?.ok) {
+    setCustomerRequestMessage("Reservation extended, but Square availability will retry automatically.");
   }
   await loadCustomerRequestData();
 }
@@ -6601,6 +6644,21 @@ async function submitBookReservation(event) {
   }
   if (!data) {
     setReservationMessage("We could not reserve this book. Please try again.");
+    return;
+  }
+
+  try {
+    const holdResponse = await fetch(`${API_BASE_URL}/square/reservations/${data.id}/hold`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    await requireSuccessfulApiResponse(
+      holdResponse,
+      "We could not hold this copy in Square. Please try again."
+    );
+  } catch (holdError) {
+    setReservationMessage(holdError.message);
+    await loadItems();
     return;
   }
 
@@ -6867,7 +6925,11 @@ function renderCustomerRequests() {
                                 <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "ready")}>Mark Ready</button>
                               )}
                               {reservation.status === "ready" && isActive && (
-                                <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "picked_up")}>Picked Up</button>
+                                reservation.square_hold_released_at ? (
+                                  <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "picked_up")}>Picked Up</button>
+                                ) : (
+                                  <button type="button" className="primary" onClick={() => releaseReservationForCheckout(reservation)}>Start Square Checkout</button>
+                                )
                               )}
                               {(isActive || reservation.status === "expired") && (
                                 <button type="button" className="secondary" onClick={() => extendBookReservation(reservation)}>Extend 7 Days</button>
