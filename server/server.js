@@ -8,6 +8,7 @@ const {
   catalogVariationWithInventoryTracking,
   inventoryCountsFromEvent,
   soldQuantitiesByVariation,
+  squareSalesPayloadFromOrders,
   startOfDayInTimeZone,
   variationsWithoutInventoryTracking,
   verifySquareWebhook,
@@ -147,8 +148,9 @@ async function retrieveSquareCatalogVariations(squareVariationIds) {
   return objects;
 }
 
-async function searchCompletedSquareOrders(startAt) {
+async function searchCompletedSquareOrders(startAt, timestampField = "created_at") {
   const orders = [];
+  const sortField = timestampField.toUpperCase();
   let cursor;
   do {
     const response = await fetch(`${SQUARE_BASE_URL}/v2/orders/search`, {
@@ -165,9 +167,9 @@ async function searchCompletedSquareOrders(startAt) {
         query: {
           filter: {
             state_filter: { states: ["COMPLETED"] },
-            date_time_filter: { created_at: { start_at: startAt } },
+            date_time_filter: { [timestampField]: { start_at: startAt } },
           },
-          sort: { sort_field: "CREATED_AT", sort_order: "ASC" },
+          sort: { sort_field: sortField, sort_order: "ASC" },
         },
       }),
     });
@@ -179,6 +181,38 @@ async function searchCompletedSquareOrders(startAt) {
     cursor = data.cursor;
   } while (cursor);
   return orders;
+}
+
+let squareSalesHistoryPrepared = false;
+
+async function synchronizeSquareSales() {
+  const fullHistory = !squareSalesHistoryPrepared;
+  const startAt = fullHistory
+    ? (process.env.SQUARE_SALES_BACKFILL_START_AT || "2000-01-01T00:00:00Z")
+    : new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString();
+  const orders = await searchCompletedSquareOrders(
+    startAt,
+    fullHistory ? "closed_at" : "updated_at"
+  );
+  const sales = squareSalesPayloadFromOrders(orders);
+  const totals = { recorded_lines: 0, updated_lines: 0, sold_copies_delta: 0 };
+
+  for (let start = 0; start < sales.length; start += 100) {
+    const { data, error } = await supabaseAdmin.rpc("record_square_order_sales", {
+      p_orders: sales.slice(start, start + 100),
+    });
+    if (error) throw error;
+    totals.recorded_lines += Number(data?.recorded_lines || 0);
+    totals.updated_lines += Number(data?.updated_lines || 0);
+    totals.sold_copies_delta += Number(data?.sold_copies_delta || 0);
+  }
+
+  squareSalesHistoryPrepared = true;
+  return {
+    full_history: fullHistory,
+    orders_checked: orders.length,
+    ...totals,
+  };
 }
 
 async function enableSquareInventoryTracking(objects) {
@@ -1847,10 +1881,12 @@ async function runScheduledSquareReconciliation() {
   if (!squareInventoryIsConfigured()) return;
   try {
     const trackingResult = await prepareSquareInventoryTracking();
+    const salesResult = await synchronizeSquareSales();
     const inventoryResult = await reconcileSquareInventory();
     const reservationResult = await synchronizeSquareReservationAvailability();
     console.info("[Square inventory reconciled]", {
       tracking: trackingResult,
+      sales: salesResult,
       inventory: inventoryResult,
       reservations: reservationResult,
     });

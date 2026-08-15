@@ -5,6 +5,7 @@ const {
   inventoryCountsFromEvent,
   parseSquareQuantity,
   soldQuantitiesByVariation,
+  squareSalesPayloadFromOrders,
   startOfDayInTimeZone,
   variationsWithoutInventoryTracking,
 } = require("./squareInventorySync");
@@ -96,4 +97,23 @@ test("calculates the Chicago start of day for sale backfill", () => {
     startOfDayInTimeZone(new Date("2026-08-14T23:00:00Z"), "America/Chicago"),
     "2026-08-14T05:00:00.000Z"
   );
+});
+
+test("normalizes completed Square catalog sales for the sales ledger", () => {
+  assert.deepEqual(squareSalesPayloadFromOrders([
+    {
+      id: "order-1",
+      state: "COMPLETED",
+      closed_at: "2026-08-14T18:00:00Z",
+      line_items: [
+        { uid: "line-1", catalog_object_id: "variation-1", quantity: "2" },
+        { uid: "custom", quantity: "1" },
+      ],
+    },
+    { id: "open-order", state: "OPEN", line_items: [] },
+  ]), [{
+    order_id: "order-1",
+    closed_at: "2026-08-14T18:00:00Z",
+    lines: [{ line_uid: "line-1", catalog_object_id: "variation-1", quantity: 2 }],
+  }]);
 });

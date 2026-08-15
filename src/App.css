@@ -1205,6 +1205,37 @@ button:disabled {
   margin-top: 9px;
 }
 
+.inventory-grid .inventory-item.sold-out-item {
+  border-color: #c9c9c4;
+  background: #eeeeeb;
+  color: #777772;
+}
+
+.inventory-grid .inventory-item.sold-out-item h3,
+.inventory-grid .inventory-item.sold-out-item p {
+  color: #777772;
+}
+
+.inventory-grid .inventory-item.sold-out-item img {
+  filter: grayscale(1);
+  opacity: 0.52;
+}
+
+.sold-out-badge {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+  z-index: 1;
+  padding: 4px 8px;
+  border: 1px solid #8a8a84;
+  background: rgba(246, 246, 243, 0.94);
+  color: #5f5f5a;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
 .catalog-note {
   display: inline-block;
   margin-top: 5px;
