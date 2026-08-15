@@ -32,6 +32,25 @@ function soldQuantitiesByVariation(orders, variationIds) {
   return sold;
 }
 
+function squareSalesPayloadFromOrders(orders) {
+  return (orders || [])
+    .filter((order) => order?.state === "COMPLETED" && order?.id)
+    .map((order) => ({
+      order_id: order.id,
+      closed_at: order.closed_at || order.updated_at || order.created_at,
+      lines: (order.line_items || []).flatMap((lineItem, index) => {
+        const quantity = parseSquareQuantity(lineItem?.quantity);
+        if (!lineItem?.catalog_object_id || quantity === null || quantity <= 0) return [];
+        return [{
+          line_uid: lineItem.uid || `${lineItem.catalog_object_id}:${index}`,
+          catalog_object_id: lineItem.catalog_object_id,
+          quantity,
+        }];
+      }),
+    }))
+    .filter((order) => order.closed_at && order.lines.length > 0);
+}
+
 function catalogVariationWithInventoryTracking(object) {
   const updated = structuredClone(object);
   delete updated.created_at;
@@ -126,6 +145,7 @@ module.exports = {
   inventoryCountsFromEvent,
   parseSquareQuantity,
   soldQuantitiesByVariation,
+  squareSalesPayloadFromOrders,
   startOfDayInTimeZone,
   variationsWithoutInventoryTracking,
   verifySquareWebhook,

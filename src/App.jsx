@@ -37,6 +37,11 @@ import { groupReservationsByCustomer } from "./reservationPrint";
 import { CONNECTIONS_ENABLED } from "./connections/connectionsConfig.js";
 import ConnectionsAdmin from "./connections/ConnectionsAdmin.jsx";
 import { navigateToPath } from "./routing/appRoutes.js";
+import {
+  compareInventoryItems,
+  isSoldOutInventoryItem,
+  totalSoldCopies,
+} from "./inventoryDisplay.js";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -5755,25 +5760,7 @@ const filteredItems = items.filter((item) => {
   matchesLocation &&
   matchesDateAdded
 );
-}).sort((a, b) => {
-  if (inventorySortBy === "title") {
-    return (a.title || "").localeCompare(b.title || "");
-  }
-
-  if (inventorySortBy === "quantityLow") {
-    return Number(a.quantity || 0) - Number(b.quantity || 0);
-  }
-
-  if (inventorySortBy === "quantityHigh") {
-    return Number(b.quantity || 0) - Number(a.quantity || 0);
-  }
-
-  if (inventorySortBy === "oldest") {
-    return new Date(a.created_at || 0) - new Date(b.created_at || 0);
-  }
-
-  return new Date(b.created_at || 0) - new Date(a.created_at || 0);
-});
+}).sort((a, b) => compareInventoryItems(a, b, inventorySortBy));
 
 const activeInventoryFilterCount = [
   curriculumFilter,
@@ -5987,12 +5974,7 @@ const availableCopies = inventorySummaryItems.reduce((sum, item) => {
   return sum;
 }, 0);
 
-const soldCopies = inventorySummaryItems.reduce((sum, item) => {
-  if ((item.status || "") === "Sold") {
-    return sum + Number(item.quantity || 0);
-  }
-  return sum;
-}, 0);
+const soldCopies = totalSoldCopies(inventorySummaryItems);
 
 function applyCatalogFilters() {
   setSearchTerm(pendingSearchTerm);
@@ -8801,7 +8783,11 @@ function renderUserManagement() {
 
           <div className={`inventory-grid ${isSelectionMode ? "selection-mode" : ""}`}>
           {filteredItems.map((item) => (
-            <div className={`inventory-item ${item.item_type === "bundle" ? "bundle-item" : ""}`} key={item.id}>
+            <div
+              className={`inventory-item ${item.item_type === "bundle" ? "bundle-item" : ""} ${isSoldOutInventoryItem(item) ? "sold-out-item" : ""}`}
+              key={item.id}
+            >
+              {isSoldOutInventoryItem(item) && <span className="sold-out-badge">Sold out</span>}
               {isSelectionMode && (
                 <label className="item-select">
                   <input
