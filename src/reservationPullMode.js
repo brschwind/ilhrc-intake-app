@@ -34,6 +34,9 @@ export function buildReservationPullMessage({ reservations, itemById }) {
     );
   }
   if (readyTitles.length > 0) {
+    paragraphs.push(
+      "Our address is 111 Fisk St. Goodfield, IL and we are typically open on Tuesdays from 12-4."
+    );
     const expirationTimes = reservations
       .filter(({ status }) => status === "ready")
       .map(({ expires_at }) => new Date(expires_at).getTime())
@@ -48,6 +51,7 @@ export function buildReservationPullMessage({ reservations, itemById }) {
     }
   }
   paragraphs.push("Please let us know if you have any questions.");
+  paragraphs.push("Thanks!\nRebekah Schwind  |  Director");
   return paragraphs.join("\n\n");
 }
 
