@@ -1959,6 +1959,17 @@ button:disabled {
   text-align: right;
 }
 
+.pull-mode-pickup-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
+.pull-mode-pickup-actions button,
+.reservation-customer-counts button {
+  margin-top: 0;
+}
+
 .pull-message-backdrop {
   position: fixed;
   z-index: 1000;
@@ -2008,6 +2019,11 @@ button:disabled {
 
   .pull-mode-finish-help {
     text-align: left;
+  }
+
+  .pull-mode-pickup-actions,
+  .pull-mode-pickup-actions button {
+    width: 100%;
   }
 }
 

@@ -8,6 +8,10 @@ const migration = readFileSync(
   resolve(__dirname, "../supabase/migrations/20260824010000_reservation_pull_mode.sql"),
   "utf8"
 );
+const bulkPickupMigration = readFileSync(
+  resolve(__dirname, "../supabase/migrations/20260824020000_bulk_reservation_pickup.sql"),
+  "utf8"
+);
 
 test("pull mode supports unavailable books and records who completed the sheet", async () => {
   const db = new PGlite();
@@ -36,7 +40,8 @@ test("pull mode supports unavailable books and records who completed the sheet",
         status text not null check (status in ('pending', 'ready', 'picked_up', 'cancelled', 'expired')),
         expires_at timestamptz not null,
         handled_by uuid,
-        updated_at timestamptz
+        updated_at timestamptz,
+        square_hold_released_at timestamptz
       );
       create table public.audit_logs (
         user_id uuid,
@@ -49,16 +54,23 @@ test("pull mode supports unavailable books and records who completed the sheet",
       insert into public.profiles values ('${userId}', 'Alex Staff', 'alex@example.test');
       insert into public.items values ('item-1', 'square-1', 1, 'Available', now()), ('item-2', 'square-2', 1, 'Available', now());
       insert into public.book_reservations values
-        ('51111111-1111-4111-8111-111111111111', 'item-1', 'pending', now() + interval '7 days', null, now()),
-        ('52222222-2222-4222-8222-222222222222', 'item-2', 'pending', now() + interval '7 days', null, now());
+        ('51111111-1111-4111-8111-111111111111', 'item-1', 'pending', now() + interval '7 days', null, now(), null),
+        ('52222222-2222-4222-8222-222222222222', 'item-2', 'pending', now() + interval '7 days', null, now(), null);
     `);
     await db.exec(migration);
+    await db.exec(bulkPickupMigration);
     await db.exec(`
       select public.update_book_reservation_status('51111111-1111-4111-8111-111111111111', 'ready');
       select public.update_book_reservation_status('52222222-2222-4222-8222-222222222222', 'unavailable');
       select public.complete_book_reservation_pull(array[
         '51111111-1111-4111-8111-111111111111'::uuid,
         '52222222-2222-4222-8222-222222222222'::uuid
+      ]);
+      update public.book_reservations
+      set square_hold_released_at = now()
+      where id = '51111111-1111-4111-8111-111111111111';
+      select public.complete_book_reservation_pickup(array[
+        '51111111-1111-4111-8111-111111111111'::uuid
       ]);
     `);
 
@@ -67,11 +79,12 @@ test("pull mode supports unavailable books and records who completed the sheet",
       from public.book_reservations order by id
     `);
     assert.deepEqual(result.rows, [
-      { status: "ready", pull_completed_by_name: "Alex Staff", completed: true },
+      { status: "picked_up", pull_completed_by_name: "Alex Staff", completed: true },
       { status: "unavailable", pull_completed_by_name: "Alex Staff", completed: true },
     ]);
     const audit = await db.query("select action from public.audit_logs order by action");
     assert.ok(audit.rows.some(({ action }) => action === "reservation_pull_completed"));
+    assert.ok(audit.rows.some(({ action }) => action === "reservation_pickup_completed"));
   } finally {
     await db.close();
   }

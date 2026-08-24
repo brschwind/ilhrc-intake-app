@@ -6582,6 +6582,83 @@ async function releaseReservationForCheckout(reservation) {
   }
 }
 
+function readyReservationCheckoutState(reservations) {
+  const readyReservations = reservations.filter(({ status }) => status === "ready");
+  const unreleasedSquareReservations = readyReservations.filter((reservation) => {
+    const item = items.find((candidate) => String(candidate.id) === String(reservation.item_id));
+    return item?.square_variation_id && !reservation.square_hold_released_at;
+  });
+  return { readyReservations, unreleasedSquareReservations };
+}
+
+async function releaseReadyReservationsForCheckout(reservations) {
+  const { readyReservations, unreleasedSquareReservations } = readyReservationCheckoutState(reservations);
+  if (readyReservations.length === 0) return;
+  if (unreleasedSquareReservations.length === 0) {
+    setCustomerRequestMessage("All ready books are already available for Square checkout.");
+    return;
+  }
+  if (!confirm(`Release ${unreleasedSquareReservations.length} ready ${unreleasedSquareReservations.length === 1 ? "book" : "books"} in Square for this customer's checkout?`)) return;
+
+  setCustomerRequestMessage("");
+  let releasedCount = 0;
+  try {
+    for (const reservation of unreleasedSquareReservations) {
+      const response = await authFetch(`/square/reservations/${reservation.id}/release-for-checkout`, {
+        method: "POST",
+      });
+      await requireSuccessfulApiResponse(response, "Could not release all ready books for checkout.");
+      releasedCount += 1;
+    }
+    setCustomerRequestMessage(`${readyReservations.length} ready ${readyReservations.length === 1 ? "book is" : "books are"} available for Square checkout. Complete the sale, then mark them all Picked Up.`);
+  } catch (error) {
+    setCustomerRequestMessage(
+      releasedCount > 0
+        ? `${releasedCount} ${releasedCount === 1 ? "book was" : "books were"} released before an error occurred. ${error.message}`
+        : error.message
+    );
+  }
+  await loadCustomerRequestData();
+}
+
+async function completeReadyReservationPickup(reservations) {
+  const { readyReservations, unreleasedSquareReservations } = readyReservationCheckoutState(reservations);
+  if (readyReservations.length === 0) return;
+  if (unreleasedSquareReservations.length > 0) {
+    setCustomerRequestMessage("Start Square checkout for all ready books before marking the reservation picked up.");
+    return;
+  }
+  if (!confirm(`Mark all ${readyReservations.length} set-aside ${readyReservations.length === 1 ? "book" : "books"} Picked Up? Confirm the sale is complete in Square.`)) return;
+
+  setCustomerRequestMessage("");
+  const { data, error } = await supabase.rpc("complete_book_reservation_pickup", {
+    p_reservation_ids: readyReservations.map(({ id }) => id),
+  });
+  if (error) {
+    setCustomerRequestMessage("Could not complete the pickup: " + error.message);
+    return;
+  }
+  const pickedUpCount = Number(data?.picked_up_count || readyReservations.length);
+  setCustomerRequestMessage(`${pickedUpCount} ${pickedUpCount === 1 ? "book was" : "books were"} moved to Picked Up.`);
+  setReservationPullMode(null);
+  setReservationPullMessage(null);
+  await Promise.all([loadItems(), loadCustomerRequestData()]);
+}
+
+function renderReservationPickupActions(reservations) {
+  const { readyReservations, unreleasedSquareReservations } = readyReservationCheckoutState(reservations);
+  if (readyReservations.length === 0) return null;
+  return unreleasedSquareReservations.length > 0 ? (
+    <button type="button" className="secondary" onClick={() => releaseReadyReservationsForCheckout(reservations)}>
+      Start Checkout for Ready ({readyReservations.length})
+    </button>
+  ) : (
+    <button type="button" className="primary" onClick={() => completeReadyReservationPickup(reservations)}>
+      Mark Ready Books Picked Up ({readyReservations.length})
+    </button>
+  );
+}
+
 function startReservationPullMode(group) {
   setReservationPullMode({
     reservationIds: group.reservations.map(({ id }) => id),
@@ -6944,6 +7021,9 @@ function renderReservationPullMode(reservations, itemById) {
           Finish Pull Sheet
         </button>
       </footer>
+      <div className="pull-mode-pickup-actions">
+        {renderReservationPickupActions(reservations)}
+      </div>
       {!progress.complete && <p className="helper-text pull-mode-finish-help">Resolve all {progress.remaining} remaining {progress.remaining === 1 ? "book" : "books"} to finish.</p>}
 
       {reservationPullMessage && (
@@ -7092,6 +7172,7 @@ function renderCustomerRequests() {
                     {readyCount > 0 && <span className="reservation-ready-count">{readyCount} ready</span>}
                     <span>{group.reservations.length} {group.reservations.length === 1 ? "reservation" : "reservations"}</span>
                     <button type="button" className="secondary" onClick={() => startReservationPullMode(group)}>Pull Mode</button>
+                    {renderReservationPickupActions(group.reservations)}
                   </div>
                 </div>
 
