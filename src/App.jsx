@@ -34,6 +34,11 @@ import {
   getBundlePieceCount,
 } from "./bundleInventory";
 import { groupReservationsByCustomer } from "./reservationPrint";
+import {
+  buildReservationPullMessage,
+  preferredReservationContact,
+  reservationPullProgress,
+} from "./reservationPullMode";
 import { CONNECTIONS_ENABLED } from "./connections/connectionsConfig.js";
 import ConnectionsAdmin from "./connections/ConnectionsAdmin.jsx";
 import { navigateToPath } from "./routing/appRoutes.js";
@@ -605,6 +610,9 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [reservationFilter, setReservationFilter] = useState("active");
   const [expandedReservationCustomerId, setExpandedReservationCustomerId] = useState("");
   const [expandedReservationBookId, setExpandedReservationBookId] = useState("");
+  const [reservationPullMode, setReservationPullMode] = useState(null);
+  const [reservationPullMessage, setReservationPullMessage] = useState(null);
+  const [reservationPullCopyStatus, setReservationPullCopyStatus] = useState("");
   const [reservationItem, setReservationItem] = useState(null);
   const [reservationDraft, setReservationDraft] = useState(EMPTY_BOOK_RESERVATION);
   const [reservationMessage, setReservationMessage] = useState("");
@@ -6519,22 +6527,12 @@ async function updateBookReservationStatus(reservation, status) {
     status === "cancelled" &&
     !confirm("Cancel this reservation and return the copy to catalog availability?")
   ) return;
+  if (
+    status === "unavailable" &&
+    !confirm("Mark this book Not Available for this customer's reservation?")
+  ) return;
 
   setCustomerRequestMessage("");
-  if (status === "picked_up") {
-    const reservedItem = items.find((item) => String(item.id) === String(reservation.item_id));
-    if (reservedItem?.square_variation_id) {
-      try {
-        const response = await authFetch(`/square/reservations/${reservation.id}/verify-sale`, {
-          method: "POST",
-        });
-        await requireSuccessfulApiResponse(response, "Could not verify the sale with Square.");
-      } catch (error) {
-        setCustomerRequestMessage(error.message);
-        return;
-      }
-    }
-  }
   const { error } = await supabase.rpc("update_book_reservation_status", {
     p_reservation_id: reservation.id,
     p_status: status,
@@ -6543,13 +6541,27 @@ async function updateBookReservationStatus(reservation, status) {
     setCustomerRequestMessage("Could not update reservation: " + error.message);
     return;
   }
+  if (status === "picked_up") {
+    setCustomerRequestMessage("Reservation moved to Picked Up. Square inventory will synchronize automatically.");
+  }
   if (status === "picked_up") await loadItems();
-  if (["cancelled", "expired"].includes(status)) {
+  if (["unavailable", "cancelled", "expired"].includes(status)) {
     const response = await authFetch(`/square/reservations/${reservation.id}/resync`, {
       method: "POST",
     }).catch(() => null);
     if (!response?.ok) {
       setCustomerRequestMessage("Reservation updated, but Square availability will retry automatically.");
+    }
+  }
+  if (reservationPullMode && ["ready", "unavailable"].includes(status)) {
+    const pullReservations = reservationPullMode.reservationIds
+      .map((id) => bookReservations.find((candidate) => candidate.id === id))
+      .filter(Boolean)
+      .map((candidate) => candidate.id === reservation.id ? { ...candidate, status } : candidate);
+    if (reservationPullProgress(pullReservations).complete) {
+      const itemById = Object.fromEntries(items.map((item) => [String(item.id), item]));
+      await finishReservationPullMode(pullReservations, itemById);
+      return;
     }
   }
   await loadCustomerRequestData();
@@ -6564,6 +6576,64 @@ async function releaseReservationForCheckout(reservation) {
     });
     await requireSuccessfulApiResponse(response, "Could not release this copy for checkout.");
     setCustomerRequestMessage("Square checkout is ready. Complete the sale in Square, then click Picked Up.");
+    await loadCustomerRequestData();
+  } catch (error) {
+    setCustomerRequestMessage(error.message);
+  }
+}
+
+function startReservationPullMode(group) {
+  setReservationPullMode({
+    reservationIds: group.reservations.map(({ id }) => id),
+  });
+  setExpandedReservationBookId("");
+  setReservationPullMessage(null);
+  setReservationPullCopyStatus("");
+  window.scrollTo({ top: 0, behavior: "smooth" });
+}
+
+async function finishReservationPullMode(reservations, itemById) {
+  const progress = reservationPullProgress(reservations);
+  if (!progress.complete) {
+    setCustomerRequestMessage("Mark every book Ready or Not Available before finishing this pull sheet.");
+    return;
+  }
+  setCustomerRequestMessage("");
+  const { data, error } = await supabase.rpc("complete_book_reservation_pull", {
+    p_reservation_ids: reservations.map(({ id }) => id),
+  });
+  if (error) {
+    setCustomerRequestMessage("Could not finish pull sheet: " + error.message);
+    return;
+  }
+  setReservationPullMessage({
+    text: buildReservationPullMessage({ reservations, itemById }),
+    contact: preferredReservationContact(reservations),
+    completedBy: data?.completed_by || profile?.full_name || profile?.email || "Staff member",
+  });
+  setReservationPullCopyStatus("");
+  await loadCustomerRequestData();
+}
+
+async function copyReservationPullMessage() {
+  if (!reservationPullMessage?.text) return;
+  try {
+    await navigator.clipboard.writeText(reservationPullMessage.text);
+    setReservationPullCopyStatus("Copied to clipboard.");
+  } catch {
+    setReservationPullCopyStatus("Could not copy automatically. Select the message text and copy it.");
+  }
+}
+
+async function returnReservationToHold(reservation) {
+  if (!confirm("Put this book back on hold and make it unavailable for Square checkout?")) return;
+  setCustomerRequestMessage("");
+  try {
+    const response = await authFetch(`/square/reservations/${reservation.id}/return-to-hold`, {
+      method: "POST",
+    });
+    await requireSuccessfulApiResponse(response, "Could not put this copy back on hold.");
+    setCustomerRequestMessage("The book is back on hold and unavailable for Square checkout.");
     await loadCustomerRequestData();
   } catch (error) {
     setCustomerRequestMessage(error.message);
@@ -6758,6 +6828,151 @@ function renderPublicRequestForm() {
   );
 }
 
+function renderReservationPullMode(reservations, itemById) {
+  const progress = reservationPullProgress(reservations);
+  const customer = reservations[0] || {};
+  const contact = preferredReservationContact(reservations);
+  const completedBy = reservations.find(({ pull_completed_by_name }) => pull_completed_by_name)?.pull_completed_by_name;
+
+  return (
+    <section className="card customer-requests-page reservation-pull-mode-page">
+      <div className="pull-mode-header">
+        <div>
+          <span className="public-eyebrow">Pull Mode</span>
+          <h2>{customer.customer_name || "Customer"}</h2>
+          <p>{contact.method}: <strong>{contact.value}</strong></p>
+        </div>
+        <button
+          type="button"
+          className="secondary"
+          onClick={() => {
+            setReservationPullMode(null);
+            setExpandedReservationBookId("");
+          }}
+        >
+          Exit Pull Mode
+        </button>
+      </div>
+
+      {customerRequestMessage && <p className="status-message">{customerRequestMessage}</p>}
+
+      <div className="pull-mode-progress" aria-label={`${progress.remaining} books remaining`}>
+        <div><span>Total</span><strong>{progress.total}</strong></div>
+        <div><span>Ready</span><strong>{progress.ready}</strong></div>
+        <div><span>Not available</span><strong>{progress.unavailable}</strong></div>
+        <div><span>Remaining</span><strong>{progress.remaining}</strong></div>
+      </div>
+
+      <div className="reservation-customer-books pull-mode-books">
+        {reservations.map((reservation, index) => {
+          const item = itemById[String(reservation.item_id)];
+          const isBookExpanded = expandedReservationBookId === reservation.id;
+          return (
+            <article className="reservation-staff-card" key={reservation.id}>
+              <div className="reservation-book-row">
+                <div className="reservation-book-info">
+                  <span className="pull-mode-book-number">Book {index + 1}</span>
+                  <span className={`reservation-status ${reservation.status}`}>{reservation.status.replace("_", " ")}</span>
+                  {item ? (
+                    <button
+                      type="button"
+                      className="reservation-book-title"
+                      aria-expanded={isBookExpanded}
+                      aria-controls={`pull-mode-book-${reservation.id}`}
+                      onClick={() => setExpandedReservationBookId((current) => current === reservation.id ? "" : reservation.id)}
+                    >
+                      {item.title || "Reserved book"}
+                    </button>
+                  ) : <h3>Reserved book</h3>}
+                  <p>{item?.location ? `Location ${item.location} · ` : ""}{item?.sku ? `SKU ${item.sku}` : ""}</p>
+                  <p className="helper-text">Reference {String(reservation.id).slice(0, 8).toUpperCase()}</p>
+                </div>
+                <div className="reservation-staff-actions">
+                  {reservation.status === "pending" && (
+                    <>
+                      <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "ready")}>Mark Ready</button>
+                      <button type="button" className="secondary" onClick={() => updateBookReservationStatus(reservation, "unavailable")}>Not Available</button>
+                    </>
+                  )}
+                  {reservation.status === "ready" && <span className="pull-mode-resolved">Set aside</span>}
+                  {reservation.status === "unavailable" && <span className="pull-mode-resolved unavailable">Not available</span>}
+                </div>
+              </div>
+
+              {item && isBookExpanded && (
+                <section className="reservation-book-preview" id={`pull-mode-book-${reservation.id}`}>
+                  <div className="reservation-book-cover">
+                    <BookCoverImage src={item.image_url} alt={item.title} width={360} height={480} eager />
+                    {!item.image_url && <div className="reservation-cover-placeholder">No cover image</div>}
+                  </div>
+                  <div>
+                    <div className="reservation-book-preview-heading">
+                      <div><p className="reservation-preview-kicker">Listing details</p><h3>{item.title}</h3></div>
+                      <button type="button" className="text-button" onClick={() => setExpandedReservationBookId("")}>Close</button>
+                    </div>
+                    <dl className="reservation-book-details">
+                      <div><dt>Author</dt><dd>{item.author || "Not set"}</dd></div>
+                      <div><dt>ISBN</dt><dd>{item.isbn || "Not set"}</dd></div>
+                      <div><dt>Publisher</dt><dd>{item.publisher || "Not set"}</dd></div>
+                      <div><dt>Curriculum</dt><dd>{item.curriculum || "Not set"}</dd></div>
+                      <div><dt>Subject</dt><dd>{item.subject || "Not set"}</dd></div>
+                      <div><dt>Grade level</dt><dd>{item.grade_level || "Not set"}</dd></div>
+                      <div><dt>Edition</dt><dd>{item.edition || "Not set"}</dd></div>
+                      <div><dt>Location</dt><dd>{item.location || "Not set"}</dd></div>
+                      <div><dt>SKU</dt><dd>{item.sku || "Not set"}</dd></div>
+                      <div><dt>Price</dt><dd>${Number(item.final_price || 0).toFixed(2)}</dd></div>
+                    </dl>
+                  </div>
+                </section>
+              )}
+            </article>
+          );
+        })}
+      </div>
+
+      <footer className="pull-mode-completion">
+        <div>
+          <span>Completed by</span>
+          <strong>{completedBy || (progress.complete ? profile?.full_name || profile?.email || "Signed-in staff" : "Not finished")}</strong>
+        </div>
+        <button
+          type="button"
+          className="primary"
+          disabled={!progress.complete}
+          onClick={() => finishReservationPullMode(reservations, itemById)}
+        >
+          Finish Pull Sheet
+        </button>
+      </footer>
+      {!progress.complete && <p className="helper-text pull-mode-finish-help">Resolve all {progress.remaining} remaining {progress.remaining === 1 ? "book" : "books"} to finish.</p>}
+
+      {reservationPullMessage && (
+        <div className="pull-message-backdrop" role="presentation">
+          <section className="pull-message-dialog" role="dialog" aria-modal="true" aria-labelledby="pull-message-title">
+            <div className="pull-message-heading">
+              <div>
+                <span className="public-eyebrow">Pull sheet complete</span>
+                <h3 id="pull-message-title">Message for {customer.customer_name || "customer"}</h3>
+              </div>
+              <button type="button" className="secondary" onClick={() => setReservationPullMessage(null)}>Close</button>
+            </div>
+            <div className="pull-message-contact">
+              <span>Preferred contact</span>
+              <strong>{reservationPullMessage.contact.method}: {reservationPullMessage.contact.value}</strong>
+            </div>
+            <textarea readOnly value={reservationPullMessage.text} aria-label="Customer message template" />
+            <div className="pull-message-actions">
+              <p className="helper-text">Completed by {reservationPullMessage.completedBy}</p>
+              <button type="button" className="primary" onClick={copyReservationPullMessage}>Copy Message</button>
+            </div>
+            {reservationPullCopyStatus && <p className="status-message">{reservationPullCopyStatus}</p>}
+          </section>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function renderCustomerRequests() {
   const visibleRequests = customerRequests.filter((request) =>
     customerRequestFilter === "all" || request.status === customerRequestFilter
@@ -6767,6 +6982,14 @@ function renderCustomerRequests() {
   );
   const requestById = Object.fromEntries(customerRequests.map((request) => [request.id, request]));
   const itemById = Object.fromEntries(items.map((item) => [String(item.id), item]));
+  const pullModeReservations = reservationPullMode
+    ? reservationPullMode.reservationIds
+      .map((id) => bookReservations.find((reservation) => reservation.id === id))
+      .filter(Boolean)
+    : [];
+  if (reservationPullMode && pullModeReservations.length > 0) {
+    return renderReservationPullMode(pullModeReservations, itemById);
+  }
   const activeReservations = bookReservations.filter((reservation) =>
     ["pending", "ready"].includes(reservation.status) &&
     new Date(reservation.expires_at).getTime() > Date.now()
@@ -6819,6 +7042,7 @@ function renderCustomerRequests() {
               <option value="active">Active</option>
               <option value="pending">Pending</option>
               <option value="ready">Ready</option>
+              <option value="unavailable">Not Available</option>
               <option value="expired">Expired</option>
               <option value="picked_up">Picked Up</option>
               <option value="cancelled">Cancelled</option>
@@ -6867,6 +7091,7 @@ function renderCustomerRequests() {
                   <div className="reservation-customer-counts">
                     {readyCount > 0 && <span className="reservation-ready-count">{readyCount} ready</span>}
                     <span>{group.reservations.length} {group.reservations.length === 1 ? "reservation" : "reservations"}</span>
+                    <button type="button" className="secondary" onClick={() => startReservationPullMode(group)}>Pull Mode</button>
                   </div>
                 </div>
 
@@ -6908,7 +7133,10 @@ function renderCustomerRequests() {
                               )}
                               {reservation.status === "ready" && isActive && (
                                 reservation.square_hold_released_at ? (
-                                  <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "picked_up")}>Picked Up</button>
+                                  <>
+                                    <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "picked_up")}>Picked Up</button>
+                                    <button type="button" className="secondary" onClick={() => returnReservationToHold(reservation)}>Put Back on Hold</button>
+                                  </>
                                 ) : (
                                   <button type="button" className="primary" onClick={() => releaseReservationForCheckout(reservation)}>Start Square Checkout</button>
                                 )

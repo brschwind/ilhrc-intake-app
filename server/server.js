@@ -1083,6 +1083,57 @@ app.post("/square/reservations/:id/release-for-checkout", requireAuth, async (re
   }
 });
 
+app.post("/square/reservations/:id/return-to-hold", requireAuth, async (req, res) => {
+  let reservation;
+  let item;
+  try {
+    ({ reservation, item } = await loadReservationAndItem(req.params.id));
+    if (
+      !reservation ||
+      !item ||
+      reservation.status !== "ready" ||
+      !reservation.square_hold_released_at ||
+      new Date(reservation.expires_at).getTime() <= Date.now()
+    ) {
+      sendSafeError(res, 409, "Only an active checkout release can be put back on hold.");
+      return;
+    }
+    if (!item.square_variation_id) {
+      res.json({ success: true, square_linked: false });
+      return;
+    }
+
+    const { error: holdError } = await supabaseAdmin
+      .from("book_reservations")
+      .update({
+        square_hold_released_at: null,
+        square_checkout_quantity: null,
+        square_hold_error: null,
+      })
+      .eq("id", reservation.id);
+    if (holdError) throw holdError;
+
+    try {
+      await synchronizeSquareReservationAvailability([item.id]);
+    } catch (syncError) {
+      await supabaseAdmin
+        .from("book_reservations")
+        .update({
+          square_hold_released_at: reservation.square_hold_released_at,
+          square_checkout_quantity: reservation.square_checkout_quantity,
+          square_hold_error: "Square hold failed; retry required.",
+        })
+        .eq("id", reservation.id);
+      throw syncError;
+    }
+
+    res.json({ success: true, square_linked: true });
+  } catch (error) {
+    console.error("[Square checkout return-to-hold failed]", error?.message || error);
+    sendSafeError(res, 502, "Could not put this copy back on hold in Square.");
+  }
+});
+
 app.post("/square/reservations/:id/verify-sale", requireAuth, async (req, res) => {
   try {
     const { reservation, item } = await loadReservationAndItem(req.params.id);

@@ -55,7 +55,8 @@ Active pickup reservations are also removed from Square's sellable in-stock
 count. Because Square's `RESERVED_FOR_SALE` state is read-only to integrations,
 staff use **Start Square Checkout** on a ready reservation before ringing up the
 book, then **Picked Up** after Square records the sale. Cancellation, expiration,
-and extension changes are synchronized automatically.
+and extension changes are synchronized automatically. If checkout is started
+too early, **Put Back on Hold** restores the unavailable copy in Square.
 
 For authentication roles, security policies, and first-admin setup, see [docs/auth-rbac-setup.md](docs/auth-rbac-setup.md).
 

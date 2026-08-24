@@ -1859,9 +1859,157 @@ button:disabled {
 
 .reservation-status.pending { background: #fff2ce; color: #785c12; }
 .reservation-status.ready { background: #dcefe3; color: #285c3d; }
+.reservation-status.unavailable { background: #f4e3e1; color: var(--danger); }
 .reservation-status.picked_up { background: #e6e8e7; color: #3f4943; }
 .reservation-status.cancelled,
 .reservation-status.expired { background: #f4e3e1; color: var(--danger); }
+
+.reservation-pull-mode-page {
+  max-width: 1050px;
+  margin: 0 auto;
+}
+
+.pull-mode-header,
+.pull-mode-completion,
+.pull-message-heading,
+.pull-message-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pull-mode-header h2,
+.pull-mode-header p,
+.pull-message-heading h3 {
+  margin: 4px 0 0;
+}
+
+.pull-mode-progress {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.pull-mode-progress div {
+  display: grid;
+  gap: 3px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  background: var(--surface-soft);
+}
+
+.pull-mode-progress span,
+.pull-mode-completion span,
+.pull-message-contact span {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.pull-mode-progress strong {
+  font-size: 1.35rem;
+}
+
+.pull-mode-books {
+  padding-top: 12px;
+  border: 1px solid var(--border);
+}
+
+.pull-mode-book-number {
+  display: block;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pull-mode-resolved {
+  padding: 7px 10px;
+  border-radius: 999px;
+  background: #dcefe3;
+  color: #285c3d;
+  font-size: 0.8rem;
+  font-weight: 800;
+}
+
+.pull-mode-resolved.unavailable {
+  background: #f4e3e1;
+  color: var(--danger);
+}
+
+.pull-mode-completion {
+  margin-top: 18px;
+  padding: 16px;
+  border: 1px solid var(--border-strong);
+  background: var(--sage-light);
+}
+
+.pull-mode-completion div,
+.pull-message-contact {
+  display: grid;
+  gap: 4px;
+}
+
+.pull-mode-finish-help {
+  text-align: right;
+}
+
+.pull-message-backdrop {
+  position: fixed;
+  z-index: 1000;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(22, 30, 26, 0.62);
+}
+
+.pull-message-dialog {
+  width: min(680px, 100%);
+  max-height: calc(100vh - 40px);
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  box-shadow: 0 24px 70px rgba(22, 30, 26, 0.3);
+}
+
+.pull-message-contact {
+  margin: 18px 0 10px;
+  padding: 12px;
+  background: var(--sage-light);
+}
+
+.pull-message-dialog textarea {
+  width: 100%;
+  min-height: 300px;
+  resize: vertical;
+  font: inherit;
+  line-height: 1.5;
+}
+
+@media (max-width: 720px) {
+  .pull-mode-header,
+  .pull-mode-completion,
+  .pull-message-heading,
+  .pull-message-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .pull-mode-progress {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pull-mode-finish-help {
+    text-align: left;
+  }
+}
 
 @media print {
   @page {
