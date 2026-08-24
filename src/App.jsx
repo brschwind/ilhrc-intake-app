@@ -496,6 +496,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const inventoryEditorRef = useRef(null);
   const inventoryEditorTitleRef = useRef(null);
   const inventorySearchInputRef = useRef(null);
+  const lastSelectedInventoryItemRef = useRef(null);
   const catalogSearchInputRef = useRef(null);
   const reservationPanelRef = useRef(null);
   const intakeRuleEditorRef = useRef(null);
@@ -536,7 +537,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [locationOptions, setLocationOptions] = useState([]);
 
   const [selectedItemIds, setSelectedItemIds] = useState([]);
-  const [isSelectionMode, setIsSelectionMode] = useState(false);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
   const [inventoryCurriculumPickerOpen, setInventoryCurriculumPickerOpen] = useState(false);
   const [inventoryCurriculumOptions, setInventoryCurriculumOptions] = useState([]);
   const [inventoryCurriculumTarget, setInventoryCurriculumTarget] = useState("");
@@ -2675,12 +2676,32 @@ async function clearTemporaryLocationsFromSelected() {
   alert("Temporary locations cleared from selected items.");
 }
 
-function toggleSelectedItem(id) {
-  setSelectedItemIds((current) =>
-    current.includes(id)
-      ? current.filter((itemId) => itemId !== id)
-      : [...current, id]
-  );
+function toggleSelectedItem(id, selectRange = false) {
+  setSelectedItemIds((current) => {
+    const isSelecting = !current.includes(id);
+    const lastId = lastSelectedInventoryItemRef.current;
+
+    if (selectRange && lastId) {
+      const visibleIds = filteredItems.map((item) => item.id);
+      const currentIndex = visibleIds.indexOf(id);
+      const lastIndex = visibleIds.indexOf(lastId);
+      if (currentIndex >= 0 && lastIndex >= 0) {
+        const rangeIds = visibleIds.slice(
+          Math.min(currentIndex, lastIndex),
+          Math.max(currentIndex, lastIndex) + 1
+        );
+        lastSelectedInventoryItemRef.current = id;
+        return isSelecting
+          ? [...new Set([...current, ...rangeIds])]
+          : current.filter((itemId) => !rangeIds.includes(itemId));
+      }
+    }
+
+    lastSelectedInventoryItemRef.current = id;
+    return isSelecting
+      ? [...current, id]
+      : current.filter((itemId) => itemId !== id);
+  });
 }
 
 async function bulkDeleteSelected() {
@@ -2780,6 +2801,7 @@ async function bulkDeleteSelected() {
     }
 
     setSelectedItemIds([]);
+    setBulkEditOpen(false);
 
     alert(
       isAdmin
@@ -2886,6 +2908,7 @@ async function applyBulkEdit() {
     alert(`Updated ${selectedItemIds.length} items.`);
 
     setSelectedItemIds([]);
+    setBulkEditOpen(false);
     setBulkCurriculum("");
     setBulkSubject("");
     setBulkGrade("");
@@ -3779,7 +3802,6 @@ setBookData(await applyRulesToImportedBook({
     setBundleCoverFile(null);
     setBundleCoverPreview("");
     setSelectedItemIds([]);
-    setIsSelectionMode(false);
   }
 
   async function startCurriculumBundle(selectedItems, suggestedTitle = "") {
@@ -5548,7 +5570,6 @@ async function addSelectedToPrintQueue() {
     newly_queued_count: newlyQueuedCount,
   });
   setSelectedItemIds([]);
-  setIsSelectionMode(false);
   await loadItems();
   alert(`${selectedItems.length} selected ${selectedItems.length === 1 ? "item is" : "items are"} in the print queue. Existing SKUs and stickers were kept.`);
 }
@@ -9103,23 +9124,23 @@ function renderUserManagement() {
 
           {filteredItems.length === 0 && <p>No matching items found.</p>}
 
-          <div className={`inventory-grid ${isSelectionMode ? "selection-mode" : ""}`}>
+          <div className="inventory-grid selection-mode">
           {filteredItems.map((item) => (
             <div
-              className={`inventory-item ${item.item_type === "bundle" ? "bundle-item" : ""} ${isSoldOutInventoryItem(item) ? "sold-out-item" : ""}`}
+              className={`inventory-item ${selectedItemIds.includes(item.id) ? "selected-item" : ""} ${item.item_type === "bundle" ? "bundle-item" : ""} ${isSoldOutInventoryItem(item) ? "sold-out-item" : ""}`}
               key={item.id}
             >
               {isSoldOutInventoryItem(item) && <span className="sold-out-badge">Sold out</span>}
-              {isSelectionMode && (
-                <label className="item-select">
-                  <input
-                    type="checkbox"
-                    checked={selectedItemIds.includes(item.id)}
-                    onChange={() => toggleSelectedItem(item.id)}
-                  />
-                  <span>Select</span>
-                </label>
-              )}
+              <label className="item-select">
+                <input
+                  type="checkbox"
+                  checked={selectedItemIds.includes(item.id)}
+                  onChange={(event) =>
+                    toggleSelectedItem(item.id, event.nativeEvent.shiftKey)
+                  }
+                />
+                <span>Select</span>
+              </label>
               <BookCoverImage src={item.image_url} alt={item.title} />
 
               <div>
@@ -9324,238 +9345,130 @@ function renderUserManagement() {
                 </button>
               )}
 
-              <div className="selection-panel">
-                <button
-                  type="button"
-                  className={isSelectionMode ? "primary" : "secondary"}
-                  onClick={() => {
-                    setIsSelectionMode((current) => {
-                      if (current) {
-                        setSelectedItemIds([]);
-                      }
-                      return !current;
-                    });
-                  }}
-                >
-                  {isSelectionMode ? "Exit Selection" : "Select Items"}
-                </button>
-
-                {isSelectionMode && (
-                  <>
-                    <div className="selection-toolbar">
-                      <span>
-                        <strong>{selectedItemIds.length}</strong> selected
-                      </span>
-
-                      <button
-                        type="button"
-                        className="text-button"
-                        onClick={() =>
-                          setSelectedItemIds(filteredItems.map((item) => item.id))
-                        }
-                      >
-                        Select visible
-                      </button>
-
-                      <button
-                        type="button"
-                        className="text-button"
-                        onClick={() => setSelectedItemIds(items.map((item) => item.id))}
-                      >
-                        Select all
-                      </button>
-
-                      <button
-                        type="button"
-                        className="text-button"
-                        onClick={() => setSelectedItemIds([])}
-                      >
-                        Clear
-                      </button>
-                    </div>
-
-                    {selectedItemIds.length >= 2 && (
-                      <button
-                        type="button"
-                        className="primary selection-bundle-action"
-                        disabled={bundleActionLoading}
-                        onClick={startInventoryBundle}
-                      >
-                        Create Bundle from {selectedItemIds.length} Selected
-                      </button>
-                    )}
-
-                    {selectedItemIds.length > 0 && (
-                      <button
-                        type="button"
-                        className="secondary selection-curriculum-action"
-                        onClick={openInventoryCurriculumPicker}
-                      >
-                        Add Selected to Curriculum List
-                      </button>
-                    )}
-
-                    {inventoryCurriculumPickerOpen && selectedItemIds.length > 0 && (
-                      <div className="curriculum-assignment-panel">
-                        <label>Curriculum list item</label>
-                        <select
-                          value={inventoryCurriculumTarget}
-                          onChange={(event) => setInventoryCurriculumTarget(event.target.value)}
-                          disabled={inventoryCurriculumLoading}
-                        >
-                          <option value="">Choose a book on a list</option>
-                          {inventoryCurriculumOptions.map((entry) => (
-                            <option key={entry.id} value={entry.material_id}>
-                              {[entry.package?.name, entry.package?.grade_level, entry.material?.title, entry.material?.edition_label].filter(Boolean).join(" — ")}
-                            </option>
-                          ))}
-                        </select>
-                        <div className="curriculum-edit-actions">
-                          <button type="button" className="primary" disabled={!inventoryCurriculumTarget || inventoryCurriculumLoading} onClick={assignSelectedInventoryToCurriculum}>
-                            {inventoryCurriculumLoading ? "Saving..." : "Confirm Match"}
-                          </button>
-                          <button type="button" className="secondary" onClick={() => setInventoryCurriculumPickerOpen(false)}>Cancel</button>
-                        </div>
-                      </div>
-                    )}
-
-                    {selectedItemIds.length > 0 && (
-                      <div className="bulk-edit-bar">
-                        <div className="bulk-edit-field">
-                          <label>Curriculum</label>
-                          <select
-                            value={bulkCurriculum}
-                            onChange={(e) => setBulkCurriculum(e.target.value)}
-                          >
-                            <option value="">No Change</option>
-                            {curriculumOptions.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="bulk-edit-field">
-                          <label>Subject</label>
-                          <select
-                            value={bulkSubject}
-                            onChange={(e) => setBulkSubject(e.target.value)}
-                          >
-                            <option value="">No Change</option>
-                            {subjectOptions.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="bulk-edit-field">
-                          <label>Grade Level</label>
-                          <select
-                            value={bulkGrade}
-                            onChange={(e) => setBulkGrade(e.target.value)}
-                          >
-                            <option value="">No Change</option>
-                            {gradeOptions.map((option) => (
-                              <option key={option} value={option}>
-                                {option}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="bulk-edit-field">
-                          <label>Category</label>
-                          <select
-                            value={bulkCategory}
-                            onChange={(e) => setBulkCategory(e.target.value)}
-                          >
-                            <option value="">No Change</option>
-                            {categoryOptions.map((option) => (
-                              <option key={option.name} value={option.name}>
-                                {option.name}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        <div className="bulk-edit-field">
-                          <label>Status</label>
-                          <select
-                            value={bulkStatus}
-                            onChange={(e) => setBulkStatus(e.target.value)}
-                          >
-                            <option value="">No Change</option>
-                            <option value="Available">Available</option>
-                            <option value="Sold">Sold</option>
-                            <option value="Hold">Hold</option>
-                            <option value="Removed">Removed</option>
-                          </select>
-                        </div>
-
-                        <div className="bulk-edit-field">
-                          <label>Public Catalog</label>
-                          <select
-                            value={bulkPublicVisible}
-                            onChange={(e) => setBulkPublicVisible(e.target.value)}
-                          >
-                            <option value="">No Change</option>
-                            <option value="show">Show</option>
-                            <option value="hide">Hide</option>
-                          </select>
-                        </div>
-
-                        <div className="bulk-actions">
-                          <button
-                            type="button"
-                            className="primary"
-                            onClick={applyBulkEdit}
-                          >
-                            Apply to Selected
-                          </button>
-
-                          <button
-                            type="button"
-                            className="secondary"
-                            disabled={selectedItemIds.length === 0}
-                            onClick={addSelectedToPrintQueue}
-                          >
-                            Add to Print Queue
-                          </button>
-
-                          <button
-                            type="button"
-                            className="secondary"
-                            disabled={selectedTemporaryLocationItemCount === 0}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              clearTemporaryLocationsFromSelected();
-                            }}
-                          >
-                            Clear Temporary Locations
-                          </button>
-
-                          <button
-                            type="button"
-                            className="bulk-delete-btn"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              bulkDeleteSelected();
-                            }}
-                          >
-                            {isAdmin ? "Delete" : "Remove"}
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
               </div>
             </aside>
           </div>
+
+          {selectedItemIds.length > 0 && (
+            <div className="inventory-selection-bar" role="region" aria-label="Selected inventory actions">
+              <div className="inventory-selection-summary">
+                <strong>{selectedItemIds.length} selected</strong>
+                <button
+                  type="button"
+                  className="text-button"
+                  onClick={() => setSelectedItemIds(filteredItems.map((item) => item.id))}
+                >
+                  Select visible
+                </button>
+                <button type="button" className="text-button" onClick={() => setSelectedItemIds([])}>
+                  Clear
+                </button>
+              </div>
+              <div className="inventory-selection-actions">
+                <button type="button" className="primary" onClick={addSelectedToPrintQueue}>
+                  Add to Print Queue
+                </button>
+                <button type="button" className="secondary" onClick={() => setBulkEditOpen(true)}>
+                  Bulk Edit
+                </button>
+                <button type="button" className="secondary" onClick={openInventoryCurriculumPicker}>
+                  Curriculum List
+                </button>
+                <details className="inventory-selection-more">
+                  <summary>More</summary>
+                  <div className="inventory-selection-menu">
+                    {selectedItemIds.length >= 2 && (
+                      <button type="button" disabled={bundleActionLoading} onClick={startInventoryBundle}>
+                        Create Bundle
+                      </button>
+                    )}
+                    <button type="button" onClick={() => setSelectedItemIds(items.map((item) => item.id))}>
+                      Select all inventory
+                    </button>
+                    <button
+                      type="button"
+                      disabled={selectedTemporaryLocationItemCount === 0}
+                      onClick={clearTemporaryLocationsFromSelected}
+                    >
+                      Clear Temporary Locations
+                    </button>
+                    <button type="button" className="danger" onClick={bulkDeleteSelected}>
+                      {isAdmin ? "Delete Selected" : "Remove Selected"}
+                    </button>
+                  </div>
+                </details>
+              </div>
+            </div>
+          )}
+
+          {bulkEditOpen && selectedItemIds.length > 0 && (
+            <div className="inventory-action-backdrop" role="presentation" onMouseDown={() => setBulkEditOpen(false)}>
+              <section
+                className="inventory-action-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="bulk-edit-title"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="inventory-action-dialog-header">
+                  <div>
+                    <h3 id="bulk-edit-title">Bulk edit {selectedItemIds.length} items</h3>
+                    <p>Only fields you change will be updated.</p>
+                  </div>
+                  <button type="button" className="dialog-close" aria-label="Close bulk edit" onClick={() => setBulkEditOpen(false)}>×</button>
+                </div>
+                <div className="inventory-bulk-edit-grid">
+                  <label>Curriculum<select value={bulkCurriculum} onChange={(e) => setBulkCurriculum(e.target.value)}><option value="">No Change</option>{curriculumOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+                  <label>Subject<select value={bulkSubject} onChange={(e) => setBulkSubject(e.target.value)}><option value="">No Change</option>{subjectOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+                  <label>Grade Level<select value={bulkGrade} onChange={(e) => setBulkGrade(e.target.value)}><option value="">No Change</option>{gradeOptions.map((option) => <option key={option} value={option}>{option}</option>)}</select></label>
+                  <label>Category<select value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)}><option value="">No Change</option>{categoryOptions.map((option) => <option key={option.name} value={option.name}>{option.name}</option>)}</select></label>
+                  <label>Status<select value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}><option value="">No Change</option><option value="Available">Available</option><option value="Sold">Sold</option><option value="Hold">Hold</option><option value="Removed">Removed</option></select></label>
+                  <label>Public Catalog<select value={bulkPublicVisible} onChange={(e) => setBulkPublicVisible(e.target.value)}><option value="">No Change</option><option value="show">Show</option><option value="hide">Hide</option></select></label>
+                </div>
+                <div className="inventory-action-dialog-footer">
+                  <button type="button" className="secondary" onClick={() => setBulkEditOpen(false)}>Cancel</button>
+                  <button type="button" className="primary" onClick={applyBulkEdit}>Apply Changes</button>
+                </div>
+              </section>
+            </div>
+          )}
+
+          {inventoryCurriculumPickerOpen && selectedItemIds.length > 0 && (
+            <div className="inventory-action-backdrop" role="presentation" onMouseDown={() => setInventoryCurriculumPickerOpen(false)}>
+              <section
+                className="inventory-action-dialog inventory-curriculum-dialog"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="curriculum-match-title"
+                onMouseDown={(event) => event.stopPropagation()}
+              >
+                <div className="inventory-action-dialog-header">
+                  <div>
+                    <h3 id="curriculum-match-title">Add {selectedItemIds.length} items to a curriculum list</h3>
+                    <p>Choose the matching book or material.</p>
+                  </div>
+                  <button type="button" className="dialog-close" aria-label="Close curriculum list" onClick={() => setInventoryCurriculumPickerOpen(false)}>×</button>
+                </div>
+                <label className="inventory-curriculum-choice">
+                  Curriculum list item
+                  <select value={inventoryCurriculumTarget} onChange={(event) => setInventoryCurriculumTarget(event.target.value)} disabled={inventoryCurriculumLoading}>
+                    <option value="">Choose a book on a list</option>
+                    {inventoryCurriculumOptions.map((entry) => (
+                      <option key={entry.id} value={entry.material_id}>
+                        {[entry.package?.name, entry.package?.grade_level, entry.material?.title, entry.material?.edition_label].filter(Boolean).join(" — ")}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="inventory-action-dialog-footer">
+                  <button type="button" className="secondary" onClick={() => setInventoryCurriculumPickerOpen(false)}>Cancel</button>
+                  <button type="button" className="primary" disabled={!inventoryCurriculumTarget || inventoryCurriculumLoading} onClick={assignSelectedInventoryToCurriculum}>
+                    {inventoryCurriculumLoading ? "Saving..." : "Confirm Match"}
+                  </button>
+                </div>
+              </section>
+            </div>
+          )}
         </section>
       )}
 

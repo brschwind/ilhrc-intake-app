@@ -7,17 +7,14 @@ const appStyles = readFileSync(new URL("./App.css", import.meta.url), "utf8");
 
 test("inventory selection offers retroactive bundle creation", () => {
   assert.match(appSource, /async function startInventoryBundle\(\)/);
-  assert.match(
-    appSource,
-    /Create Bundle from \{selectedItemIds\.length\} Selected/
-  );
+  assert.match(appSource, />\s*Create Bundle\s*</);
   assert.match(appSource, /Pieces in set/);
   assert.match(appSource, /materializeInventoryBundleComponents/);
   assert.match(appSource, /update-square-inventory/);
 });
 
 test("inventory and curriculum workflows can create and split bundles", () => {
-  assert.match(appSource, /Add Selected to Curriculum List/);
+  assert.match(appSource, /Add \{selectedItemIds\.length\} items to a curriculum list/);
   assert.match(appSource, /async function startCurriculumBundle/);
   assert.match(appSource, /bundle_quantity:\s*1/);
   assert.match(appSource, /Split Bundle into Individual Listings/);
@@ -47,13 +44,16 @@ test("the intake screen does not contain a Location control", () => {
   assert.doesNotMatch(intakeScreen, /<label[^>]*>\s*Location\s*<\/label>/);
 });
 
-test("inventory selection controls remain reachable and aligned", () => {
-  assert.match(
-    appStyles,
-    /\.inventory-sidebar\s*\{[^}]*max-height:[^}]*overflow-y:\s*auto/s
-  );
+test("inventory selection is always available with actions outside the filter sidebar", () => {
   assert.match(appStyles, /\.card \.item-select\s*\{[^}]*display:\s*inline-flex/s);
-  assert.match(appStyles, /\.selection-bundle-action\s*\{[^}]*width:\s*100%/s);
+  assert.match(appSource, /className="inventory-grid selection-mode"/);
+  assert.match(appSource, /className="inventory-selection-bar"/);
+  assert.match(appSource, /className="inventory-action-dialog"/);
+  assert.doesNotMatch(appSource, /Exit Selection|Select Items/);
+  const sidebarStart = appSource.indexOf('className={`inventory-sidebar');
+  const sidebarEnd = appSource.indexOf("</aside>", sidebarStart);
+  const sidebarSource = appSource.slice(sidebarStart, sidebarEnd);
+  assert.doesNotMatch(sidebarSource, /Add to Print Queue|Bulk Edit|Apply to Selected/);
 });
 
 test("inventory selection queues labels instead of generating a PDF immediately", () => {
