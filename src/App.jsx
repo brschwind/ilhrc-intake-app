@@ -6650,11 +6650,11 @@ function renderReservationPickupActions(reservations) {
   if (readyReservations.length === 0) return null;
   return unreleasedSquareReservations.length > 0 ? (
     <button type="button" className="secondary" onClick={() => releaseReadyReservationsForCheckout(reservations)}>
-      Start Checkout for Ready ({readyReservations.length})
+      Checkout Ready ({readyReservations.length})
     </button>
   ) : (
     <button type="button" className="primary" onClick={() => completeReadyReservationPickup(reservations)}>
-      Mark Ready Books Picked Up ({readyReservations.length})
+      Pick Up Ready ({readyReservations.length})
     </button>
   );
 }
@@ -7163,21 +7163,28 @@ function renderCustomerRequests() {
                       }}
                     >
                       <span>{customerName}</span>
-                      <span className="reservation-customer-chevron" aria-hidden="true">⌄</span>
+                      <span className="reservation-customer-chevron" aria-hidden="true">▾</span>
                     </button>
-                    {contactDetails.length > 0 && <p>{contactDetails.join(" · ")}</p>}
-                    <p className="helper-text">Preferred contact: {group.customer.preferred_contact || "either"}</p>
+                    {contactDetails.length > 0 && (
+                      <p className="reservation-customer-contact">
+                        {contactDetails.join(" · ")}
+                        <span>{group.customer.preferred_contact || "either"} preferred</span>
+                      </p>
+                    )}
                   </div>
                   <div className="reservation-customer-counts">
                     {readyCount > 0 && <span className="reservation-ready-count">{readyCount} ready</span>}
                     <span>{group.reservations.length} {group.reservations.length === 1 ? "reservation" : "reservations"}</span>
                     <button type="button" className="secondary" onClick={() => startReservationPullMode(group)}>Pull Mode</button>
-                    {renderReservationPickupActions(group.reservations)}
                   </div>
                 </div>
 
                 {isExpanded && (
                   <div className="reservation-customer-books" id={`reservation-customer-${customerId}`}>
+                    <div className="reservation-group-toolbar">
+                      <strong>{group.reservations.length} {group.reservations.length === 1 ? "book" : "books"}</strong>
+                      {renderReservationPickupActions(group.reservations)}
+                    </div>
                     {group.reservations.map((reservation) => {
                       const item = itemById[String(reservation.item_id)];
                       const isActive = ["pending", "ready"].includes(reservation.status) &&
@@ -7206,7 +7213,6 @@ function renderCustomerRequests() {
                                 {item?.sku && `SKU ${item.sku} · `}
                                 Expires {new Date(reservation.expires_at).toLocaleDateString()}
                               </p>
-                              <p className="helper-text">Reference {String(reservation.id).slice(0, 8).toUpperCase()}</p>
                             </div>
                             <div className="reservation-staff-actions">
                               {reservation.status === "pending" && isActive && (
@@ -7214,19 +7220,25 @@ function renderCustomerRequests() {
                               )}
                               {reservation.status === "ready" && isActive && (
                                 reservation.square_hold_released_at ? (
-                                  <>
-                                    <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "picked_up")}>Picked Up</button>
-                                    <button type="button" className="secondary" onClick={() => returnReservationToHold(reservation)}>Put Back on Hold</button>
-                                  </>
+                                  <button type="button" className="primary" onClick={() => updateBookReservationStatus(reservation, "picked_up")}>Picked Up</button>
                                 ) : (
-                                  <button type="button" className="primary" onClick={() => releaseReservationForCheckout(reservation)}>Start Square Checkout</button>
+                                  <button type="button" className="primary" onClick={() => releaseReservationForCheckout(reservation)}>Start Checkout</button>
                                 )
                               )}
-                              {(isActive || reservation.status === "expired") && (
+                              {reservation.status === "expired" && (
                                 <button type="button" className="secondary" onClick={() => extendBookReservation(reservation)}>Extend 7 Days</button>
                               )}
                               {isActive && (
-                                <button type="button" className="secondary" onClick={() => updateBookReservationStatus(reservation, "cancelled")}>Cancel</button>
+                                <details className="reservation-more-menu">
+                                  <summary>More</summary>
+                                  <div className="reservation-more-popover">
+                                    {reservation.status === "ready" && reservation.square_hold_released_at && (
+                                      <button type="button" onClick={() => returnReservationToHold(reservation)}>Put Back on Hold</button>
+                                    )}
+                                    <button type="button" onClick={() => extendBookReservation(reservation)}>Extend 7 Days</button>
+                                    <button type="button" className="danger-text" onClick={() => updateBookReservationStatus(reservation, "cancelled")}>Cancel Reservation</button>
+                                  </div>
+                                </details>
                               )}
                             </div>
                           </div>
@@ -7258,6 +7270,7 @@ function renderCustomerRequests() {
                                   <div><dt>SKU</dt><dd>{item.sku || "Not set"}</dd></div>
                                   <div><dt>Quantity</dt><dd>{item.quantity ?? 0}</dd></div>
                                   <div><dt>Price</dt><dd>${Number(item.final_price || 0).toFixed(2)}</dd></div>
+                                  <div><dt>Reservation</dt><dd>{String(reservation.id).slice(0, 8).toUpperCase()}</dd></div>
                                 </dl>
                               </div>
                             </section>
