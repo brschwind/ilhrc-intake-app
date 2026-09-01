@@ -460,6 +460,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [coverPhoto, setCoverPhoto] = useState(null);
   const [coverFile, setCoverFile] = useState(null);
   const [coverCameraOpen, setCoverCameraOpen] = useState(false);
+  const [coverCameraPurpose, setCoverCameraPurpose] = useState("analysis");
   const [coverCameraReady, setCoverCameraReady] = useState(false);
   const [coverCameraError, setCoverCameraError] = useState("");
   const [coverCameraDevices, setCoverCameraDevices] = useState([]);
@@ -3009,9 +3010,10 @@ async function attachCoverCameraStream(stream) {
   setAnalysisStatus("");
 }
 
-async function startCoverCamera() {
+async function startCoverCamera(purpose = "analysis") {
   coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
   coverCameraStreamRef.current = null;
+  setCoverCameraPurpose(purpose);
   setCoverCameraOpen(true);
   setCoverCameraReady(false);
   setCoverCameraError("");
@@ -3129,8 +3131,14 @@ async function captureCoverCameraPhoto() {
       0.86
     );
 
+    const purpose = coverCameraPurpose;
     stopCoverCamera();
-    await processCoverPhoto(cameraFile);
+
+    if (purpose === "listing") {
+      await processListingPhoto(cameraFile);
+    } else {
+      await processCoverPhoto(cameraFile);
+    }
   } catch (error) {
     setAnalysisStatus("");
     setCoverCameraReady(true);
@@ -3182,12 +3190,32 @@ function startManualEntry() {
     setBookData(null);
   }
 
+async function processListingPhoto(file) {
+  setCoverPhoto(URL.createObjectURL(file));
+  setCoverFile(await shrinkImageFile(file));
+}
+
 async function handleListingPhoto(event) {
   const file = event.target.files?.[0];
   if (!file) return;
 
-  setCoverPhoto(URL.createObjectURL(file));
-  setCoverFile(await shrinkImageFile(file));
+  try {
+    await processListingPhoto(file);
+  } finally {
+    event.target.value = "";
+  }
+}
+
+function openListingCoverCamera(event) {
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (navigator.mediaDevices?.getUserMedia) {
+    startCoverCamera("listing");
+    return;
+  }
+
+  listingPhotoInputRef.current?.click();
 }
 
 function handleEditCoverPhoto(event) {
@@ -8164,7 +8192,7 @@ function renderUserManagement() {
         <small>Camera or Symbol scanner</small>
       </button>
 
-      <button className="secondary" type="button" onClick={startCoverCamera}>
+      <button className="secondary" type="button" onClick={() => startCoverCamera("analysis")}>
         Analyze Book Cover
       </button>
 
@@ -8180,7 +8208,10 @@ function renderUserManagement() {
     />
 
 {coverCameraOpen && (
-  <section className="cover-camera-panel" aria-label="Book cover camera">
+  <section
+    className="cover-camera-panel"
+    aria-label={coverCameraPurpose === "listing" ? "Actual cover camera" : "Book cover camera"}
+  >
     <video
       ref={coverCameraVideoRef}
       className="cover-camera-video"
@@ -8200,7 +8231,11 @@ function renderUserManagement() {
         disabled={!coverCameraReady}
         onClick={captureCoverCameraPhoto}
       >
-        {coverCameraReady ? "Take Cover Photo" : "Starting Camera..."}
+        {coverCameraReady
+          ? coverCameraPurpose === "listing"
+            ? "Take Actual Cover Photo"
+            : "Take Cover Photo"
+          : "Starting Camera..."}
       </button>
       <button
         className="secondary"
@@ -8215,7 +8250,10 @@ function renderUserManagement() {
       >
         Switch Camera
       </button>
-      <label htmlFor="cover-upload" className="secondary file-upload-button">
+      <label
+        htmlFor={coverCameraPurpose === "listing" ? "listing-cover-upload" : "cover-upload"}
+        className="secondary file-upload-button"
+      >
         Choose Existing Photo
       </label>
       <button className="secondary" type="button" onClick={stopCoverCamera}>
@@ -8291,12 +8329,14 @@ function renderUserManagement() {
 
 <button
   className="secondary"
-  onClick={() => listingPhotoInputRef.current.click()}
+  type="button"
+  onClick={openListingCoverCamera}
 >
   Add Actual Cover Photo to Listing
 </button>
 
 <input
+  id="listing-cover-upload"
   ref={listingPhotoInputRef}
   type="file"
   accept="image/*"
