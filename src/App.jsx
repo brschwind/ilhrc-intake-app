@@ -47,6 +47,7 @@ import {
   isSoldOutInventoryItem,
   totalSoldCopies,
 } from "./inventoryDisplay.js";
+import { normalizeIsbn } from "./curriculumMatching.js";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -467,6 +468,8 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [coverCameraDeviceId, setCoverCameraDeviceId] = useState("");
   const [isbnPhoto, setIsbnPhoto] = useState(null);
   const [bookData, setBookData] = useState(null);
+  const [earlyDuplicateMatch, setEarlyDuplicateMatch] = useState(null);
+  const [earlyDuplicateAction, setEarlyDuplicateAction] = useState("");
 
   const [editingItem, setEditingItem] = useState(null);
   const [editData, setEditData] = useState(null);
@@ -1429,6 +1432,10 @@ async function applyRulesToImportedBook(importedBook, sourceType) {
 }
 
 function updateIntakeField(field, value, additionalChanges = {}) {
+  if (field === "isbn") {
+    setEarlyDuplicateMatch(null);
+    setEarlyDuplicateAction("");
+  }
   setBookData((current) => ({ ...current, [field]: value, ...additionalChanges }));
   const changedLearningFields = [field, ...Object.keys(additionalChanges)].filter((item) =>
     INTAKE_LEARNING_FIELDS.includes(item)
@@ -2705,6 +2712,50 @@ function toggleSelectedItem(id, selectRange = false) {
   });
 }
 
+async function findAvailableIsbnDuplicate(isbn, title = "") {
+  const normalizedIsbn = normalizeIsbn(isbn);
+  if (normalizedIsbn.length < 10) return null;
+
+  const { data, error } = await supabase
+    .from("items")
+    .select("*")
+    .neq("isbn", "");
+
+  if (error) throw error;
+
+  return (data || [])
+    .filter((item) =>
+      ["Available", "Hold"].includes(item.status || "Available") &&
+      normalizeIsbn(item.isbn) === normalizedIsbn
+    )
+    .sort((a, b) => {
+      const aTitleMatch = normalizeTitle(a.title) === normalizeTitle(title) ? 1 : 0;
+      const bTitleMatch = normalizeTitle(b.title) === normalizeTitle(title) ? 1 : 0;
+      return bTitleMatch - aTitleMatch;
+    })[0] || null;
+}
+
+async function detectEarlyIsbnDuplicate(book) {
+  const normalizedIsbn = normalizeIsbn(book?.isbn);
+  if (normalizedIsbn.length < 10) {
+    setEarlyDuplicateMatch(null);
+    setEarlyDuplicateAction("");
+    return null;
+  }
+
+  try {
+    const candidate = await findAvailableIsbnDuplicate(normalizedIsbn, book?.title);
+    setEarlyDuplicateMatch(candidate ? { item: candidate, isbn: normalizedIsbn } : null);
+    setEarlyDuplicateAction("");
+    return candidate;
+  } catch (error) {
+    console.error("Could not check for an ISBN duplicate during intake:", error);
+    setEarlyDuplicateMatch(null);
+    setEarlyDuplicateAction("");
+    return null;
+  }
+}
+
 async function bulkDeleteSelected() {
   if (selectedItemIds.length === 0) return;
 
@@ -3148,6 +3199,8 @@ async function captureCoverCameraPhoto() {
 
 function startManualEntry() {
   clearRuleFeedback();
+  setEarlyDuplicateMatch(null);
+  setEarlyDuplicateAction("");
   setIntakeContext({
     source_type: "manual",
     imported_values: getIntakeLearningValues({}),
@@ -3188,6 +3241,8 @@ function startManualEntry() {
 
     setIsbnPhoto(URL.createObjectURL(file));
     setBookData(null);
+    setEarlyDuplicateMatch(null);
+    setEarlyDuplicateAction("");
   }
 
 async function processListingPhoto(file) {
@@ -3315,6 +3370,18 @@ async function lookupBookByIsbn(isbn) {
   setAnalysisStatus("Looking up ISBN...");
 
   try {
+    const earlyDuplicate = await detectEarlyIsbnDuplicate({ isbn: cleanIsbn });
+    if (earlyDuplicate) {
+      setBookData(await applyRulesToImportedBook({
+        ...earlyDuplicate,
+        quantity: 1,
+        status: "Available",
+        confidence: "Existing inventory ISBN match",
+      }, "isbn_inventory"));
+      setAnalysisStatus("Existing ISBN found — choose how to handle this copy.");
+      return;
+    }
+
     const googleUrl =
   `https://www.googleapis.com/books/v1/volumes?q=isbn:${cleanIsbn}&key=${import.meta.env.VITE_GOOGLE_BOOKS_API_KEY}`;
 
@@ -3698,7 +3765,7 @@ async function analyzePhotoWithFile(file, pendingIdentifier = null) {
     const inferredPublisherItemNumber = pendingIdentifier?.publisher_item_number ||
       inferPublisherItemNumber(detectedPublisher, pendingIdentifier?.publisher_barcode);
 
-setBookData(await applyRulesToImportedBook({
+const analyzedBook = await applyRulesToImportedBook({
   ...improvedData,
   ...(pendingIdentifier || {}),
   ...(inferredPublisherItemNumber ? { publisher_item_number: inferredPublisherItemNumber } : {}),
@@ -3712,10 +3779,16 @@ setBookData(await applyRulesToImportedBook({
     improvedData.suggested_price || suggested?.default_price || "",
   final_price:
     improvedData.final_price || suggested?.default_price || "",
-}, "cover_analysis"));
+}, "cover_analysis");
 
+setBookData(analyzedBook);
+const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
 
-    setAnalysisStatus("Analysis complete!");
+    setAnalysisStatus(
+      earlyDuplicate
+        ? "Analysis complete — an existing ISBN was found. Choose how to handle this copy."
+        : "Analysis complete!"
+    );
     setTimeout(() => setAnalysisStatus(""), 2500);
   } catch (error) {
     setAnalysisStatus("");
@@ -3968,6 +4041,8 @@ setBookData(await applyRulesToImportedBook({
 
   function clearSavedBook() {
     setBookData(null);
+    setEarlyDuplicateMatch(null);
+    setEarlyDuplicateAction("");
     clearRuleFeedback();
     setCoverPhoto(null);
     setCoverFile(null);
@@ -4883,7 +4958,31 @@ const normalizedDraftIsbn = String(itemDraft.isbn || "")
   .toLowerCase()
   .replace(/[^0-9x]/g, "");
 
-if (!existingItem && normalizedDraftIsbn.length >= 10) {
+const earlyMatchApplies =
+  earlyDuplicateMatch &&
+  earlyDuplicateMatch.isbn === normalizedDraftIsbn;
+
+if (!existingItem && earlyMatchApplies && !earlyDuplicateAction) {
+  alert("An existing ISBN was found. Choose whether to add this copy to the existing listing or create a separate listing.");
+  return;
+}
+
+if (!existingItem && earlyMatchApplies && earlyDuplicateAction === "merge") {
+  existingItem = await findAvailableIsbnDuplicate(normalizedDraftIsbn, itemDraft.title);
+  if (!existingItem) {
+    setEarlyDuplicateMatch(null);
+    setEarlyDuplicateAction("");
+    alert("That existing ISBN listing is no longer available. The inventory was refreshed; please review and save again.");
+    return;
+  }
+  duplicateMatchReason = "exact_isbn";
+}
+
+if (earlyMatchApplies && earlyDuplicateAction === "separate") {
+  exactIsbnMatchDeclined = true;
+}
+
+if (!existingItem && !exactIsbnMatchDeclined && normalizedDraftIsbn.length >= 10) {
   const { data: isbnCandidates, error: isbnSearchError } = await supabase
     .from("items")
     .select("*")
@@ -5154,6 +5253,8 @@ try {
 }
 
   setBookData(null);
+  setEarlyDuplicateMatch(null);
+  setEarlyDuplicateAction("");
   clearRuleFeedback();
   setCoverPhoto(null);
   setCoverFile(null);
@@ -8450,6 +8551,38 @@ function renderUserManagement() {
                 value={bookData.isbn || ""}
                 onChange={(e) => updateIntakeField("isbn", e.target.value)}
               />
+
+              {earlyDuplicateMatch && earlyDuplicateMatch.isbn === normalizeIsbn(bookData.isbn) && (
+                <div className="rule-conflict-box" role="alert">
+                  <strong>Existing ISBN found</strong>
+                  <p>
+                    {earlyDuplicateMatch.item.title} · SKU {earlyDuplicateMatch.item.sku} · Current quantity: {earlyDuplicateMatch.item.quantity || 0} · Price: ${Number(earlyDuplicateMatch.item.final_price || 0).toFixed(2)}
+                  </p>
+                  <p>Choose how this copy should be handled before saving.</p>
+                  <div className="intake-actions">
+                    <button
+                      type="button"
+                      className={earlyDuplicateAction === "merge" ? "primary" : "secondary"}
+                      onClick={() => setEarlyDuplicateAction("merge")}
+                    >
+                      Add to Existing Listing
+                    </button>
+                    <button
+                      type="button"
+                      className={earlyDuplicateAction === "separate" ? "primary" : "secondary"}
+                      onClick={() => setEarlyDuplicateAction("separate")}
+                    >
+                      Create Separate Listing
+                    </button>
+                  </div>
+                  {earlyDuplicateAction === "merge" && (
+                    <p className="status-message">Saving will add this copy to SKU {earlyDuplicateMatch.item.sku}.</p>
+                  )}
+                  {earlyDuplicateAction === "separate" && (
+                    <p className="status-message">Saving will create a separate listing.</p>
+                  )}
+                </div>
+              )}
 
               <div className="publisher-scan-panel">
                 <div>
