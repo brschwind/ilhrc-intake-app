@@ -454,6 +454,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   });
 
   const coverInputRef = useRef(null);
+  const coverCaptureInputRef = useRef(null);
   const coverCameraVideoRef = useRef(null);
   const coverCameraStreamRef = useRef(null);
   const isbnInputRef = useRef(null);
@@ -3093,7 +3094,7 @@ async function startCoverCamera(purpose = "analysis") {
         audio: false,
       });
     } catch (error) {
-      if (error?.name !== "OverconstrainedError" && error?.name !== "NotFoundError") {
+      if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
         throw error;
       }
 
@@ -3112,11 +3113,15 @@ async function startCoverCamera(purpose = "analysis") {
     coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
     coverCameraStreamRef.current = null;
     setAnalysisStatus("");
-    setCoverCameraError(
-      error?.name === "NotAllowedError"
-        ? "Camera access was blocked. Allow camera access for this site, or choose an existing photo below."
-        : "The camera could not start. Choose an existing photo below."
-    );
+    const message =
+      error?.name === "NotAllowedError" || error?.name === "SecurityError"
+        ? "Camera access was blocked. Allow camera access for this site, or use the phone camera button below."
+        : error?.name === "NotReadableError"
+          ? "The camera is busy or unavailable to this browser. Close other camera apps, or use the phone camera button below."
+          : error?.name === "AbortError"
+            ? "The camera was interrupted. Try again, or use the phone camera button below."
+            : "The live camera could not start in this browser. Use the phone camera button below.";
+    setCoverCameraError(message);
   }
 }
 
@@ -8357,6 +8362,11 @@ function renderUserManagement() {
       >
         Choose Existing Photo
       </label>
+      {coverCameraPurpose === "analysis" && (
+        <label htmlFor="cover-camera-capture" className="primary file-upload-button">
+          Use Phone Camera Instead
+        </label>
+      )}
       <button className="secondary" type="button" onClick={stopCoverCamera}>
         Cancel
       </button>
@@ -8369,6 +8379,17 @@ function renderUserManagement() {
   ref={coverInputRef}
   type="file"
   accept="image/*"
+  onInput={handleCoverPhoto}
+  onChange={handleCoverPhoto}
+  className="visually-hidden-file"
+/>
+
+<input
+  id="cover-camera-capture"
+  ref={coverCaptureInputRef}
+  type="file"
+  accept="image/*"
+  capture="environment"
   onInput={handleCoverPhoto}
   onChange={handleCoverPhoto}
   className="visually-hidden-file"

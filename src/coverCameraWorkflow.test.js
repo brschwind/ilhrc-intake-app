@@ -60,3 +60,19 @@ test("actual cover falls back to a rear-camera file capture when in-app camera i
   assert.match(listingInput, /accept="image\/\*"/);
   assert.match(listingInput, /capture="environment"/);
 });
+
+test("cover analysis offers a native phone-camera fallback for Samsung browsers", () => {
+  assert.match(appSource, />\s*Use Phone Camera Instead\s*<\/label>/);
+
+  const cameraCaptureInput = appSource.match(
+    /<input\s+id="cover-camera-capture"[\s\S]*?\/>/
+  )?.[0];
+
+  assert.ok(cameraCaptureInput, "native phone-camera input should be present");
+  assert.match(cameraCaptureInput, /type="file"/);
+  assert.match(cameraCaptureInput, /accept="image\/\*"/);
+  assert.match(cameraCaptureInput, /capture="environment"/);
+  assert.match(cameraCaptureInput, /onChange=\{handleCoverPhoto\}/);
+  assert.match(appSource, /error\?\.name === "NotReadableError"/);
+  assert.match(appSource, /error\?\.name === "AbortError"/);
+});
