@@ -4,6 +4,7 @@ import {
   findCurriculumInventoryMatch,
   findCurriculumInventoryMatches,
   getCurriculumMatchLabel,
+  normalizeBookText,
   normalizeIsbn,
   normalizePublisherIdentifier,
 } from "./curriculumMatching";
@@ -248,6 +249,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
       .filter((item) => Number(item.quantity || 0) > 0 && confirmedItemIds.has(String(item.id)))
       .map((item) => ({ status: "confirmed", item }));
     const automaticMatches = findCurriculumInventoryMatches(entry.material, inventory)
+      .filter(({ status }) => isAuthenticated || status !== "title")
       .filter(({ item }) => !confirmedItemIds.has(String(item.id)));
     const inventoryMatches = [...confirmedInventoryMatches, ...automaticMatches];
     return {
@@ -305,7 +307,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
   }
 
   function manualInventoryChoices(material) {
-    const needle = manualMatchSearch.trim().toLowerCase();
+    const searchTerms = normalizeBookText(manualMatchSearch).split(" ").filter(Boolean);
     const confirmedIds = new Set(confirmedMatches
       .filter((match) => match.material_id === material.id)
       .map((match) => String(match.inventory_item_id)));
@@ -314,8 +316,12 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
         item.item_type !== "bundle" && item.status === "Available" &&
         Number(item.quantity || 0) > 0 && !confirmedIds.has(String(item.id))
       )
-      .filter((item) => !needle || [item.title, item.author, item.isbn, item.sku, item.publisher_item_number]
-        .join(" ").toLowerCase().includes(needle))
+      .filter((item) => {
+        const searchableText = normalizeBookText(
+          [item.title, item.author, item.isbn, item.sku, item.publisher_item_number].join(" ")
+        );
+        return searchTerms.every((term) => searchableText.includes(term));
+      })
       .slice(0, 30);
   }
 
@@ -1103,7 +1109,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                                 <strong>{item.title}</strong>
                                 <span>{[item.edition, item.sku && `SKU ${item.sku}`].filter(Boolean).join(" · ")}</span>
                                 <span>${Number(item.final_price || 0).toFixed(2)} · {item.quantity} available</span>
-                                {isAuthenticated && status === "possible" && (
+                                {isAuthenticated && ["possible", "title"].includes(status) && (
                                   <button className="secondary curriculum-confirm-button no-print" type="button" disabled={matchSaving} onClick={() => confirmInventoryMatch(material, item)}>
                                     {matchSaving ? "Confirming…" : "Confirm match"}
                                   </button>

@@ -4131,7 +4131,8 @@ button:disabled {
   color: #285331;
 }
 
-.match-possible {
+.match-possible,
+.match-title {
   background: #fff0c9;
   color: #735415;
 }

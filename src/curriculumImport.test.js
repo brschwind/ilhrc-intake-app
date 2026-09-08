@@ -152,6 +152,11 @@ test("staff can attach multiple inventory books to one curriculum list item", ()
   );
 });
 
+test("similar-title suggestions stay in the staff matching workflow until confirmed", () => {
+  assert.match(curriculumCatalogSource, /isAuthenticated \|\| status !== "title"/);
+  assert.match(curriculumCatalogSource, /\["possible", "title"\]\.includes\(status\)/);
+});
+
 test("customers can reserve matched books from a curriculum list", () => {
   assert.match(curriculumCatalogSource, /Reserve this copy/);
   assert.match(curriculumCatalogSource, /onReserveBook\(item\)/);
