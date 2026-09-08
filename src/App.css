@@ -1885,6 +1885,12 @@ button:disabled {
   margin: 4px 0 0;
 }
 
+.curriculum-manual-match-help {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
 .reservation-customer-contact {
   display: flex;
   align-items: center;

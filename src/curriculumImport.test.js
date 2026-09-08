@@ -134,13 +134,22 @@ test("staff can persistently confirm and undo possible inventory matches", () =>
 });
 
 test("staff can manually attach inventory and build a matched curriculum bundle", () => {
-  assert.match(curriculumCatalogSource, /Add Inventory Book Manually/);
+  assert.match(curriculumCatalogSource, /Add Inventory Book/);
   assert.match(curriculumCatalogSource, /manualInventoryChoices/);
   assert.match(curriculumCatalogSource, /Build Bundle from \{selectedBundleItems\.length\} Selected/);
   assert.match(curriculumCatalogSource, /Select Available \$\{group\} for Bundle/);
   assert.match(curriculumCatalogSource, /Select \$\{material\.title\} for bulk actions/);
   assert.doesNotMatch(curriculumCatalogSource, /Include this copy in bundle/);
   assert.match(curriculumCatalogSource, /One copy of each selected listing is included by default/);
+});
+
+test("staff can attach multiple inventory books to one curriculum list item", () => {
+  assert.match(curriculumCatalogSource, /Add Another Inventory Book/);
+  assert.match(curriculumCatalogSource, /Add each inventory book this list item requires/);
+  assert.doesNotMatch(
+    curriculumCatalogSource.match(/async function confirmInventoryMatch[\s\S]*?(?=\n\s+async function removeConfirmedInventoryMatch)/)?.[0] || "",
+    /setManualMatchMaterialId\(""\)/
+  );
 });
 
 test("customers can reserve matched books from a curriculum list", () => {

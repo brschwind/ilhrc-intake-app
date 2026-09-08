@@ -373,9 +373,8 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
       ...current.filter((match) => !(match.material_id === data.material_id && String(match.inventory_item_id) === String(data.inventory_item_id))),
       data,
     ]);
-    setManualMatchMaterialId("");
     setManualMatchSearch("");
-    setMessage(`Confirmed “${item.title}” as a match for “${material.title}.”`);
+    setMessage(`Added “${item.title}” to “${material.title}.” You can add another inventory book to the same list item.`);
   }
 
   async function removeConfirmedInventoryMatch(material, item) {
@@ -1129,10 +1128,17 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                     {isAuthenticated && (
                       <div className="curriculum-manual-match no-print">
                         <button className="secondary" type="button" onClick={() => beginManualMatch(material.id)}>
-                          {manualMatchMaterialId === material.id ? "Close Inventory Picker" : "Add Inventory Book Manually"}
+                          {manualMatchMaterialId === material.id
+                            ? "Close Inventory Picker"
+                            : inventoryMatches.length > 0
+                              ? "Add Another Inventory Book"
+                              : "Add Inventory Book"}
                         </button>
                         {manualMatchMaterialId === material.id && (
                           <div className="curriculum-manual-match-picker">
+                            <p className="curriculum-manual-match-help">
+                              Add each inventory book this list item requires. Books already added remain linked and appear above.
+                            </p>
                             <label>
                               Search inventory
                               <input type="search" placeholder="Title, ISBN, publisher number, or SKU" value={manualMatchSearch} onChange={(event) => setManualMatchSearch(event.target.value)} />
@@ -1147,7 +1153,7 @@ export default function CurriculumCatalog({ inventory, isAuthenticated, userId, 
                                       <span>{[item.edition, item.isbn && `ISBN ${item.isbn}`, item.sku && `SKU ${item.sku}`, `${item.quantity} available`].filter(Boolean).join(" · ")}</span>
                                     </div>
                                     <button type="button" className="primary" disabled={savingMatchKey === matchKey} onClick={() => confirmInventoryMatch(material, item)}>
-                                      {savingMatchKey === matchKey ? "Adding…" : "Add Match"}
+                                      {savingMatchKey === matchKey ? "Adding…" : "Add Book"}
                                     </button>
                                   </article>
                                 );
