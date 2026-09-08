@@ -22,6 +22,7 @@ import {
   buildEditedItemLabelQueueUpdate,
   buildDuplicateLabelQueueUpdate,
   buildSelectedLabelQueueUpdate,
+  getEditedItemLabelQuantity,
   getLabelAffectingEditFields,
   getQueuedLabelQuantity,
 } from "./labelQueue";
@@ -458,6 +459,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const coverCameraVideoRef = useRef(null);
   const coverCameraStreamRef = useRef(null);
   const isbnInputRef = useRef(null);
+  const earlyDuplicateLookupIdRef = useRef(0);
 
   const [coverPhoto, setCoverPhoto] = useState(null);
   const [coverFile, setCoverFile] = useState(null);
@@ -805,6 +807,17 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   useEffect(() => {
     if (view === "requests" && isAuthenticated) loadCustomerRequestData();
   }, [view, isAuthenticated]);
+
+  useEffect(() => {
+    const isbn = normalizeIsbn(bookData?.isbn);
+    if (view !== "add" || isbn.length < 10) return;
+
+    const lookupTimer = window.setTimeout(() => {
+      detectEarlyIsbnDuplicate({ isbn, title: bookData?.title || "" });
+    }, 350);
+
+    return () => window.clearTimeout(lookupTimer);
+  }, [bookData?.isbn, view]); // eslint-disable-line react-hooks/exhaustive-deps -- debounce only direct ISBN entry; the lookup function uses the current title as a tie-breaker
 
   async function refreshProfile(nextSession = session) {
     const accessToken = nextSession?.access_token;
@@ -1434,6 +1447,7 @@ async function applyRulesToImportedBook(importedBook, sourceType) {
 
 function updateIntakeField(field, value, additionalChanges = {}) {
   if (field === "isbn") {
+    earlyDuplicateLookupIdRef.current += 1;
     setEarlyDuplicateMatch(null);
     setEarlyDuplicateAction("");
   }
@@ -2737,6 +2751,7 @@ async function findAvailableIsbnDuplicate(isbn, title = "") {
 }
 
 async function detectEarlyIsbnDuplicate(book) {
+  const lookupId = ++earlyDuplicateLookupIdRef.current;
   const normalizedIsbn = normalizeIsbn(book?.isbn);
   if (normalizedIsbn.length < 10) {
     setEarlyDuplicateMatch(null);
@@ -2746,10 +2761,12 @@ async function detectEarlyIsbnDuplicate(book) {
 
   try {
     const candidate = await findAvailableIsbnDuplicate(normalizedIsbn, book?.title);
+    if (lookupId !== earlyDuplicateLookupIdRef.current) return null;
     setEarlyDuplicateMatch(candidate ? { item: candidate, isbn: normalizedIsbn } : null);
     setEarlyDuplicateAction("");
     return candidate;
   } catch (error) {
+    if (lookupId !== earlyDuplicateLookupIdRef.current) return null;
     console.error("Could not check for an ISBN duplicate during intake:", error);
     setEarlyDuplicateMatch(null);
     setEarlyDuplicateAction("");
@@ -5560,8 +5577,11 @@ async function updateItem() {
   }
 
   const updatedAt = new Date().toISOString();
+  const editedLabelQuantity = shouldQueueUpdatedLabel
+    ? getEditedItemLabelQuantity(editingItem, updatedItemLabelValues)
+    : 0;
   const labelQueueUpdate = shouldQueueUpdatedLabel
-    ? buildEditedItemLabelQueueUpdate(editingItem, updatedAt)
+    ? buildEditedItemLabelQueueUpdate(editingItem, updatedItemLabelValues, updatedAt)
     : {};
 
   const { error } = await supabase
@@ -5625,11 +5645,12 @@ async function updateItem() {
       "image_url",
     ],
     label_queued_for_fields: shouldQueueUpdatedLabel ? labelAffectingEditFields : [],
+    label_quantity_queued: editedLabelQuantity,
   });
 
   alert(
     shouldQueueUpdatedLabel
-      ? "Item updated! One new sticker was added to the print queue."
+      ? `Item updated! ${editedLabelQuantity} new sticker${editedLabelQuantity === 1 ? " was" : "s were"} added to the print queue.`
       : "Item updated!"
   );
 

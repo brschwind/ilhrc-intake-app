@@ -25,6 +25,13 @@ test("cover analysis checks a detected ISBN immediately", () => {
   );
 });
 
+test("manually entered ISBNs check inventory before save", () => {
+  assert.match(
+    appSource,
+    /useEffect\(\(\) => \{[\s\S]*?normalizeIsbn\(bookData\?\.isbn\)[\s\S]*?setTimeout\(\(\) => \{[\s\S]*?detectEarlyIsbnDuplicate\(\{ isbn, title:/
+  );
+});
+
 test("early duplicate notice requires an intake choice and reuses it during save", () => {
   assert.match(appSource, />\s*Existing ISBN found\s*</);
   assert.match(appSource, />\s*Add to Existing Listing\s*</);

@@ -5,6 +5,7 @@ import {
   buildEditedItemLabelQueueUpdate,
   buildDuplicateLabelQueueUpdate,
   buildSelectedLabelQueueUpdate,
+  getEditedItemLabelQuantity,
   getLabelAffectingEditFields,
   getQueuedLabelQuantity,
 } from "./labelQueue.js";
@@ -74,21 +75,28 @@ test("SKU, price, and quantity edits are identified using their saved value type
   );
 });
 
-test("an edited listing adds one replacement sticker to its current queue", () => {
+test("an inventory increase queues a sticker for each added copy", () => {
   const queuedAt = "2026-08-11T20:00:00.000Z";
 
   assert.deepEqual(
     buildEditedItemLabelQueueUpdate(
       { quantity: 4, label_printed: true, pending_label_quantity: 0 },
+      { quantity: 7 },
       queuedAt
     ),
-    { label_printed: false, pending_label_quantity: 1, label_queued_at: queuedAt }
+    { label_printed: false, pending_label_quantity: 3, label_queued_at: queuedAt }
   );
   assert.equal(
     buildEditedItemLabelQueueUpdate(
       { quantity: 4, label_printed: false, pending_label_quantity: 2 },
+      { quantity: 7 },
       queuedAt
     ).pending_label_quantity,
-    3
+    5
   );
+});
+
+test("other label-affecting edits still queue one replacement sticker", () => {
+  assert.equal(getEditedItemLabelQuantity({ quantity: 4 }, { quantity: 4 }), 1);
+  assert.equal(getEditedItemLabelQuantity({ quantity: 4 }, { quantity: 2 }), 1);
 });

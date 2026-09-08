@@ -66,10 +66,22 @@ export function getLabelAffectingEditFields(originalItem, updatedItem) {
   return changedFields;
 }
 
-export function buildEditedItemLabelQueueUpdate(item, queuedAt) {
+export function getEditedItemLabelQuantity(originalItem, updatedItem) {
+  const originalQuantity = Number(originalItem?.quantity);
+  const updatedQuantity = Number(updatedItem?.quantity);
+  const addedQuantity = updatedQuantity - originalQuantity;
+
+  return Number.isFinite(addedQuantity) && addedQuantity > 0
+    ? addedQuantity
+    : 1;
+}
+
+export function buildEditedItemLabelQueueUpdate(originalItem, updatedItem, queuedAt) {
   return {
     label_printed: false,
-    pending_label_quantity: getQueuedLabelQuantity(item) + 1,
+    pending_label_quantity:
+      getQueuedLabelQuantity(originalItem) +
+      getEditedItemLabelQuantity(originalItem, updatedItem),
     label_queued_at: queuedAt,
   };
 }
