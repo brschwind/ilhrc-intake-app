@@ -2902,6 +2902,64 @@ button:disabled {
   scroll-margin-top: 12px;
 }
 
+.inventory-editor-backdrop {
+  z-index: 110;
+}
+
+.inventory-editor-dialog {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  margin: 0;
+  padding: 0;
+  overflow-y: auto;
+}
+
+.inventory-editor-header {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border);
+  background: #fff;
+}
+
+.inventory-editor-header h2,
+.inventory-editor-header p {
+  margin: 0;
+}
+
+.inventory-editor-header p {
+  margin-top: 3px;
+  color: var(--muted);
+}
+
+.inventory-editor-header button {
+  flex: 0 0 auto;
+  margin: 0;
+}
+
+.inventory-editor-content {
+  padding: 4px 22px 22px;
+}
+
+@media (max-width: 650px) {
+  .inventory-editor-dialog {
+    max-height: calc(100vh - 20px);
+  }
+
+  .inventory-editor-header {
+    padding: 14px 16px;
+  }
+
+  .inventory-editor-content {
+    padding: 2px 16px 18px;
+  }
+}
+
 .intake-rule-editor.reviewing-suggestion {
   border: 2px solid var(--sage-dark);
   box-shadow: 0 0 0 3px rgba(83, 108, 101, 0.12);

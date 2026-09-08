@@ -62,3 +62,10 @@ test("inventory selection queues labels instead of generating a PDF immediately"
   assert.match(appSource, /Remove from Queue/);
   assert.match(appSource, /Remove Visible from Queue/);
 });
+
+test("inventory editing opens in a modal instead of scrolling the page", () => {
+  assert.match(appSource, /className="inventory-action-backdrop inventory-editor-backdrop"/);
+  assert.match(appSource, /className="card inventory-editor inventory-editor-dialog"/);
+  assert.match(appSource, /aria-labelledby="inventory-editor-title"/);
+  assert.doesNotMatch(appSource, /inventoryEditorRef\.current\?\.scrollIntoView/);
+});

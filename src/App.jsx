@@ -502,6 +502,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const handledCoverFilesRef = useRef(new WeakSet());
   const inventoryEditorRef = useRef(null);
   const inventoryEditorTitleRef = useRef(null);
+  const inventoryEditorTriggerRef = useRef(null);
   const inventorySearchInputRef = useRef(null);
   const lastSelectedInventoryItemRef = useRef(null);
   const catalogSearchInputRef = useRef(null);
@@ -807,6 +808,23 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   useEffect(() => {
     if (view === "requests" && isAuthenticated) loadCustomerRequestData();
   }, [view, isAuthenticated]);
+
+  useEffect(() => {
+    if (!editingItem) return;
+
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") cancelEditing();
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [editingItem]);
 
   useEffect(() => {
     const isbn = normalizeIsbn(bookData?.isbn);
@@ -4665,8 +4683,7 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
         component_ids: componentIds,
         release_errors: releaseErrors,
       });
-      setEditingItem(null);
-      setEditData(null);
+      cancelEditing();
       await loadItems();
 
       if (releaseErrors.length > 0) {
@@ -5291,6 +5308,7 @@ try {
 } 
 
   function startEditing(item) {
+    inventoryEditorTriggerRef.current = document.activeElement;
     setEditingItem(item);
     setEditData({
       ...item,
@@ -5300,8 +5318,7 @@ try {
     setEditCoverFile(null);
     setEditCoverPreview(null);
     window.setTimeout(() => {
-      inventoryEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-      inventoryEditorTitleRef.current?.focus({ preventScroll: true });
+      inventoryEditorTitleRef.current?.focus();
     }, 0);
   }
 
@@ -5310,6 +5327,7 @@ try {
     setEditData(null);
     setEditCoverFile(null);
     setEditCoverPreview(null);
+    window.setTimeout(() => inventoryEditorTriggerRef.current?.focus?.(), 0);
   }
 
 async function deleteItem() {
@@ -5408,8 +5426,7 @@ async function deleteItem() {
     });
   }
 
-  setEditingItem(null);
-  setEditData(null);
+  cancelEditing();
   loadItems();
 }
 
@@ -5654,8 +5671,7 @@ async function updateItem() {
       : "Item updated!"
   );
 
-  setEditingItem(null);
-  setEditData(null);
+  cancelEditing();
   loadItems();
 }
 
@@ -8973,8 +8989,29 @@ function renderUserManagement() {
 
 
           {editData && (
-            <section ref={inventoryEditorRef} className="card inventory-editor">
-              <h2>Edit Item</h2>
+            <div
+              className="inventory-action-backdrop inventory-editor-backdrop"
+              role="presentation"
+              onMouseDown={cancelEditing}
+            >
+            <section
+              ref={inventoryEditorRef}
+              className="card inventory-editor inventory-editor-dialog"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="inventory-editor-title"
+              onMouseDown={(event) => event.stopPropagation()}
+            >
+              <div className="inventory-editor-header">
+                <div>
+                  <h2 id="inventory-editor-title">Edit Item</h2>
+                  <p>{editingItem?.title || "Untitled item"}</p>
+                </div>
+                <button type="button" className="secondary" onClick={cancelEditing} aria-label="Close item editor">
+                  Close
+                </button>
+              </div>
+              <div className="inventory-editor-content">
               {editingItem?.item_type === "bundle" && (
                 <div className="bundle-editor-summary">
                   <strong>Bundle · {editingItem.bundle_piece_count || 0} pieces</strong>
@@ -9295,7 +9332,9 @@ function renderUserManagement() {
             <button className="danger" onClick={deleteItem}>
               {isAdmin ? "Delete Item" : "Remove Item"}
             </button>
+              </div>
             </section>
+            </div>
           )}
 
           <div className="inventory-mobile-tools" aria-label="Inventory tools">
