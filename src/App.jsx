@@ -49,6 +49,7 @@ import {
   totalSoldCopies,
 } from "./inventoryDisplay.js";
 import { normalizeIsbn } from "./curriculumMatching.js";
+import LocationInventoryWorkspace from "./LocationInventoryWorkspace.jsx";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -92,7 +93,7 @@ const LEGACY_PUBLIC_CATALOG_COLUMNS = [
   "bundle_contents",
 ].join(",");
 
-const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "requests", "users", "connections"]);
+const INTERNAL_VIEWS = new Set(["add", "inventory", "locations", "labels", "options", "requests", "users", "connections"]);
 const PASSWORD_MIN_LENGTH = 10;
 const INTAKE_LEARNING_FIELDS = [
   "title",
@@ -167,6 +168,12 @@ function StaffNavIcon({ name }) {
         <path d="m4 7 8-4 8 4-8 4-8-4Z" />
         <path d="m4 7 8 4 8-4v10l-8 4-8-4V7Z" />
         <path d="M12 11v10" />
+      </>
+    ),
+    locations: (
+      <>
+        <path d="M4 6h16v12H4z" />
+        <path d="M8 6v12M12 6v12M16 6v12M4 10h16M4 14h16" />
       </>
     ),
     team: (
@@ -5346,9 +5353,7 @@ async function deleteItem() {
   }
 
   const confirmed = confirm(
-    isAdmin
-      ? `Delete "${editingItem.title}" from inventory? This cannot be undone.`
-      : `Remove "${editingItem.title}" from active inventory? This will archive it in Square and keep the record.`
+    `Remove "${editingItem.title}" from active inventory? Stock will be removed by location, Square will be archived when linked, and history will be preserved.`
   );
 
   if (!confirmed) return;
@@ -5378,53 +5383,22 @@ async function deleteItem() {
   }
 }
 
-  if (isAdmin) {
-    const { data, error } = await supabase
-      .from("items")
-      .delete()
-      .eq("id", editingItem.id)
-      .select();
+  const { error } = await supabase.rpc("archive_inventory_item", {
+    p_item_id: String(editingItem.id),
+    p_notes: "Removed from the inventory editor.",
+  });
 
-    if (error) {
-      alert("Delete failed: " + error.message);
-      return;
-    }
-
-    if (!data || data.length === 0) {
-      alert(
-        "Delete did not remove anything. This is usually a Supabase Row Level Security policy issue."
-      );
-      return;
-    }
-
-    alert("Item deleted!");
-
-    await logAudit("inventory_item_deleted", "item", editingItem.id, {
-      title: editingItem.title,
-      square_item_id: editingItem.square_item_id || null,
-    });
-  } else {
-    const { error } = await supabase
-      .from("items")
-      .update({
-        status: "Removed",
-        public_visible: false,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", editingItem.id);
-
-    if (error) {
-      alert("Remove failed: " + error.message);
-      return;
-    }
-
-    alert("Item marked Removed!");
-
-    await logAudit("inventory_item_removed", "item", editingItem.id, {
-      title: editingItem.title,
-      square_item_id: editingItem.square_item_id || null,
-    });
+  if (error) {
+    alert("Remove failed: " + error.message);
+    return;
   }
+
+  alert("Item removed from active inventory and preserved in history.");
+
+  await logAudit("inventory_item_removed", "item", editingItem.id, {
+    title: editingItem.title,
+    square_item_id: editingItem.square_item_id || null,
+  });
 
   cancelEditing();
   loadItems();
@@ -7800,6 +7774,21 @@ function renderUserManagement() {
 
             <button
               type="button"
+              className={`staff-nav-link ${view === "locations" ? "active" : ""}`}
+              aria-current={view === "locations" ? "page" : undefined}
+              title={staffSidebarCollapsed ? "Scan & Locate" : undefined}
+              onClick={() => {
+                setView("locations");
+                cancelEditing();
+                loadItems();
+              }}
+            >
+              <StaffNavIcon name="locations" />
+              <span className="staff-nav-label">Scan & Locate</span>
+            </button>
+
+            <button
+              type="button"
               className={`staff-nav-link staff-nav-subitem ${view === "labels" ? "active" : ""}`}
               aria-current={view === "labels" ? "page" : undefined}
               title={staffSidebarCollapsed ? "Print Labels" : undefined}
@@ -7925,6 +7914,19 @@ function renderUserManagement() {
           >
             <StaffNavIcon name="inventory" />
             <span>Inventory</span>
+          </button>
+          <button
+            type="button"
+            className={view === "locations" ? "active" : ""}
+            aria-current={view === "locations" ? "page" : undefined}
+            onClick={() => {
+              setView("locations");
+              cancelEditing();
+              loadItems();
+            }}
+          >
+            <StaffNavIcon name="locations" />
+            <span>Scan</span>
           </button>
           <button
             type="button"
@@ -8820,6 +8822,10 @@ function renderUserManagement() {
             workflowService={connectionsWorkflowService}
           />
         )}
+
+      {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "locations" && (
+        <LocationInventoryWorkspace items={items} onInventoryChanged={loadItems} />
+      )}
 
       {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "inventory" && (
         <section className="card">
