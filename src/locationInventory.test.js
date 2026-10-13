@@ -5,6 +5,7 @@ import {
   buildAuditDiscrepancies,
   chooseShelvingRecommendation,
   classifyScan,
+  createCameraDuplicateGate,
   totalLocationQuantity,
 } from "./locationInventory.js";
 
@@ -40,4 +41,12 @@ test("exact SKU recommendation outranks curriculum and fallback", () => {
 test("curriculum recommendation is used when the SKU has no shelf", () => {
   const result = chooseShelvingRecommendation({ exact: [], curriculum: [{ code: "F2" }] });
   assert.equal(result.code, "F2");
+});
+
+test("camera suppresses repeated frames without suppressing later intentional scans", () => {
+  const gate = createCameraDuplicateGate(1000);
+  assert.equal(gate.shouldAccept("9781608260102", 100), true);
+  assert.equal(gate.shouldAccept("9781608260102", 250), false);
+  assert.equal(gate.shouldAccept("9781608260102", 1200), true);
+  assert.equal(gate.shouldAccept("LOCATION:A2", 1250), true);
 });

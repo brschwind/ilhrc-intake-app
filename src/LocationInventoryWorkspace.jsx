@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient.js";
 import { classifyScan, totalLocationQuantity } from "./locationInventory.js";
+import CameraBarcodeScanner from "./CameraBarcodeScanner.jsx";
 
 const MODES = [
   { id: "intake", label: "Intake", help: "Add each scanned copy to Processing." },
@@ -28,13 +29,16 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
   const [locationId, setLocationId] = useState("");
   const [scanValue, setScanValue] = useState("");
   const [recent, setRecent] = useState([]);
+  const [scanCount, setScanCount] = useState(0);
   const [pending, setPending] = useState(null);
   const [recommendations, setRecommendations] = useState([]);
   const [unknownScan, setUnknownScan] = useState("");
   const [quickTitle, setQuickTitle] = useState("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [auditReview, setAuditReview] = useState([]);
+  const [auditReviewed, setAuditReviewed] = useState(false);
   const [search, setSearch] = useState("");
   const [moveDraft, setMoveDraft] = useState({ itemId: "", from: "", to: "", quantity: 1 });
   const [adjustDraft, setAdjustDraft] = useState({ itemId: "", location: "", delta: 1, notes: "" });
@@ -108,7 +112,9 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     if (error) throw error;
     setSession(data);
     setRecent([]);
+    setScanCount(0);
     setAuditReview([]);
+    setAuditReviewed(false);
     return data;
   }
 
@@ -130,27 +136,33 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     });
     if (error) throw error;
     setRecent((current) => [{ id: eventId(), item, raw }, ...current].slice(0, 12));
+    setScanCount((current) => current + 1);
+    setAuditReview([]);
+    setAuditReviewed(false);
     setMessage(`${item.title || "Untitled item"} scanned successfully.`);
     await refresh();
   }
 
-  async function handleScan(event) {
-    event.preventDefault();
-    const parsed = classifyScan(scanValue);
+  async function processScan(rawValue, source = "manual") {
+    const parsed = classifyScan(rawValue);
     if (!parsed.raw || busy) return;
     setBusy(true);
     setMessage("");
     try {
       if (parsed.kind === "location") {
+        if (mode === "intake") throw new Error("This is a shelf code. Switch to Shelving or Shelf Audit before selecting a shelf.");
         const location = locations.find((candidate) => candidate.code === parsed.code);
         if (!location) throw new Error(`Location ${parsed.code} is not active.`);
         if (session?.mode === "shelf_audit" && session.location_id !== location.id) {
           throw new Error("Finish or cancel the current shelf audit before switching shelves.");
         }
         setLocationId(location.id);
-        setMessage(`${location.display_name} selected.`);
+        setMessage(`${location.display_name} selected${source === "camera" ? " with the camera" : ""}.`);
         return;
       }
+
+      if (pending) throw new Error("Approve or cancel the current shelving scan before scanning another book.");
+      if (unknownScan) throw new Error("Complete or cancel Quick Add before scanning another book.");
 
       const item = await lookupItem(parsed.raw);
       if (!item) {
@@ -176,6 +188,11 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
       setScanValue("");
       setTimeout(() => inputRef.current?.focus(), 0);
     }
+  }
+
+  async function handleScan(event) {
+    event.preventDefault();
+    await processScan(scanValue, "manual");
   }
 
   async function approveShelving(destinationId = locationId, discover = false) {
@@ -242,6 +259,9 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     if (error) setMessage(error.message);
     else {
       setRecent((current) => current.slice(1));
+      setScanCount((current) => Math.max(0, current - 1));
+      setAuditReview([]);
+      setAuditReviewed(false);
       setMessage("Most recent scan undone.");
       await refresh();
     }
@@ -252,7 +272,10 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     if (!session) return;
     const { data, error } = await supabase.rpc("review_shelf_audit", { p_session_id: session.id });
     if (error) setMessage(error.message);
-    else setAuditReview(data || []);
+    else {
+      setAuditReview(data || []);
+      setAuditReviewed(true);
+    }
   }
 
   async function reconcileAudit() {
@@ -262,7 +285,7 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     if (error) setMessage(error.message);
     else {
       setMessage(`Shelf verified. ${data} discrepanc${data === 1 ? "y" : "ies"} reconciled.`);
-      setSession(null); setRecent([]); setAuditReview([]); await refresh();
+      setCameraOpen(false); setSession(null); setRecent([]); setScanCount(0); setAuditReview([]); setAuditReviewed(false); await refresh();
     }
     setBusy(false);
   }
@@ -272,7 +295,7 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     if (!confirm("Cancel this session? Shelf-audit observations will not change inventory.")) return;
     const { error } = await supabase.rpc("cancel_inventory_scan_session", { p_session_id: session.id });
     if (error) setMessage(error.message);
-    else { setSession(null); setRecent([]); setAuditReview([]); setMessage("Session cancelled safely."); }
+    else { setCameraOpen(false); setSession(null); setRecent([]); setScanCount(0); setAuditReview([]); setAuditReviewed(false); setMessage("Session cancelled safely."); }
   }
 
   async function completeSession() {
@@ -281,7 +304,9 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     if (error) setMessage(error.message);
     else {
       setSession(null);
+      setCameraOpen(false);
       setRecent([]);
+      setScanCount(0);
       setMessage("Session completed.");
       await refresh();
     }
@@ -349,7 +374,7 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
       </header>
 
       <div className="scan-mode-grid" aria-label="Scan mode">
-        {MODES.map((option) => <button key={option.id} className={mode === option.id ? "active" : ""} disabled={Boolean(session)} onClick={() => { setMode(option.id); setMessage(""); }}><strong>{option.label}</strong><span>{option.help}</span></button>)}
+        {MODES.map((option) => <button key={option.id} className={mode === option.id ? "active" : ""} disabled={Boolean(session)} onClick={() => { setCameraOpen(false); setMode(option.id); setMessage(""); }}><strong>{option.label}</strong><span>{option.help}</span></button>)}
       </div>
 
       <section className={`scan-console scan-console-${mode}`}>
@@ -358,16 +383,18 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
           {(mode === "shelving" || mode === "shelf_audit") && <label>Current shelf<select value={locationId} disabled={session?.mode === "shelf_audit"} onChange={(event) => setLocationId(event.target.value)}><option value="">Scan or choose shelf</option>{locations.filter((location) => ["shelf", "display", "overflow", "needs_review"].includes(location.location_type)).map((location) => <option key={location.id} value={location.id}>{location.code} — {location.display_name}</option>)}</select></label>}
           {selectedLocation && mode !== "intake" && <div className="selected-shelf"><small>DESTINATION</small><strong>{selectedLocation.code}</strong><span>{selectedLocation.display_name}</span></div>}
         </div>
-        <form className="scan-entry" onSubmit={handleScan}><input ref={inputRef} autoFocus value={scanValue} onChange={(event) => setScanValue(event.target.value)} placeholder="Scan ISBN, SKU, barcode, or LOCATION:A1" aria-label="Scan value"/><button className="primary" disabled={busy}>Record scan</button></form>
-        <div className="scan-session-actions"><span>{recent.length} scans this session</span><button className="secondary" disabled={!recent.length || busy} onClick={undoLastScan}>Undo last</button><button className="secondary" disabled={!session || busy} onClick={cancelSession}>Cancel session</button>{mode === "shelf_audit" ? <button className="primary" disabled={!session || busy} onClick={reviewAudit}>Review count</button> : <button className="primary" disabled={!session || busy} onClick={completeSession}>Finish session</button>}</div>
+        <form className="scan-entry" onSubmit={handleScan}><input ref={inputRef} autoFocus value={scanValue} onChange={(event) => setScanValue(event.target.value)} placeholder="Scan ISBN, SKU, barcode, or LOCATION:A1" aria-label="Scan value"/><button className="primary" disabled={busy}>Record scan</button><button type="button" className="secondary camera-start" disabled={cameraOpen} onClick={() => setCameraOpen(true)}>Scan with Camera</button></form>
+        <CameraBarcodeScanner active={cameraOpen} onDetected={processScan} onClose={() => setCameraOpen(false)} onError={setMessage}/>
+        <div className="scan-session-actions"><span>{scanCount} scans this session</span><button className="secondary" disabled={!scanCount || busy} onClick={undoLastScan}>Undo last</button><button className="secondary" disabled={!session || busy} onClick={cancelSession}>Cancel session</button>{mode === "shelf_audit" ? <button className="primary" disabled={!session || busy} onClick={reviewAudit}>Review count</button> : <button className="primary" disabled={!session || busy} onClick={completeSession}>Finish session</button>}</div>
         {message && <p className="scan-message" role="status">{message}</p>}
+        {recent.length > 0 && <div className="recent-scans" aria-label="Recently scanned books"><strong>Recently scanned</strong><ol>{recent.map((entry) => <li key={entry.id}><span>{entry.item.title || "Untitled item"}</span><small>{entry.item.sku || entry.raw}</small></li>)}</ol></div>}
       </section>
 
       {pending && <section className="scan-approval-card"><h3>Approve destination</h3><p><strong>{pending.item.title}</strong> · {pending.item.sku}</p>{recommendations.map((recommendation, index) => <button key={recommendation.location_id} className={index === 0 ? "recommendation recommended" : "recommendation"} onClick={() => approveShelving(recommendation.location_id)}><strong>{index === 0 ? "Recommended: " : "Option: "}{recommendation.code}</strong><span>{recommendation.reason}</span></button>)}<button className="primary" disabled={!locationId} onClick={() => approveShelving(locationId)}>Approve selected shelf {selectedLocation?.code}</button><button className="secondary" disabled={!locationId} onClick={() => approveShelving(locationId, true)}>Document another copy here</button><button className="secondary" onClick={() => setPending(null)}>Cancel this scan</button></section>}
 
       {unknownScan && <section className="quick-add-card"><h3>Quick Add</h3><p>Barcode: <strong>{unknownScan}</strong></p><label>Title<input value={quickTitle} onChange={(event) => setQuickTitle(event.target.value)} placeholder="Minimum title" /></label><p>The record will stay hidden publicly and marked for catalog review.</p><button className="primary" disabled={!quickTitle.trim() || busy} onClick={quickAdd}>Create and count this copy</button><button className="secondary" onClick={() => setUnknownScan("")}>Cancel</button></section>}
 
-      {auditReview.length > 0 && <section className="audit-review"><h3>{selectedLocation?.code} discrepancy review</h3><div className="audit-table"><div className="audit-row audit-heading"><span>Book</span><span>Expected</span><span>Observed</span><span>Difference</span></div>{auditReview.map((row) => <div className="audit-row" key={row.item_id}><span>{itemById[row.item_id]?.title || row.item_id}</span><span>{row.expected_quantity}</span><span>{row.observed_quantity}</span><strong className={row.difference ? "difference" : ""}>{row.difference > 0 ? "+" : ""}{row.difference}</strong></div>)}</div><button className="primary" onClick={reconcileAudit}>Approve reconciliation</button></section>}
+      {auditReviewed && <section className="audit-review"><h3>{selectedLocation?.code} discrepancy review</h3>{auditReview.length > 0 ? <div className="audit-table"><div className="audit-row audit-heading"><span>Book</span><span>Expected</span><span>Observed</span><span>Difference</span></div>{auditReview.map((row) => <div className="audit-row" key={row.item_id}><span>{itemById[row.item_id]?.title || row.item_id}</span><span>{row.expected_quantity}</span><span>{row.observed_quantity}</span><strong className={row.difference ? "difference" : ""}>{row.difference > 0 ? "+" : ""}{row.difference}</strong></div>)}</div> : <p>No books are expected or observed on this shelf. Approving will verify the shelf as empty.</p>}<button className="primary" onClick={reconcileAudit}>Approve reconciliation</button></section>}
 
       <div className="location-inventory-columns">
         <section className="card"><h3>Move Stock</h3><form className="move-stock-form" onSubmit={moveStock}><label>SKU / ISBN<input value={moveDraft.itemId} onChange={(event) => setMoveDraft({ ...moveDraft, itemId: event.target.value })}/></label><label>From<select value={moveDraft.from} onChange={(event) => setMoveDraft({ ...moveDraft, from: event.target.value })}><option value="">Choose source</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.code}</option>)}</select></label><label>To<select value={moveDraft.to} onChange={(event) => setMoveDraft({ ...moveDraft, to: event.target.value })}><option value="">Choose destination</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.code}</option>)}</select></label><label>Copies<input type="number" min="1" value={moveDraft.quantity} onChange={(event) => setMoveDraft({ ...moveDraft, quantity: event.target.value })}/></label><button className="primary" disabled={!moveDraft.itemId || !moveDraft.from || !moveDraft.to}>Move atomically</button></form><details className="manual-adjustment"><summary>Manual location adjustment</summary><form onSubmit={adjustStock}><label>SKU / ISBN<input value={adjustDraft.itemId} onChange={(event) => setAdjustDraft({ ...adjustDraft, itemId: event.target.value })}/></label><label>Location<select value={adjustDraft.location} onChange={(event) => setAdjustDraft({ ...adjustDraft, location: event.target.value })}><option value="">Choose location</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.code}</option>)}</select></label><label>Change (+/−)<input type="number" value={adjustDraft.delta} onChange={(event) => setAdjustDraft({ ...adjustDraft, delta: event.target.value })}/></label><label>Reason<input value={adjustDraft.notes} onChange={(event) => setAdjustDraft({ ...adjustDraft, notes: event.target.value })}/></label><button className="secondary" disabled={!adjustDraft.itemId || !adjustDraft.location || Number(adjustDraft.delta) === 0}>Apply adjustment</button></form></details></section>

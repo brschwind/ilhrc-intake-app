@@ -8,6 +8,12 @@ function parseSquareQuantity(value) {
   return Number.isSafeInteger(quantity) ? quantity : null;
 }
 
+function squareAvailableQuantity(sellableQuantity, activeSquareHolds = 0) {
+  const sellable = Math.max(Number(sellableQuantity) || 0, 0);
+  const holds = Math.max(Number(activeSquareHolds) || 0, 0);
+  return Math.max(sellable - holds, 0);
+}
+
 function variationsWithoutInventoryTracking(objects, variationIds) {
   const requested = new Set(variationIds || []);
   return (objects || []).filter((object) => (
@@ -144,6 +150,7 @@ module.exports = {
   catalogVariationWithInventoryTracking,
   inventoryCountsFromEvent,
   parseSquareQuantity,
+  squareAvailableQuantity,
   soldQuantitiesByVariation,
   squareSalesPayloadFromOrders,
   startOfDayInTimeZone,

@@ -1,4 +1,24 @@
 export const LOCATION_SCAN_PREFIX = "LOCATION:";
+export const CAMERA_DUPLICATE_SUPPRESSION_MS = 1800;
+
+export function createCameraDuplicateGate(suppressionMs = CAMERA_DUPLICATE_SUPPRESSION_MS) {
+  let lastValue = "";
+  let lastAcceptedAt = 0;
+  return {
+    shouldAccept(rawValue, now = Date.now()) {
+      const value = String(rawValue || "").trim();
+      if (!value) return false;
+      if (value === lastValue && now - lastAcceptedAt < suppressionMs) return false;
+      lastValue = value;
+      lastAcceptedAt = now;
+      return true;
+    },
+    reset() {
+      lastValue = "";
+      lastAcceptedAt = 0;
+    },
+  };
+}
 
 export function classifyScan(rawValue) {
   const raw = String(rawValue || "").trim();
@@ -45,4 +65,3 @@ export function chooseShelvingRecommendation({ exact = [], curriculum = [], fall
   const ranked = [exact, curriculum, fallback].find((group) => group?.length);
   return ranked?.[0] || needsReview || null;
 }
-

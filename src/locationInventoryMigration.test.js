@@ -138,3 +138,17 @@ test("an empty audit zeros the audited shelf and exact SKU recommendations take 
   assert.equal(Number(await scalar(db, "select quantity from public.items where id='book'")), 0);
   await db.close();
 });
+
+test("completed sessions cannot undo already committed scans", async () => {
+  const db = await database();
+  await db.exec("insert into public.items (id, sku, title, quantity) values ('book','SKU-4','Committed Book',0)");
+  const intake = await scalar(db, "select id from public.start_inventory_scan_session('intake', null)");
+  await db.query("select public.record_inventory_scan($1,'book','SKU-4','committed-scan',null,false)", [intake]);
+  await db.query("select public.complete_inventory_scan_session($1)", [intake]);
+  await assert.rejects(
+    db.query("select public.undo_last_inventory_scan($1)", [intake]),
+    /Active scan session not found/
+  );
+  assert.equal(Number(await scalar(db, "select total_quantity from public.inventory_item_totals where item_id='book'")), 1);
+  await db.close();
+});

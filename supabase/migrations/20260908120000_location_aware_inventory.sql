@@ -554,6 +554,7 @@ declare scan_session public.inventory_scan_sessions; scan_event public.inventory
 begin
   if not public.current_profile_is_active() then raise exception 'Active staff access required.'; end if;
   select * into scan_session from public.inventory_scan_sessions where id = p_session_id and status = 'active' for update;
+  if not found then raise exception 'Active scan session not found.'; end if;
   select * into scan_event from public.inventory_scan_events
   where session_id = p_session_id and undone_at is null order by created_at desc limit 1 for update;
   if not found then raise exception 'There is no scan to undo.'; end if;

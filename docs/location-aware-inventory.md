@@ -27,6 +27,8 @@ Database functions implement staff authorization and transactions for scan looku
 
 The removal action now zeros each known location, records removal events, and archives the catalog record instead of deleting it. Existing inventory history remains intact.
 
+The second-phase migration also converts the remaining quantity writers. Partial bundle extraction transfers the selected copies while preserving their current locations. Bundle assembly consumes every required component atomically and places the completed set in Processing; splitting reverses that ownership and returns the individual components to Processing for deliberate reshelving. ISBN consolidation moves each duplicate's per-location quantities to the surviving record before removing the duplicate catalog rows.
+
 ## Staff UI
 
 The new **Scan & Locate** workspace provides:
@@ -34,9 +36,11 @@ The new **Scan & Locate** workspace provides:
 - distinct Intake, Shelving, and Shelf Audit modes;
 - a prominent destination shelf and `LOCATION:A1` parsing;
 - duplicate scan counting, recent scans, session count, undo, and safe cancellation;
+- rear-camera barcode scanning with hardware-scanner and manual-entry fallbacks;
 - Quick Add with generated SKU, hidden public state, and incomplete-metadata marker;
 - staff-approved shelving recommendations with reasons and override history;
 - expected/observed/difference review before shelf reconciliation;
+- empty-shelf review and reconciliation, including a clear confirmation that the shelf will be verified as empty;
 - explicit atomic Move Stock and manual adjustment controls;
 - books-awaiting-shelving count, shelf verification state, and shelf creation;
 - title/ISBN/SKU/curriculum/publisher/location search with totals and all locations;
@@ -53,12 +57,13 @@ All new tables use row-level security. Active `admin` and `team` profiles may sc
 ## Automated coverage
 
 Tests cover duplicate intake scans, multi-location totals, Processing-to-shelf shelving, discovering another location, valid and invalid moves, duplicate audit scans, audit reduction, missing-item zeroing, cross-shelf isolation, verification timestamps, audit history, recommendation priority, stable location scan parsing, and non-destructive removal.
+They also cover rejection of undo attempts after a session is completed and guard the empty-shelf audit approval path in the staff workspace.
+Second-phase tests cover atomic bundle rollback, partial-copy extraction, bundle splitting into Processing, and per-location ISBN consolidation.
 
 ## Known transition limitations
 
-- `items.quantity` and `items.location` cannot be dropped yet because Square, reservation, bundle, label, and public-catalog code still consumes them. They are derived compatibility fields, and the migration prevents them from silently disagreeing with location totals.
+- `items.quantity` and `items.location` cannot be dropped yet because some display, label, and transition code still reads them. They are derived compatibility fields; all active quantity writers now mutate `inventory_by_location` through database operations instead of treating these cache fields as authoritative.
 - Square knows the store but not the shelf. While unverified legacy stock remains, legacy Square decrements consume that pool. Once a SKU is fully shelf-verified, an unlocated Square decrement is intentionally rejected instead of guessing a shelf. A later checkout/removal workflow must capture the source shelf before the compatibility bridge can be removed.
-- The scan field is optimized for keyboard-emulating barcode scanners and phone/tablet input. It does not yet reuse the app's camera barcode overlay.
 - Existing `location_options` remains for old screens during transition. New inventory locations are managed in Scan & Locate; a later cleanup can retire the old dropdown after every writer is migrated.
 
 ## Staging validation
