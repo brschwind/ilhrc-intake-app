@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -156,5 +156,6 @@ select
   'Both migrations and all inventory assertions succeeded; transaction rolled back.'::text as details;
 `;
 
+await mkdir(path.dirname(outputPath), { recursive: true });
 await writeFile(outputPath, rehearsal, "utf8");
 console.log(`${outputPath}\n${Buffer.byteLength(rehearsal)} bytes`);

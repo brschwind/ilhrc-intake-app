@@ -354,7 +354,7 @@ async function prepareSquareAvailableQuantity(squareVariationId, physicalQuantit
 
   const { data: availability, error: availabilityError } = await supabaseAdmin
     .from("inventory_item_availability")
-    .select("sellable_quantity")
+    .select("catalog_sellable_quantity")
     .eq("item_id", String(item.id))
     .single();
   if (availabilityError) throw availabilityError;
@@ -369,7 +369,10 @@ async function prepareSquareAvailableQuantity(squareVariationId, physicalQuantit
     .is("square_hold_released_at", null);
   if (holdError) throw holdError;
 
-  const availableQuantity = squareAvailableQuantity(availability.sellable_quantity, count);
+  const availableQuantity = squareAvailableQuantity(
+    availability.catalog_sellable_quantity,
+    count
+  );
   const { error: expectationError } = await supabaseAdmin
     .from("items")
     .update({ square_expected_quantity: availableQuantity })
@@ -410,11 +413,11 @@ async function synchronizeSquareReservationAvailability(requestedItemIds = null)
   const itemIds = itemsToSync.map((item) => String(item.id));
   const { data: availabilityRows, error: availabilityError } = await supabaseAdmin
     .from("inventory_item_availability")
-    .select("item_id,sellable_quantity")
+    .select("item_id,catalog_sellable_quantity")
     .in("item_id", itemIds);
   if (availabilityError) throw availabilityError;
   const sellableByItem = new Map((availabilityRows || []).map((row) => [
-    String(row.item_id), Number(row.sellable_quantity || 0),
+    String(row.item_id), Number(row.catalog_sellable_quantity || 0),
   ]));
   const { data: holds, error: holdError } = await supabaseAdmin
     .from("book_reservations")
