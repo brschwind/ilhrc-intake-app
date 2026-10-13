@@ -4,11 +4,17 @@ const {
   catalogVariationWithInventoryTracking,
   inventoryCountsFromEvent,
   parseSquareQuantity,
+  squareAvailableQuantity,
   soldQuantitiesByVariation,
   squareSalesPayloadFromOrders,
   startOfDayInTimeZone,
   variationsWithoutInventoryTracking,
 } = require("./squareInventorySync");
+
+test("Square outbound quantity uses sellable stock minus synchronized holds", () => {
+  assert.equal(squareAvailableQuantity(7, 2), 5);
+  assert.equal(squareAvailableQuantity(1, 3), 0);
+});
 
 test("accepts whole Square inventory quantities, including oversold counts", () => {
   assert.equal(parseSquareQuantity("0"), 0);

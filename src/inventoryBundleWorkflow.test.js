@@ -20,6 +20,14 @@ test("inventory and curriculum workflows can create and split bundles", () => {
   assert.match(appSource, /Split Bundle into Individual Listings/);
 });
 
+test("bundle quantity changes use location-aware database operations", () => {
+  assert.match(appSource, /"split_inventory_item_for_bundle"/);
+  assert.match(appSource, /"assemble_inventory_bundle"/);
+  assert.match(appSource, /"split_inventory_bundle"/);
+  assert.match(appSource, /"archive_inventory_items"/);
+  assert.doesNotMatch(appSource, /\.from\("items"\)\s*\.delete\(\)\s*\.in\("id", selectedItemIds\)/s);
+});
+
 test("intake supports camera and hardware publisher scans", () => {
   assert.match(appSource, /Scan Publisher Number/);
   assert.match(appSource, /Camera or Symbol scanner/);

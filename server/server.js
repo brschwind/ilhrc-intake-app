@@ -8,6 +8,7 @@ const {
   catalogVariationWithInventoryTracking,
   inventoryCountsFromEvent,
   soldQuantitiesByVariation,
+  squareAvailableQuantity,
   squareSalesPayloadFromOrders,
   startOfDayInTimeZone,
   variationsWithoutInventoryTracking,
@@ -351,6 +352,13 @@ async function prepareSquareAvailableQuantity(squareVariationId, physicalQuantit
     };
   }
 
+  const { data: availability, error: availabilityError } = await supabaseAdmin
+    .from("inventory_item_availability")
+    .select("catalog_sellable_quantity")
+    .eq("item_id", String(item.id))
+    .single();
+  if (availabilityError) throw availabilityError;
+
   const { count, error: holdError } = await supabaseAdmin
     .from("book_reservations")
     .select("id", { count: "exact", head: true })
@@ -361,7 +369,10 @@ async function prepareSquareAvailableQuantity(squareVariationId, physicalQuantit
     .is("square_hold_released_at", null);
   if (holdError) throw holdError;
 
-  const availableQuantity = Math.max(Number(physicalQuantity || 0) - Number(count || 0), 0);
+  const availableQuantity = squareAvailableQuantity(
+    availability.catalog_sellable_quantity,
+    count
+  );
   const { error: expectationError } = await supabaseAdmin
     .from("items")
     .update({ square_expected_quantity: availableQuantity })
@@ -390,7 +401,7 @@ async function synchronizeSquareReservationAvailability(requestedItemIds = null)
 
   let itemQuery = supabaseAdmin
     .from("items")
-    .select("id,square_variation_id,quantity,square_expected_quantity")
+    .select("id,square_variation_id,square_expected_quantity")
     .not("square_variation_id", "is", null);
   if (requestedItemIds?.length) {
     itemQuery = itemQuery.in("id", requestedItemIds);
@@ -400,6 +411,14 @@ async function synchronizeSquareReservationAvailability(requestedItemIds = null)
   if (!itemsToSync?.length) return { checked: 0, updated: 0 };
 
   const itemIds = itemsToSync.map((item) => String(item.id));
+  const { data: availabilityRows, error: availabilityError } = await supabaseAdmin
+    .from("inventory_item_availability")
+    .select("item_id,catalog_sellable_quantity")
+    .in("item_id", itemIds);
+  if (availabilityError) throw availabilityError;
+  const sellableByItem = new Map((availabilityRows || []).map((row) => [
+    String(row.item_id), Number(row.catalog_sellable_quantity || 0),
+  ]));
   const { data: holds, error: holdError } = await supabaseAdmin
     .from("book_reservations")
     .select("item_id")
@@ -418,9 +437,9 @@ async function synchronizeSquareReservationAvailability(requestedItemIds = null)
 
   let updated = 0;
   for (const item of itemsToSync) {
-    const desiredQuantity = Math.max(
-      Number(item.quantity || 0) - (holdCountByItem.get(String(item.id)) || 0),
-      0
+    const desiredQuantity = squareAvailableQuantity(
+      sellableByItem.get(String(item.id)) || 0,
+      holdCountByItem.get(String(item.id)) || 0
     );
     const previousExpected = item.square_expected_quantity;
     if (previousExpected !== null && Number(previousExpected) === desiredQuantity) continue;

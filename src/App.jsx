@@ -49,6 +49,8 @@ import {
   totalSoldCopies,
 } from "./inventoryDisplay.js";
 import { normalizeIsbn } from "./curriculumMatching.js";
+import LocationInventoryWorkspace from "./LocationInventoryWorkspace.jsx";
+import { formatLabelTitle } from "./labelTitle.js";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -92,7 +94,7 @@ const LEGACY_PUBLIC_CATALOG_COLUMNS = [
   "bundle_contents",
 ].join(",");
 
-const INTERNAL_VIEWS = new Set(["add", "inventory", "labels", "options", "requests", "users", "connections"]);
+const INTERNAL_VIEWS = new Set(["add", "inventory", "locations", "labels", "options", "requests", "users", "connections"]);
 const PASSWORD_MIN_LENGTH = 10;
 const INTAKE_LEARNING_FIELDS = [
   "title",
@@ -167,6 +169,12 @@ function StaffNavIcon({ name }) {
         <path d="m4 7 8-4 8 4-8 4-8-4Z" />
         <path d="m4 7 8 4 8-4v10l-8 4-8-4V7Z" />
         <path d="M12 11v10" />
+      </>
+    ),
+    locations: (
+      <>
+        <path d="M4 6h16v12H4z" />
+        <path d="M8 6v12M12 6v12M16 6v12M4 10h16M4 14h16" />
       </>
     ),
     team: (
@@ -825,6 +833,23 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [editingItem]);
+
+  useEffect(() => {
+    if (!reviewingSuggestionKey || optionsSection !== "review") return;
+
+    const previousOverflow = document.body.style.overflow;
+    const closeOnEscape = (event) => {
+      if (event.key === "Escape") resetIntakeRuleDraft();
+    };
+
+    document.body.style.overflow = "hidden";
+    window.addEventListener("keydown", closeOnEscape);
+
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [reviewingSuggestionKey, optionsSection]);
 
   useEffect(() => {
     const isbn = normalizeIsbn(bookData?.isbn);
@@ -1674,10 +1699,8 @@ function approveRuleSuggestion(suggestion) {
     actions: { ...EMPTY_INTAKE_RULE.actions, ...suggestion.actions },
   });
   setIntakeRuleMessage("Review the suggested rule, then select Create Rule to approve it.");
-  setOptionsSection("rules");
   window.setTimeout(() => {
-    intakeRuleEditorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    intakeRuleNameRef.current?.focus({ preventScroll: true });
+    intakeRuleNameRef.current?.focus();
   }, 0);
 }
 
@@ -2805,9 +2828,8 @@ async function bulkDeleteSelected() {
     return;
   }
 
-  const actionLabel = isAdmin ? "Delete" : "Remove";
   const confirmed = window.confirm(
-    `${actionLabel} ${selectedItemIds.length} selected item(s)? This will also archive them in Square.`
+    `Remove ${selectedItemIds.length} selected item(s)? This will also archive them in Square while preserving inventory history.`
   );
 
   if (!confirmed) return;
@@ -2845,57 +2867,22 @@ async function bulkDeleteSelected() {
       }
     }
 
-    if (isAdmin) {
-      const { error } = await supabase
-        .from("items")
-        .delete()
-        .in("id", selectedItemIds);
+    const { error } = await supabase.rpc("archive_inventory_items", {
+      p_item_ids: selectedItemIds.map(String),
+      p_notes: "Removed through the bulk inventory action.",
+    });
+    if (error) throw error;
 
-      if (error) throw error;
-
-      setItems((prev) =>
-        prev.filter((item) => !selectedItemIds.includes(item.id))
-      );
-
-      await logAudit("inventory_bulk_delete", "items", null, {
-        count: selectedItemIds.length,
-        item_ids: selectedItemIds,
-      });
-    } else {
-      const removedAt = new Date().toISOString();
-      const { error } = await supabase
-        .from("items")
-        .update({
-          status: "Removed",
-          public_visible: false,
-          updated_at: removedAt,
-        })
-        .in("id", selectedItemIds);
-
-      if (error) throw error;
-
-      setItems((prev) =>
-        prev.map((item) =>
-          selectedItemIds.includes(item.id)
-            ? { ...item, status: "Removed", public_visible: false, updated_at: removedAt }
-            : item
-        )
-      );
-
-      await logAudit("inventory_bulk_removed", "items", null, {
-        count: selectedItemIds.length,
-        item_ids: selectedItemIds,
-      });
-    }
+    await logAudit("inventory_bulk_removed", "items", null, {
+      count: selectedItemIds.length,
+      item_ids: selectedItemIds,
+    });
 
     setSelectedItemIds([]);
     setBulkEditOpen(false);
 
-    alert(
-      isAdmin
-        ? "Selected items archived in Square and deleted."
-        : "Selected items archived in Square and marked Removed."
-    );
+    await loadItems();
+    alert("Selected items were removed from active inventory and preserved in location history.");
   } catch (err) {
   console.error("Bulk delete failed full error:", err);
 
@@ -4177,7 +4164,7 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
       category: item.category || "",
       suggested_price: item.suggested_price ?? null,
       final_price: item.final_price ?? null,
-      quantity,
+      quantity: 0,
       status: "Bundled",
       notes: item.notes || "",
       ai_confidence: item.ai_confidence ?? null,
@@ -4276,7 +4263,6 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
         const { error: updateError } = await supabase
           .from("items")
           .update({
-            quantity: remainingQuantity,
             label_printed: remainingLabels === 0,
             pending_label_quantity: remainingLabels,
             label_queued_at:
@@ -4285,6 +4271,24 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
           })
           .eq("id", currentItem.id);
         if (updateError) throw updateError;
+
+        const { data: transferredComponent, error: transferError } = await supabase.rpc(
+          "split_inventory_item_for_bundle",
+          {
+            p_source_item_id: String(currentItem.id),
+            p_component_item_id: String(splitComponent.id),
+            p_quantity: bundleQuantity,
+          }
+        );
+        if (transferError) throw transferError;
+
+        const materializedComponent = {
+          ...transferredComponent,
+          bundle_quantity: bundleQuantity,
+          retro_materialized: true,
+        };
+        materialized.push(materializedComponent);
+        rememberMaterializedComponent(component.id, materializedComponent);
       } catch (error) {
         if (squareInventoryChanged && currentItem.square_variation_id) {
           await authFetch("/update-square-inventory", {
@@ -4305,13 +4309,6 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
         bundled_quantity: bundleQuantity,
         remaining_quantity: remainingQuantity,
       });
-      const materializedComponent = {
-        ...splitComponent,
-        bundle_quantity: bundleQuantity,
-        retro_materialized: true,
-      };
-      materialized.push(materializedComponent);
-      rememberMaterializedComponent(component.id, materializedComponent);
     }
 
     return materialized;
@@ -4325,6 +4322,7 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
     ]);
     const componentToSave = {
       ...itemDraft,
+      quantity: 0,
       sku: newSku,
       image_url: imageUrl || bookData.image_url || "",
       status: "Bundled",
@@ -4343,23 +4341,39 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
 
     if (error) throw new Error(error.message);
 
+    const { error: receiveError } = await supabase.rpc("receive_inventory_to_processing", {
+      p_item_id: String(insertedItem.id),
+      p_quantity: Number(itemDraft.quantity || 1),
+      p_notes: "Bundle component received through intake.",
+    });
+    if (receiveError) {
+      await supabase.from("items").delete().eq("id", insertedItem.id);
+      throw new Error(receiveError.message);
+    }
+
+    const materializedItem = {
+      ...insertedItem,
+      quantity: Number(itemDraft.quantity || 1),
+      location: "Processing",
+    };
+
     await Promise.all([
-      saveOptionIfNew("curriculum_options", insertedItem.curriculum),
-      saveOptionIfNew("category_options", insertedItem.category),
+      saveOptionIfNew("curriculum_options", materializedItem.curriculum),
+      saveOptionIfNew("category_options", materializedItem.category),
     ]);
-    await recordIntakeHistory(insertedItem.id, insertedItem, false);
-    await logAudit("bundle_component_created", "item", insertedItem.id, {
-      title: insertedItem.title,
-      sku: insertedItem.sku,
+    await recordIntakeHistory(materializedItem.id, materializedItem, false);
+    await logAudit("bundle_component_created", "item", materializedItem.id, {
+      title: materializedItem.title,
+      sku: materializedItem.sku,
     });
 
     setBundleDraft((current) => ({
       ...current,
-      components: [...current.components, insertedItem],
+      components: [...current.components, materializedItem],
     }));
     clearSavedBook();
     await loadItems();
-    alert(`${insertedItem.title || "Book"} was added to the active bundle.`);
+    alert(`${materializedItem.title || "Book"} was added to the active bundle.`);
   }
 
   async function removeBundleDraftComponent(component) {
@@ -4476,6 +4490,7 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
     setAnalysisStatus("Creating bundle listing...");
     let squareItemId = "";
     let bundleItemId = "";
+    let bundleAssembled = false;
     let workingComponents = bundleDraft.components;
 
     try {
@@ -4566,13 +4581,14 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
         label_queued_at: new Date().toISOString(),
       };
 
-      const squareData = await createSquareListing(bundleItem);
+      const squareData = await createSquareListing({ ...bundleItem, quantity: 0 });
       squareItemId = squareData.square_item_id;
 
       const { data: insertedBundle, error: insertError } = await supabase
         .from("items")
         .insert([{
           ...bundleItem,
+          quantity: 0,
           square_item_id: squareData.square_item_id,
           square_variation_id: squareData.square_variation_id,
         }])
@@ -4586,6 +4602,12 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
         .insert(getBundleComponentRows(insertedBundle.id, workingComponents));
       if (componentError) throw componentError;
 
+      const { error: assemblyError } = await supabase.rpc("assemble_inventory_bundle", {
+        p_bundle_item_id: String(insertedBundle.id),
+      });
+      if (assemblyError) throw assemblyError;
+      bundleAssembled = true;
+
       await logAudit("inventory_bundle_created", "item", insertedBundle.id, {
         title: insertedBundle.title,
         sku: insertedBundle.sku,
@@ -4598,8 +4620,13 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
       setBundleCoverFile(null);
       setBundleCoverPreview("");
       await loadItems();
-      alert(`Bundle saved as ${newSku}. Its sticker is in the label queue.`);
+      alert(`Bundle saved as ${newSku}. Its sticker is in the label queue, and the set is in Processing until it is shelved.`);
     } catch (error) {
+      if (bundleAssembled) {
+        await loadItems();
+        alert("The bundle was created, but the screen could not finish refreshing. Its inventory is safe in Processing. " + error.message);
+        return;
+      }
       if (bundleItemId) {
         await supabase.from("items").delete().eq("id", bundleItemId);
       }
@@ -4651,16 +4678,9 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
         }
       }
 
-      const removedAt = new Date().toISOString();
-      const { error: bundleError } = await supabase
-        .from("items")
-        .update({
-          status: "Removed",
-          public_visible: false,
-          quantity: 0,
-          updated_at: removedAt,
-        })
-        .eq("id", item.id);
+      const { error: bundleError } = await supabase.rpc("split_inventory_bundle", {
+        p_bundle_item_id: String(item.id),
+      });
       if (bundleError) throw bundleError;
 
       const componentIds = links.map((row) => row.component_item_id);
@@ -4692,7 +4712,7 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
             releaseErrors.join("\n")
         );
       } else {
-        alert("Bundle split. The individual books and their labels are now active.");
+        alert("Bundle split. The individual books are in Processing and ready to be shelved.");
       }
     } catch (error) {
       await loadItems();
@@ -5105,7 +5125,6 @@ if (!existingItem && !exactIsbnMatchDeclined && !exactPublisherMatchDeclined) {
     const queuedAt = new Date().toISOString();
 
     const duplicateUpdates = {
-      quantity: newQuantity,
       updated_at: queuedAt,
       ...buildDuplicateLabelQueueUpdate(existingItem, receivedQuantity, queuedAt),
     };
@@ -5127,6 +5146,16 @@ if (!existingItem && !exactIsbnMatchDeclined && !exactPublisherMatchDeclined) {
 
     if (updateError) {
       alert("Quantity update failed: " + updateError.message);
+      return;
+    }
+
+    const { error: receiveError } = await supabase.rpc("receive_inventory_to_processing", {
+      p_item_id: String(existingItem.id),
+      p_quantity: receivedQuantity,
+      p_notes: "Received through the standard intake screen.",
+    });
+    if (receiveError) {
+      alert("Inventory intake failed: " + receiveError.message);
       return;
     }
 
@@ -5225,6 +5254,7 @@ try {
 
   const itemToSave = {
     ...itemDraft,
+    quantity: 0,
     sku: newSku,
     image_url: imageUrl || bookData.image_url || "",
     label_printed: false,
@@ -5243,7 +5273,7 @@ try {
         title: itemToSave.title || "Untitled Book",
         sku: itemToSave.sku,
         final_price: itemToSave.final_price || 0,
-        quantity: itemToSave.quantity || 1,
+        quantity: 0,
         notes: itemToSave.notes || "",
       }),
     }
@@ -5273,6 +5303,16 @@ try {
 
   if (insertError) {
     alert("Save failed: " + insertError.message);
+    return;
+  }
+
+  const { error: receiveError } = await supabase.rpc("receive_inventory_to_processing", {
+    p_item_id: String(insertedItem.id),
+    p_quantity: Number(itemDraft.quantity || 1),
+    p_notes: "New item received through the standard intake screen.",
+  });
+  if (receiveError) {
+    alert("The catalog record was saved, but inventory intake failed: " + receiveError.message);
     return;
   }
 
@@ -5346,9 +5386,7 @@ async function deleteItem() {
   }
 
   const confirmed = confirm(
-    isAdmin
-      ? `Delete "${editingItem.title}" from inventory? This cannot be undone.`
-      : `Remove "${editingItem.title}" from active inventory? This will archive it in Square and keep the record.`
+    `Remove "${editingItem.title}" from active inventory? Stock will be removed by location, Square will be archived when linked, and history will be preserved.`
   );
 
   if (!confirmed) return;
@@ -5378,53 +5416,22 @@ async function deleteItem() {
   }
 }
 
-  if (isAdmin) {
-    const { data, error } = await supabase
-      .from("items")
-      .delete()
-      .eq("id", editingItem.id)
-      .select();
+  const { error } = await supabase.rpc("archive_inventory_item", {
+    p_item_id: String(editingItem.id),
+    p_notes: "Removed from the inventory editor.",
+  });
 
-    if (error) {
-      alert("Delete failed: " + error.message);
-      return;
-    }
-
-    if (!data || data.length === 0) {
-      alert(
-        "Delete did not remove anything. This is usually a Supabase Row Level Security policy issue."
-      );
-      return;
-    }
-
-    alert("Item deleted!");
-
-    await logAudit("inventory_item_deleted", "item", editingItem.id, {
-      title: editingItem.title,
-      square_item_id: editingItem.square_item_id || null,
-    });
-  } else {
-    const { error } = await supabase
-      .from("items")
-      .update({
-        status: "Removed",
-        public_visible: false,
-        updated_at: new Date().toISOString(),
-      })
-      .eq("id", editingItem.id);
-
-    if (error) {
-      alert("Remove failed: " + error.message);
-      return;
-    }
-
-    alert("Item marked Removed!");
-
-    await logAudit("inventory_item_removed", "item", editingItem.id, {
-      title: editingItem.title,
-      square_item_id: editingItem.square_item_id || null,
-    });
+  if (error) {
+    alert("Remove failed: " + error.message);
+    return;
   }
+
+  alert("Item removed from active inventory and preserved in history.");
+
+  await logAudit("inventory_item_removed", "item", editingItem.id, {
+    title: editingItem.title,
+    square_item_id: editingItem.square_item_id || null,
+  });
 
   cancelEditing();
   loadItems();
@@ -5478,15 +5485,14 @@ async function updateItem() {
 
   const shouldArchive =
     editData.status === "Sold" ||
-    editData.status === "Removed" ||
-    Number(editData.quantity || 0) <= 0;
+    editData.status === "Removed";
   const updatedItemLabelValues = {
     sku: editData.sku || "",
     final_price:
       editData.final_price === "" || editData.final_price === null
         ? null
         : Number(editData.final_price),
-    quantity: Number(editData.quantity || 0),
+    quantity: Number(editingItem.quantity || 0),
   };
   const labelAffectingEditFields = getLabelAffectingEditFields(
     editingItem,
@@ -5546,7 +5552,6 @@ async function updateItem() {
           title: editData.title || "",
           sku: editData.sku || "",
           final_price: editData.final_price || 0,
-          quantity: editData.quantity || 0,
           notes: editData.notes || "",
         }),
       }
@@ -5588,9 +5593,6 @@ async function updateItem() {
       return;
     }
 
-    if (Number(editData.quantity || 0) <= 0) {
-      editData.status = "Sold";
-    }
   }
 
   const updatedAt = new Date().toISOString();
@@ -5614,12 +5616,10 @@ async function updateItem() {
       publisher_barcode: editData.publisher_barcode || "",
       publisher_item_number: normalizePublisherItemNumber(editData.publisher_item_number),
       category: editData.category || "",
-      location: cleanLocationName(editData.location),
       final_price:
         editData.final_price === "" || editData.final_price === null
           ? null
           : Number(editData.final_price),
-      quantity: Number(editData.quantity || 0),
       weight_ounces: cleanWeightOunces(editData.weight_ounces),
       status: editData.status || "Available",
       notes: editData.notes || "",
@@ -5651,9 +5651,7 @@ async function updateItem() {
       "publisher_barcode",
       "publisher_item_number",
       "category",
-      "location",
       "final_price",
-      "quantity",
       "weight_ounces",
       "status",
       "notes",
@@ -5789,7 +5787,8 @@ function generateLabels(itemsToPrint) {
 
       firstLabel = false;
 
-      const title = item.title || "Untitled";
+      const isBundle = item.item_type === "bundle";
+      const titleLines = formatLabelTitle(item.title, isBundle ? 38 : 32);
       const price =
         item.final_price !== null && item.final_price !== undefined
           ? `$${Number(item.final_price).toFixed(2)}`
@@ -5797,7 +5796,6 @@ function generateLabels(itemsToPrint) {
 
       const sku = item.sku || "";
       const barcodeValue = sku;
-      const isBundle = item.item_type === "bundle";
       const barcodeCanvas = document.createElement("canvas");
 
       JsBarcode(barcodeCanvas, barcodeValue, {
@@ -5826,8 +5824,10 @@ function generateLabels(itemsToPrint) {
 
       // Title
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(7.5);
-      pdf.text(title.substring(0, isBundle ? 38 : 30), 0.08, 0.28);
+      pdf.setFontSize(7);
+      pdf.text(titleLines, 0.08, titleLines.length === 1 ? 0.28 : 0.23, {
+        lineHeightFactor: 0.95,
+      });
 
       // Price
       pdf.setFontSize(11);
@@ -7800,6 +7800,21 @@ function renderUserManagement() {
 
             <button
               type="button"
+              className={`staff-nav-link ${view === "locations" ? "active" : ""}`}
+              aria-current={view === "locations" ? "page" : undefined}
+              title={staffSidebarCollapsed ? "Scan & Locate" : undefined}
+              onClick={() => {
+                setView("locations");
+                cancelEditing();
+                loadItems();
+              }}
+            >
+              <StaffNavIcon name="locations" />
+              <span className="staff-nav-label">Scan & Locate</span>
+            </button>
+
+            <button
+              type="button"
               className={`staff-nav-link staff-nav-subitem ${view === "labels" ? "active" : ""}`}
               aria-current={view === "labels" ? "page" : undefined}
               title={staffSidebarCollapsed ? "Print Labels" : undefined}
@@ -7925,6 +7940,19 @@ function renderUserManagement() {
           >
             <StaffNavIcon name="inventory" />
             <span>Inventory</span>
+          </button>
+          <button
+            type="button"
+            className={view === "locations" ? "active" : ""}
+            aria-current={view === "locations" ? "page" : undefined}
+            onClick={() => {
+              setView("locations");
+              cancelEditing();
+              loadItems();
+            }}
+          >
+            <StaffNavIcon name="locations" />
+            <span>Scan</span>
           </button>
           <button
             type="button"
@@ -8821,6 +8849,10 @@ function renderUserManagement() {
           />
         )}
 
+      {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "locations" && (
+        <LocationInventoryWorkspace items={items} onInventoryChanged={loadItems} />
+      )}
+
       {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "inventory" && (
         <section className="card">
           <h2>Inventory</h2>
@@ -9201,20 +9233,11 @@ function renderUserManagement() {
                 </p>
               )}
 
-              <label>Location</label>
-              <select
-                value={editData.location || ""}
-                onChange={(e) =>
-                  setEditData({ ...editData, location: e.target.value })
-                }
-              >
-                <option value="">No location</option>
-                {getActiveLocationNames([editData.location]).map((location) => (
-                  <option key={location} value={location}>
-                    {location}
-                  </option>
-                ))}
-              </select>
+              <label>Inventory Placement</label>
+              <p className="helper-text">
+                {Number(editingItem.quantity || 0)} total {Number(editingItem.quantity || 0) === 1 ? "copy" : "copies"}
+                {editingItem.location ? ` · ${editingItem.location}` : " · Multiple or unverified locations"}. Use Scan & Locate to move or adjust stock.
+              </p>
 
               <label>Final Price</label>
               <input
@@ -9223,16 +9246,6 @@ function renderUserManagement() {
                 value={editData.final_price || ""}
                 onChange={(e) =>
                   setEditData({ ...editData, final_price: e.target.value })
-                }
-              />
-
-              <label>Quantity</label>
-              <input
-                type="number"
-                min="1"
-                value={editData.quantity || 1}
-                onChange={(e) =>
-                  setEditData({ ...editData, quantity: e.target.value })
                 }
               />
 
@@ -9647,7 +9660,7 @@ function renderUserManagement() {
                       Clear Temporary Locations
                     </button>
                     <button type="button" className="danger" onClick={bulkDeleteSelected}>
-                      {isAdmin ? "Delete Selected" : "Remove Selected"}
+                      Remove Selected
                     </button>
                   </div>
                 </details>
@@ -10076,12 +10089,28 @@ function renderUserManagement() {
               </section>
               )}
 
-              {optionsSection === "rules" && (<>
+              {(optionsSection === "rules" || reviewingSuggestionKey) && (<>
+              <div
+                className={optionsSection === "review" ? "intake-rule-backdrop" : undefined}
+                role={optionsSection === "review" ? "presentation" : undefined}
+                onMouseDown={optionsSection === "review" ? resetIntakeRuleDraft : undefined}
+              >
               <section
                 ref={intakeRuleEditorRef}
-                className={`intake-rule-editor ${reviewingSuggestionKey ? "reviewing-suggestion" : ""}`}
+                className={`intake-rule-editor ${reviewingSuggestionKey ? "reviewing-suggestion" : ""} ${optionsSection === "review" ? "intake-rule-dialog" : ""}`}
+                role={optionsSection === "review" ? "dialog" : undefined}
+                aria-modal={optionsSection === "review" ? "true" : undefined}
+                aria-labelledby={optionsSection === "review" ? "intake-rule-dialog-title" : undefined}
+                onMouseDown={(event) => event.stopPropagation()}
               >
-                <h3>{editingIntakeRuleId ? "Edit Rule" : "Create Rule"}</h3>
+                <div className="intake-rule-editor-heading">
+                  <h3 id={optionsSection === "review" ? "intake-rule-dialog-title" : undefined}>
+                    {editingIntakeRuleId ? "Edit Rule" : "Create Rule"}
+                  </h3>
+                  {optionsSection === "review" && (
+                    <button type="button" className="dialog-close" aria-label="Close create rule" onClick={resetIntakeRuleDraft}>×</button>
+                  )}
+                </div>
 
                 {reviewingSuggestionKey && (
                   <p className="rule-review-banner">
@@ -10259,7 +10288,9 @@ function renderUserManagement() {
                 </div>
                 {intakeRuleMessage && <p className="status-message">{intakeRuleMessage}</p>}
               </section>
+              </div>
 
+              {optionsSection === "rules" && (
               <div className="intake-rule-list">
                 {intakeRules.length === 0 && <p>No intake rules have been created.</p>}
                 {intakeRules.map((rule) => {
@@ -10295,6 +10326,7 @@ function renderUserManagement() {
                   );
                 })}
               </div>
+              )}
               </>)}
             </section>
           )}
