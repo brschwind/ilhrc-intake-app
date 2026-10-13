@@ -21,6 +21,23 @@ Migration `20260908120000_location_aware_inventory.sql` adds:
 
 Existing rows are backfilled without deletion. Recognizable shelf codes retain their shelf, other named locations become legacy locations, and missing locations go to `UNVERIFIED_LEGACY`. Existing `items.quantity` remains temporarily as a trigger-maintained compatibility cache; the per-location rows are authoritative. Legacy quantity increases enter `UNVERIFIED_LEGACY`. A legacy decrease that would require guessing which verified shelf lost stock is rejected.
 
+## Protected catalog rollout
+
+Migration phase 2 creates a singleton `inventory_rollout_settings` record and
+starts in `legacy_compatible` mode. In this mode, the public catalog and new
+reservations use verified shelf/display/overflow stock plus unverified legacy
+stock. Processing, hold, and needs-review quantities remain excluded. This
+preserves the existing catalog while staff scan the current collection into
+trustworthy locations.
+
+Unlocated pickups and Square decrements consume verified stock first and then
+the legacy pool during the transition; they never guess a shelf. The eventual
+`location_verified` cutover is performed only through the administrator-only
+`set_inventory_catalog_availability_mode` function. By default, that function
+refuses the cutover while any unverified copies remain and reports the affected
+title/copy counts. An explicit acknowledgement parameter exists for a planned
+decision to exclude documented stragglers, and every mode change is audited.
+
 ## Atomic operations
 
 Database functions implement staff authorization and transactions for scan lookup, session start/cancel, intake/shelving/audit scans, undo, manual adjustment, explicit stock moves, shelf reconciliation, recommendation ranking, and non-destructive item removal. Move Stock locks its source and rejects an overdraw. Audit reconciliation only changes the selected shelf and then stamps `last_verified_at`.
@@ -64,14 +81,22 @@ Second-phase tests cover atomic bundle rollback, partial-copy extraction, bundle
 
 - `items.quantity` and `items.location` cannot be dropped yet because some display, label, and transition code still reads them. They are derived compatibility fields; all active quantity writers now mutate `inventory_by_location` through database operations instead of treating these cache fields as authoritative.
 - Square knows the store but not the shelf. While unverified legacy stock remains, legacy Square decrements consume that pool. Once a SKU is fully shelf-verified, an unlocated Square decrement is intentionally rejected instead of guessing a shelf. A later checkout/removal workflow must capture the source shelf before the compatibility bridge can be removed.
+- The public catalog remains in `legacy_compatible` mode until the location
+  readiness audit shows acceptable coverage. Do not enable `location_verified`
+  merely because the migrations have been deployed.
 - Existing `location_options` remains for old screens during transition. New inventory locations are managed in Scan & Locate; a later cleanup can retire the old dropdown after every writer is migrated.
 
 ## Staging validation
 
+Run `scripts/staging-location-inventory-preflight.sql` before the migration and
+save its results with the staging backup record. After both migrations are
+applied, run `scripts/staging-location-inventory-postflight.sql`; every reported
+issue count and required-object result must pass before workflow testing begins.
+
 1. Take a staging database backup and record counts/sums from `items` before applying the migration.
 2. Apply migrations to staging only. Confirm no production project/environment variables are selected.
 3. Compare every nonzero legacy item against `inventory_item_totals`; totals must match the pre-migration quantity.
-4. Confirm missing legacy locations are in `UNVERIFIED_LEGACY`, named shelf codes are `Never audited`, and operational locations exist.
+4. Confirm missing legacy locations are in `UNVERIFIED_LEGACY`, named shelf codes are `Never audited`, operational locations exist, and `inventory_rollout_settings.catalog_availability_mode` is `legacy_compatible`.
 5. Sign in as a `team` volunteer and an `admin`; confirm both can open Scan & Locate. Confirm anonymous and inactive users cannot read the new tables or invoke RPCs.
 6. Create test shelves A1, A2, A3, B2, B4, C1, C3, and F2. Print/scan values such as `LOCATION:A1`.
 7. Execute the 16 acceptance scenarios in the feature request, checking `inventory_events` after each mutation.
@@ -79,5 +104,14 @@ Second-phase tests cover atomic bundle rollback, partial-copy extraction, bundle
 9. Test Quick Add in Intake and Shelf Audit modes, then confirm the item is hidden publicly and marked for catalog review.
 10. Exercise a staging Square sale, reservation pickup, bundle creation/split, label queue, public catalog, and item archive. Pay particular attention to a fully verified SKU with no unverified stock because source-shelf capture is the documented transition boundary.
 11. Run `node --test src/*.test.js server/*.test.js`, the local ESLint executable, and the Vite production build.
+
+After deployment, keep the catalog in transition mode while volunteers create
+and scan shelf labels. Re-run the preflight readiness grouping periodically.
+Only after the unverified copy count reaches zero (or a documented exception is
+approved) should an administrator call:
+
+```sql
+select * from public.set_inventory_catalog_availability_mode('location_verified');
+```
 
 No production migrations, deployments, or data changes were made by this implementation.

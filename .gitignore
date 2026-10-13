@@ -9,6 +9,7 @@ lerna-debug.log*
 
 node_modules
 dist
+tmp/location-inventory-production-rehearsal.sql
 dist-ssr
 server/.npm-cache
 supabase/.temp

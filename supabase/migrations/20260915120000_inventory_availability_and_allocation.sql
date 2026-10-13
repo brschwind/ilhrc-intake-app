@@ -11,6 +11,27 @@ add constraint inventory_events_action_type_check check (action_type in (
   'item_split', 'bundle_assembly', 'bundle_split', 'inventory_merge'
 ));
 
+-- Keep legacy inventory publicly available while staff establish trustworthy
+-- shelf locations. The stricter catalog mode is an explicit, guarded cutover.
+create table if not exists public.inventory_rollout_settings (
+  singleton boolean primary key default true check (singleton),
+  catalog_availability_mode text not null default 'legacy_compatible'
+    check (catalog_availability_mode in ('legacy_compatible', 'location_verified')),
+  updated_at timestamptz not null default now(),
+  updated_by uuid references auth.users(id) on delete set null
+);
+
+insert into public.inventory_rollout_settings (singleton, catalog_availability_mode)
+values (true, 'legacy_compatible')
+on conflict (singleton) do nothing;
+
+alter table public.inventory_rollout_settings enable row level security;
+drop policy if exists inventory_rollout_settings_read on public.inventory_rollout_settings;
+create policy inventory_rollout_settings_read on public.inventory_rollout_settings
+for select using (true);
+
+grant select on public.inventory_rollout_settings to anon, authenticated, service_role;
+
 create or replace view public.inventory_item_availability
 with (security_invoker = true)
 as
@@ -20,18 +41,41 @@ select
   coalesce(sum(stock.quantity) filter (
     where location.active and location.location_type in ('shelf', 'display', 'overflow')
   ), 0)::integer as sellable_quantity,
+  case when rollout.catalog_availability_mode = 'legacy_compatible' then
+    coalesce(sum(stock.quantity) filter (
+      where location.active and location.location_type in ('shelf', 'display', 'overflow', 'legacy')
+    ), 0)::integer
+  else
+    coalesce(sum(stock.quantity) filter (
+      where location.active and location.location_type in ('shelf', 'display', 'overflow')
+    ), 0)::integer
+  end as catalog_sellable_quantity,
   coalesce(sum(stock.quantity) filter (where location.active and location.location_type = 'hold'), 0)::integer as held_quantity,
   coalesce(sum(stock.quantity) filter (where location.active and location.location_type = 'processing'), 0)::integer as processing_quantity,
   coalesce(sum(stock.quantity) filter (where location.active and location.location_type = 'needs_review'), 0)::integer as needs_review_quantity,
   coalesce(sum(stock.quantity) filter (where location.active and location.location_type = 'legacy'), 0)::integer as legacy_unverified_quantity,
   coalesce(reservation.active_count, 0)::integer as active_reservation_count,
+  rollout.catalog_availability_mode,
   greatest(
     coalesce(sum(stock.quantity) filter (
       where location.active and location.location_type in ('shelf', 'display', 'overflow')
     ), 0)::integer - coalesce(reservation.active_count, 0),
     0
+  )::integer as strict_available_to_reserve,
+  greatest(
+    case when rollout.catalog_availability_mode = 'legacy_compatible' then
+      coalesce(sum(stock.quantity) filter (
+        where location.active and location.location_type in ('shelf', 'display', 'overflow', 'legacy')
+      ), 0)::integer
+    else
+      coalesce(sum(stock.quantity) filter (
+        where location.active and location.location_type in ('shelf', 'display', 'overflow')
+      ), 0)::integer
+    end - coalesce(reservation.active_count, 0),
+    0
   )::integer as available_to_reserve
 from public.items item
+cross join public.inventory_rollout_settings rollout
 left join public.inventory_by_location stock on stock.item_id = item.id::text
 left join public.inventory_locations location on location.id = stock.location_id
 left join lateral (
@@ -41,9 +85,68 @@ left join lateral (
     and status in ('pending', 'ready')
     and expires_at > now()
 ) reservation on true
-group by item.id, reservation.active_count;
+group by item.id, reservation.active_count, rollout.catalog_availability_mode;
 
 grant select on public.inventory_item_availability to authenticated, service_role;
+
+create or replace function public.set_inventory_catalog_availability_mode(
+  p_mode text,
+  p_allow_unverified_exclusion boolean default false
+)
+returns table(
+  catalog_availability_mode text,
+  unverified_title_count bigint,
+  unverified_copy_count bigint
+)
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  title_count bigint;
+  copy_count bigint;
+begin
+  if auth.uid() is not null and not public.current_profile_is_admin() then
+    raise exception 'Administrator access is required.';
+  end if;
+  if p_mode not in ('legacy_compatible', 'location_verified') then
+    raise exception 'Unknown catalog availability mode.';
+  end if;
+
+  select
+    count(distinct stock.item_id) filter (where stock.quantity > 0),
+    coalesce(sum(stock.quantity) filter (where stock.quantity > 0), 0)
+  into title_count, copy_count
+  from public.inventory_by_location stock
+  join public.inventory_locations location on location.id = stock.location_id
+  where location.active and location.location_type = 'legacy';
+
+  if p_mode = 'location_verified' and copy_count > 0 and not p_allow_unverified_exclusion then
+    raise exception 'Cutover blocked: % unverified copies across % titles would leave the public catalog.',
+      copy_count, title_count;
+  end if;
+
+  update public.inventory_rollout_settings
+  set catalog_availability_mode = p_mode, updated_at = now(), updated_by = auth.uid()
+  where singleton;
+
+  insert into public.audit_logs (user_id, action, entity_type, entity_id, details)
+  values (
+    auth.uid(), 'inventory_catalog_mode_changed', 'inventory_rollout_settings', 'catalog_availability',
+    jsonb_build_object(
+      'catalog_availability_mode', p_mode,
+      'unverified_title_count', title_count,
+      'unverified_copy_count', copy_count,
+      'unverified_exclusion_acknowledged', p_allow_unverified_exclusion
+    )
+  );
+
+  return query select p_mode, title_count, copy_count;
+end
+$$;
+
+revoke all on function public.set_inventory_catalog_availability_mode(text,boolean) from public, anon;
+grant execute on function public.set_inventory_catalog_availability_mode(text,boolean) to authenticated, service_role;
 
 create or replace function public.allocate_sellable_inventory(
   p_item_id text,
@@ -62,6 +165,7 @@ declare
   remaining integer := p_quantity;
   candidate record;
   decrement_quantity integer;
+  catalog_mode text;
 begin
   if auth.uid() is not null and not public.current_profile_is_active() then
     raise exception 'Active staff access required.';
@@ -71,6 +175,8 @@ begin
     raise exception 'Unsupported inventory allocation action.';
   end if;
   if not public.inventory_item_exists(p_item_id) then raise exception 'Inventory item not found.'; end if;
+  select catalog_availability_mode into catalog_mode
+  from public.inventory_rollout_settings where singleton;
 
   -- Lock every eligible row before checking the aggregate, so insufficient stock
   -- cannot produce a partial decrement under concurrent sales.
@@ -78,7 +184,8 @@ begin
   from public.inventory_by_location stock
   join public.inventory_locations location on location.id = stock.location_id
   where stock.item_id = p_item_id and stock.quantity > 0 and location.active
-    and location.location_type in ('shelf', 'display', 'overflow')
+    and (location.location_type in ('shelf', 'display', 'overflow')
+      or (catalog_mode = 'legacy_compatible' and location.location_type = 'legacy'))
   order by stock.id
   for update of stock;
 
@@ -86,7 +193,8 @@ begin
   from public.inventory_by_location stock
   join public.inventory_locations location on location.id = stock.location_id
   where stock.item_id = p_item_id and stock.quantity > 0 and location.active
-    and location.location_type in ('shelf', 'display', 'overflow');
+    and (location.location_type in ('shelf', 'display', 'overflow')
+      or (catalog_mode = 'legacy_compatible' and location.location_type = 'legacy'));
   if available_quantity < p_quantity then raise exception 'Insufficient sellable inventory.'; end if;
 
   for candidate in
@@ -94,13 +202,15 @@ begin
     from public.inventory_by_location stock
     join public.inventory_locations location on location.id = stock.location_id
     where stock.item_id = p_item_id and stock.quantity > 0 and location.active
-      and location.location_type in ('shelf', 'display', 'overflow')
+      and (location.location_type in ('shelf', 'display', 'overflow')
+        or (catalog_mode = 'legacy_compatible' and location.location_type = 'legacy'))
     order by case
       when location.location_type = 'display' then 1
       when location.location_type = 'shelf' and location.last_verified_at is not null then 2
       when location.location_type = 'shelf' then 3
       when location.location_type = 'overflow' then 4
-      else 5 end,
+      when location.location_type = 'legacy' then 5
+      else 6 end,
       location.last_verified_at desc nulls last, location.code, stock.id
   loop
     exit when remaining = 0;
@@ -148,7 +258,8 @@ $$;
 revoke all on function public.receive_inventory_to_processing(text,integer,text) from public, anon;
 grant execute on function public.receive_inventory_to_processing(text,integer,text) to authenticated;
 
--- Public availability uses sellable stock only and subtracts active reservations.
+-- Public availability defaults to the transition pool (verified locations plus
+-- legacy inventory) and switches to verified locations only after guarded cutover.
 create or replace view public.public_catalog_items as
 select
   item.id, item.title, item.curriculum, item.subject, item.grade_level,
@@ -166,7 +277,7 @@ from public.items item
 join public.inventory_item_availability availability on availability.item_id = item.id::text
 where coalesce(item.status, 'Available') = 'Available'
   and coalesce(item.public_visible, true) = true
-  and availability.sellable_quantity > 0;
+  and availability.catalog_sellable_quantity > 0;
 
 grant select on public.public_catalog_items to anon, authenticated;
 
@@ -179,7 +290,7 @@ as $$
 declare
   item_record public.items%rowtype;
   active_reservation_count integer;
-  sellable_quantity integer;
+  catalog_sellable_quantity integer;
   recent_count integer;
   clean_email text := left(lower(trim(coalesce(p_email, ''))), 254);
   clean_phone text := left(trim(coalesce(p_phone, '')), 40);
@@ -205,18 +316,17 @@ begin
   end if;
   perform stock.id from public.inventory_by_location stock
   where stock.item_id = item_record.id::text order by stock.id for update;
-  select coalesce(sum(stock.quantity), 0)::integer into sellable_quantity
-  from public.inventory_by_location stock join public.inventory_locations location on location.id = stock.location_id
-  where stock.item_id = item_record.id::text and location.active
-    and location.location_type in ('shelf', 'display', 'overflow');
-  if sellable_quantity < 1 then raise exception 'This book is no longer available to reserve.'; end if;
+  select availability.catalog_sellable_quantity into catalog_sellable_quantity
+  from public.inventory_item_availability availability
+  where availability.item_id = item_record.id::text;
+  if coalesce(catalog_sellable_quantity, 0) < 1 then raise exception 'This book is no longer available to reserve.'; end if;
   if exists (select 1 from public.book_reservations where item_id = item_record.id::text
     and status in ('pending', 'ready') and expires_at > now() and (
       (clean_email <> '' and lower(email) = clean_email) or (clean_phone <> '' and phone = clean_phone)
     )) then raise exception 'You already have an active reservation for this book.'; end if;
   select count(*) into active_reservation_count from public.book_reservations
   where item_id = item_record.id::text and status in ('pending', 'ready') and expires_at > now();
-  if active_reservation_count >= sellable_quantity then raise exception 'The last available copy was just reserved.'; end if;
+  if active_reservation_count >= catalog_sellable_quantity then raise exception 'The last available copy was just reserved.'; end if;
   insert into public.book_reservations (item_id, customer_name, email, phone, preferred_contact)
   values (item_record.id::text, left(trim(p_customer_name), 120), clean_email, clean_phone, p_preferred_contact)
   returning * into reservation_record;
@@ -232,7 +342,7 @@ declare
   reservation_record public.book_reservations%rowtype;
   item_record public.items%rowtype;
   active_reservation_count integer;
-  sellable_quantity integer;
+  catalog_sellable_quantity integer;
 begin
   if not public.current_profile_is_active() then raise exception 'Active staff access is required.'; end if;
   if p_days < 1 or p_days > 30 then raise exception 'Extension must be between 1 and 30 days.'; end if;
@@ -247,14 +357,13 @@ begin
     end if;
     perform stock.id from public.inventory_by_location stock
     where stock.item_id = reservation_record.item_id order by stock.id for update;
-    select coalesce(sum(stock.quantity), 0)::integer into sellable_quantity
-    from public.inventory_by_location stock join public.inventory_locations location on location.id = stock.location_id
-    where stock.item_id = reservation_record.item_id and location.active
-      and location.location_type in ('shelf', 'display', 'overflow');
+    select availability.catalog_sellable_quantity into catalog_sellable_quantity
+    from public.inventory_item_availability availability
+    where availability.item_id = reservation_record.item_id;
     select count(*) into active_reservation_count from public.book_reservations
     where item_id = reservation_record.item_id and id <> reservation_record.id
       and status in ('pending', 'ready') and expires_at > now();
-    if active_reservation_count >= sellable_quantity then raise exception 'No copy is available to reactivate this reservation.'; end if;
+    if active_reservation_count >= coalesce(catalog_sellable_quantity, 0) then raise exception 'No copy is available to reactivate this reservation.'; end if;
   end if;
   update public.book_reservations set status = case when status = 'expired' then 'pending' else status end,
     expires_at = greatest(expires_at, now()) + make_interval(days => p_days),

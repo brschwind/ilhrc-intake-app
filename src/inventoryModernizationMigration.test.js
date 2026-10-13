@@ -5,8 +5,11 @@ import { PGlite } from "@electric-sql/pglite";
 
 const locationMigration = new URL("../supabase/migrations/20260908120000_location_aware_inventory.sql", import.meta.url);
 const modernizationMigration = new URL("../supabase/migrations/20260915120000_inventory_availability_and_allocation.sql", import.meta.url);
+const stagingPreflight = new URL("../scripts/staging-location-inventory-preflight.sql", import.meta.url);
+const stagingPostflight = new URL("../scripts/staging-location-inventory-postflight.sql", import.meta.url);
+const productionRehearsal = new URL("../tmp/location-inventory-production-rehearsal.sql", import.meta.url);
 
-async function database() {
+async function database({ migrated = true } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role authenticated; create role anon; create role service_role;
@@ -46,8 +49,10 @@ async function database() {
       quantity integer, calculated_at timestamptz, primary key(event_id, square_variation_id, location_id, state)
     );
   `);
-  await db.exec(await readFile(locationMigration, "utf8"));
-  await db.exec(await readFile(modernizationMigration, "utf8"));
+  if (migrated) {
+    await db.exec(await readFile(locationMigration, "utf8"));
+    await db.exec(await readFile(modernizationMigration, "utf8"));
+  }
   return db;
 }
 
@@ -56,7 +61,7 @@ async function scalar(db, sql, params = []) {
   return Object.values(result.rows[0])[0];
 }
 
-test("canonical availability excludes operational and unverified locations", async () => {
+test("transition availability preserves legacy stock without treating it as verified", async () => {
   const db = await database();
   await db.exec(`
     insert into public.items (id, sku, title) values ('book','SKU-A','Availability Book');
@@ -70,7 +75,38 @@ test("canonical availability excludes operational and unverified locations", asy
   const availability = (await db.query("select * from public.inventory_item_availability where item_id='book'")).rows[0];
   assert.equal(Number(availability.total_physical_quantity), 23);
   assert.equal(Number(availability.sellable_quantity), 5);
-  assert.equal(Number(availability.available_to_reserve), 5);
+  assert.equal(Number(availability.catalog_sellable_quantity), 10);
+  assert.equal(Number(availability.strict_available_to_reserve), 5);
+  assert.equal(Number(availability.available_to_reserve), 10);
+  assert.equal(availability.catalog_availability_mode, "legacy_compatible");
+  await db.close();
+});
+
+test("catalog cutover is guarded until unverified inventory is resolved", async () => {
+  const db = await database();
+  await db.exec(`
+    insert into public.items (id, sku, title, quantity)
+    values ('legacy-book','SKU-LEGACY','Legacy Book',2);
+  `);
+
+  assert.equal(Number(await scalar(db, "select quantity from public.public_catalog_items where id='legacy-book'")), 2);
+  await assert.rejects(
+    db.query("select * from public.set_inventory_catalog_availability_mode('location_verified')"),
+    /Cutover blocked: 2 unverified copies across 1 titles/
+  );
+  assert.equal(await scalar(db, "select catalog_availability_mode from public.inventory_rollout_settings"), "legacy_compatible");
+
+  await db.query("select * from public.set_inventory_catalog_availability_mode('location_verified', true)");
+  assert.equal(Number(await scalar(db, "select count(*) from public.public_catalog_items where id='legacy-book'")), 0);
+  await assert.rejects(
+    db.query("select * from public.allocate_sellable_inventory('legacy-book',1,'sale')"),
+    /Insufficient sellable inventory/
+  );
+
+  await db.query("select * from public.set_inventory_catalog_availability_mode('legacy_compatible')");
+  const allocation = await db.query("select * from public.allocate_sellable_inventory('legacy-book',1,'sale')");
+  assert.equal(allocation.rows[0].location_code, "UNVERIFIED_LEGACY");
+  assert.equal(Number(await scalar(db, "select quantity from public.items where id='legacy-book'")), 1);
   await db.close();
 });
 
@@ -211,5 +247,25 @@ test("bulk removal archives location quantities without deleting catalog history
   assert.equal(Number(await scalar(db, "select sum(quantity) from public.inventory_by_location where item_id in ('remove-one','remove-two')")), 0);
   assert.equal(Number(await scalar(db, "select count(*) from public.items where id in ('remove-one','remove-two') and status='Removed'")), 2);
   assert.equal(Number(await scalar(db, "select count(*) from public.inventory_events where item_id in ('remove-one','remove-two') and action_type='removal'")), 2);
+  await db.close();
+});
+
+test("staging migration audit scripts execute against the migrated schema", async () => {
+  const db = await database();
+  await db.exec(await readFile(stagingPreflight, "utf8"));
+  await db.exec(await readFile(stagingPostflight, "utf8"));
+  await db.close();
+});
+
+test("production rehearsal validates the migration and rolls the transaction back", async () => {
+  await import(`../scripts/build-location-inventory-rehearsal.mjs?test=${Date.now()}`);
+  const db = await database({ migrated: false });
+  await db.exec(`
+    insert into public.items (id, sku, title, location, quantity)
+    values ('rehearsal-book','SKU-REHEARSAL','Rehearsal Book','A1',2);
+  `);
+  await db.exec(await readFile(productionRehearsal, "utf8"));
+  assert.equal(Number(await scalar(db, "select quantity from public.items where id='rehearsal-book'")), 2);
+  assert.equal(await scalar(db, "select to_regclass('public.inventory_by_location')"), null);
   await db.close();
 });
