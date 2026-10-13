@@ -5,6 +5,7 @@ import { PGlite } from "@electric-sql/pglite";
 
 const locationMigration = new URL("../supabase/migrations/20260908120000_location_aware_inventory.sql", import.meta.url);
 const modernizationMigration = new URL("../supabase/migrations/20260915120000_inventory_availability_and_allocation.sql", import.meta.url);
+const publicCatalogAccessMigration = new URL("../supabase/migrations/20261013203000_public_catalog_inventory_availability_access.sql", import.meta.url);
 const stagingPreflight = new URL("../scripts/staging-location-inventory-preflight.sql", import.meta.url);
 const stagingPostflight = new URL("../scripts/staging-location-inventory-postflight.sql", import.meta.url);
 const productionRehearsal = new URL("../tmp/location-inventory-production-rehearsal.sql", import.meta.url);
@@ -52,6 +53,7 @@ async function database({ migrated = true } = {}) {
   if (migrated) {
     await db.exec(await readFile(locationMigration, "utf8"));
     await db.exec(await readFile(modernizationMigration, "utf8"));
+    await db.exec(await readFile(publicCatalogAccessMigration, "utf8"));
   }
   return db;
 }
@@ -107,6 +109,20 @@ test("catalog cutover is guarded until unverified inventory is resolved", async 
   const allocation = await db.query("select * from public.allocate_sellable_inventory('legacy-book',1,'sale')");
   assert.equal(allocation.rows[0].location_code, "UNVERIFIED_LEGACY");
   assert.equal(Number(await scalar(db, "select quantity from public.items where id='legacy-book'")), 1);
+  await db.close();
+});
+
+test("anonymous visitors can read the public catalog through the internal availability view", async () => {
+  const db = await database();
+  await db.exec(`
+    insert into public.items (id, sku, title, quantity)
+    values ('public-book','SKU-PUBLIC','Public Book',1);
+    set role anon;
+  `);
+
+  assert.equal(Number(await scalar(db, "select count(*) from public.public_catalog_items where id='public-book'")), 1);
+
+  await db.exec("reset role");
   await db.close();
 });
 
