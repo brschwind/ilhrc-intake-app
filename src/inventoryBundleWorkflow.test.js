@@ -77,3 +77,12 @@ test("inventory editing opens in a modal instead of scrolling the page", () => {
   assert.match(appSource, /aria-labelledby="inventory-editor-title"/);
   assert.doesNotMatch(appSource, /inventoryEditorRef\.current\?\.scrollIntoView/);
 });
+
+test("inventory editing can receive copies and queue matching stickers", () => {
+  assert.match(appSource, />Add Copies</);
+  assert.match(appSource, /inventory_add_quantity/);
+  assert.match(appSource, /"receive_inventory_to_processing"/);
+  assert.match(appSource, /p_quantity:\s*addedQuantity/);
+  assert.match(appSource, /quantity:\s*updatedInventoryQuantity/);
+  assert.match(appSource, /same number of stickers are added to the print queue/);
+});

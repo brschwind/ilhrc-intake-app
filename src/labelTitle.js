@@ -50,3 +50,19 @@ export function formatLabelTitle(title, maxLineLength = 32) {
     `… ${suffix.length > maxLineLength - 2 ? suffix.slice(-(maxLineLength - 2)) : suffix}`,
   ];
 }
+
+export function getLabelLayout(titleLineCount = 1) {
+  const hasSecondTitleLine = titleLineCount > 1;
+
+  return {
+    brandingY: 0.11,
+    titleY: hasSecondTitleLine ? 0.21 : 0.25,
+    titleFontSize: 6.5,
+    titleLineHeightFactor: 1.15,
+    priceY: hasSecondTitleLine ? 0.45 : 0.42,
+    priceFontSize: 10.5,
+    barcodeY: 0.51,
+    barcodeHeight: 0.31,
+    barcodeTextY: 0.94,
+  };
+}

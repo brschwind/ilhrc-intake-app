@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { formatLabelTitle } from "./labelTitle.js";
+import { formatLabelTitle, getLabelLayout } from "./labelTitle.js";
 
 test("label titles use a second line instead of cutting off the distinguishing words", () => {
   assert.deepEqual(
@@ -23,4 +23,13 @@ test("exceptionally long label titles preserve the beginning and ending", () => 
 test("label titles normalize whitespace and provide an untitled fallback", () => {
   assert.deepEqual(formatLabelTitle("  Exploring   Geography  "), ["Exploring Geography"]);
   assert.deepEqual(formatLabelTitle(""), ["Untitled"]);
+});
+
+test("two-line labels reserve more vertical space before the price", () => {
+  const singleLine = getLabelLayout(1);
+  const twoLines = getLabelLayout(2);
+
+  assert.ok(twoLines.priceY > singleLine.priceY);
+  assert.ok(twoLines.priceY - twoLines.titleY > 0.2);
+  assert.ok(twoLines.barcodeY > twoLines.priceY);
 });

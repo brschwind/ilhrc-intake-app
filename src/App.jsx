@@ -50,7 +50,7 @@ import {
 } from "./inventoryDisplay.js";
 import { normalizeIsbn } from "./curriculumMatching.js";
 import LocationInventoryWorkspace from "./LocationInventoryWorkspace.jsx";
-import { formatLabelTitle } from "./labelTitle.js";
+import { formatLabelTitle, getLabelLayout } from "./labelTitle.js";
 
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL || "https://ilhrc-intake-app.onrender.com";
@@ -5362,6 +5362,7 @@ try {
       ...item,
       final_price: item.final_price ?? "",
       quantity: item.quantity ?? 1,
+      inventory_add_quantity: 0,
     });
     setEditCoverFile(null);
     setEditCoverPreview(null);
@@ -5448,6 +5449,22 @@ async function deleteItem() {
 async function updateItem() {
   if (!editingItem || !editData) return;
 
+  const addedQuantity = Number(editData.inventory_add_quantity || 0);
+  if (!Number.isInteger(addedQuantity) || addedQuantity < 0) {
+    alert("Copies to add must be a whole number of zero or more.");
+    return;
+  }
+
+  if (addedQuantity > 0 && ["Sold", "Removed"].includes(editData.status)) {
+    alert("Set the item to Available or Hold before adding copies.");
+    return;
+  }
+
+  if (addedQuantity > 0 && editingItem.item_type === "bundle") {
+    alert("Create additional bundles from their component books instead of adding copies here.");
+    return;
+  }
+
   if (
     bundleParentByComponentId[String(editingItem.id)] &&
     editData.status !== "Bundled"
@@ -5494,13 +5511,15 @@ async function updateItem() {
   const shouldArchive =
     editData.status === "Sold" ||
     editData.status === "Removed";
+  const updatedInventoryQuantity =
+    Number(editingItem.quantity || 0) + addedQuantity;
   const updatedItemLabelValues = {
     sku: editData.sku || "",
     final_price:
       editData.final_price === "" || editData.final_price === null
         ? null
         : Number(editData.final_price),
-    quantity: Number(editingItem.quantity || 0),
+    quantity: updatedInventoryQuantity,
   };
   const labelAffectingEditFields = getLabelAffectingEditFields(
     editingItem,
@@ -5521,7 +5540,7 @@ async function updateItem() {
           title: editData.title || "Untitled Book",
           sku: editData.sku || "",
           final_price: editData.final_price || 0,
-          quantity: editData.quantity || 1,
+          quantity: updatedInventoryQuantity,
           notes: editData.notes || "",
         }),
       }
@@ -5603,6 +5622,19 @@ async function updateItem() {
 
   }
 
+  if (addedQuantity > 0) {
+    const { error: receiveError } = await supabase.rpc("receive_inventory_to_processing", {
+      p_item_id: String(editingItem.id),
+      p_quantity: addedQuantity,
+      p_notes: "Additional copies received through the inventory editor.",
+    });
+
+    if (receiveError) {
+      alert("Could not add copies to inventory: " + receiveError.message);
+      return;
+    }
+  }
+
   const updatedAt = new Date().toISOString();
   const editedLabelQuantity = shouldQueueUpdatedLabel
     ? getEditedItemLabelQuantity(editingItem, updatedItemLabelValues)
@@ -5642,8 +5674,41 @@ async function updateItem() {
     .eq("id", editingItem.id);
 
   if (error) {
-    alert("Update failed: " + error.message);
+    alert(
+      addedQuantity > 0
+        ? "The copies were added to Processing, but the item details and print queue could not be updated: " + error.message
+        : "Update failed: " + error.message
+    );
+    cancelEditing();
+    loadItems();
     return;
+  }
+
+  if (addedQuantity > 0 && squareVariationId) {
+    const squareInventoryResponse = await authFetch(
+      "/update-square-inventory",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          square_variation_id: squareVariationId,
+          quantity: updatedInventoryQuantity,
+        }),
+      }
+    );
+    const squareInventoryData = await squareInventoryResponse.json();
+
+    if (!squareInventoryResponse.ok || !squareInventoryData.success) {
+      alert(
+        "The copies and stickers were added, but Square inventory did not sync: " +
+          JSON.stringify(squareInventoryData.error)
+      );
+      cancelEditing();
+      loadItems();
+      return;
+    }
   }
 
   await logAudit("inventory_item_updated", "item", editingItem.id, {
@@ -5666,6 +5731,7 @@ async function updateItem() {
       "sku",
       "public_visible",
       "image_url",
+      ...(addedQuantity > 0 ? ["quantity"] : []),
     ],
     label_queued_for_fields: shouldQueueUpdatedLabel ? labelAffectingEditFields : [],
     label_quantity_queued: editedLabelQuantity,
@@ -5797,6 +5863,7 @@ function generateLabels(itemsToPrint) {
 
       const isBundle = item.item_type === "bundle";
       const titleLines = formatLabelTitle(item.title, isBundle ? 38 : 32);
+      const labelLayout = getLabelLayout(titleLines.length);
       const price =
         item.final_price !== null && item.final_price !== undefined
           ? `$${Number(item.final_price).toFixed(2)}`
@@ -5819,35 +5886,43 @@ function generateLabels(itemsToPrint) {
       // Tiny label branding
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(5.5);
-      pdf.text("Illinois Homeschool Resource Center", 0.08, 0.14);
+      pdf.text("Illinois Homeschool Resource Center", 0.08, labelLayout.brandingY);
       if (isBundle) {
         pdf.setFont("helvetica", "bold");
         pdf.text(
           `SET • ${Number(item.bundle_piece_count || 0)} PIECES`,
           1.92,
-          0.14,
+          labelLayout.brandingY,
           { align: "right" }
         );
       }
 
       // Title
       pdf.setFont("helvetica", "bold");
-      pdf.setFontSize(7);
-      pdf.text(titleLines, 0.08, titleLines.length === 1 ? 0.28 : 0.23, {
-        lineHeightFactor: 0.95,
+      pdf.setFontSize(labelLayout.titleFontSize);
+      pdf.text(titleLines, 0.08, labelLayout.titleY, {
+        lineHeightFactor: labelLayout.titleLineHeightFactor,
       });
 
       // Price
-      pdf.setFontSize(11);
-      pdf.text(price, 0.08, 0.43);
+      pdf.setFontSize(labelLayout.priceFontSize);
+      pdf.text(price, 0.08, labelLayout.priceY);
 
-      // Optimized barcode      
-      pdf.addImage(barcodeImage, "PNG", 0.08, 0.49, 1.84, 0.34);
+      // Optimized barcode
+      pdf.addImage(
+        barcodeImage,
+        "PNG",
+        0.08,
+        labelLayout.barcodeY,
+        1.84,
+        labelLayout.barcodeHeight
+      );
 
       // Human-readable barcode number
       pdf.setFont("helvetica", "normal");
       pdf.setFontSize(8);
-      pdf.text(barcodeValue, 1.0, 0.93, { align: "center" });    }
+      pdf.text(barcodeValue, 1.0, labelLayout.barcodeTextY, { align: "center" });
+    }
   });
 
   pdf.save("ILHRC-labels.pdf");
@@ -9256,8 +9331,30 @@ function renderUserManagement() {
               <label>Inventory Placement</label>
               <p className="helper-text">
                 {Number(editingItem.quantity || 0)} total {Number(editingItem.quantity || 0) === 1 ? "copy" : "copies"}
-                {editingItem.location ? ` · ${editingItem.location}` : " · Multiple or unverified locations"}. Use Scan & Locate to move or adjust stock.
+                {editingItem.location ? ` · ${editingItem.location}` : " · Multiple or unverified locations"}.
               </p>
+
+              {editingItem.item_type !== "bundle" && (
+                <>
+                  <label>Add Copies</label>
+                  <input
+                    type="number"
+                    min="0"
+                    step="1"
+                    value={editData.inventory_add_quantity || 0}
+                    disabled={["Sold", "Removed"].includes(editData.status)}
+                    onChange={(e) =>
+                      setEditData({
+                        ...editData,
+                        inventory_add_quantity: e.target.value,
+                      })
+                    }
+                  />
+                  <p className="helper-text">
+                    New copies go to Processing, and the same number of stickers are added to the print queue.
+                  </p>
+                </>
+              )}
 
               <label>Final Price</label>
               <input
