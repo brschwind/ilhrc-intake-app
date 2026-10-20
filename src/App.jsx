@@ -527,6 +527,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [editCoverPreview, setEditCoverPreview] = useState(null);
 
   const [analysisStatus, setAnalysisStatus] = useState("");
+  const [intakeCompletionMessage, setIntakeCompletionMessage] = useState("");
   const [intakeRules, setIntakeRules] = useState([]);
   const [ruleSources, setRuleSources] = useState({});
   const [ruleConflicts, setRuleConflicts] = useState({});
@@ -4925,6 +4926,7 @@ async function saveItem() {
   if (!bookData || isSaving) return;
 
   setIsSaving(true);
+  setIntakeCompletionMessage("");
   setAnalysisStatus("Checking inventory...");
 
   try {
@@ -5209,10 +5211,12 @@ try {
 
     await loadItems();
 
-    alert(
-      `Existing listing updated to quantity ${newQuantity}. ` +
-        `${receivedQuantity} new label${receivedQuantity === 1 ? " was" : "s were"} added to the print queue.`
-    );
+    const completionMessage =
+      `${receivedQuantity} ${receivedQuantity === 1 ? "copy is" : "copies are"} now in Processing. ` +
+      `${receivedQuantity === 1 ? "Its label is" : "Their labels are"} in the print queue. ` +
+      `After labeling, use Shelve Books to record the shelf.`;
+    setIntakeCompletionMessage(completionMessage);
+    alert(completionMessage);
 } else {
   setAnalysisStatus("Saving new item...");
 
@@ -5328,7 +5332,11 @@ try {
 
   await recordIntakeHistory(insertedItem?.id, itemWithSquareIds, false);
 
-  alert("New item saved!");
+  const completionMessage =
+    `${Number(itemDraft.quantity || 1)} ${Number(itemDraft.quantity || 1) === 1 ? "copy is" : "copies are"} now in Processing. ` +
+    `Print and attach the queued ${Number(itemDraft.quantity || 1) === 1 ? "label" : "labels"}, then use Shelve Books to record the shelf.`;
+  setIntakeCompletionMessage(completionMessage);
+  alert(completionMessage);
 }
 
   setBookData(null);
@@ -7802,7 +7810,7 @@ function renderUserManagement() {
               type="button"
               className={`staff-nav-link ${view === "locations" ? "active" : ""}`}
               aria-current={view === "locations" ? "page" : undefined}
-              title={staffSidebarCollapsed ? "Scan & Locate" : undefined}
+              title={staffSidebarCollapsed ? "Shelve Books" : undefined}
               onClick={() => {
                 setView("locations");
                 cancelEditing();
@@ -7810,7 +7818,7 @@ function renderUserManagement() {
               }}
             >
               <StaffNavIcon name="locations" />
-              <span className="staff-nav-label">Scan & Locate</span>
+              <span className="staff-nav-label">Shelve Books</span>
             </button>
 
             <button
@@ -7952,7 +7960,7 @@ function renderUserManagement() {
             }}
           >
             <StaffNavIcon name="locations" />
-            <span>Scan</span>
+            <span>Shelve</span>
           </button>
           <button
             type="button"
@@ -8193,8 +8201,20 @@ function renderUserManagement() {
     <section className="staff-page-heading">
       <span>Book Intake</span>
       <h2>Add Item</h2>
-      <p>Use the cover photo and ISBN/barcode when available.</p>
+      <p>Add the book details here. Saving automatically records every copy in Processing—you will choose the physical shelf later.</p>
+      <ol className="intake-next-steps" aria-label="New book workflow">
+        <li><strong>1. Save the book</strong><span>Copies go to Processing.</span></li>
+        <li><strong>2. Attach labels</strong><span>Print the queued SKU labels.</span></li>
+        <li><strong>3. Shelve books</strong><span>Record each copy's physical shelf.</span></li>
+      </ol>
     </section>
+
+    {intakeCompletionMessage && (
+      <section className="intake-completion-message" role="status">
+        <p><strong>Intake complete.</strong> {intakeCompletionMessage}</p>
+        <button type="button" className="secondary" onClick={() => setIntakeCompletionMessage("")}>Dismiss</button>
+      </section>
+    )}
 
     <section
       className={`bundle-intake-panel ${

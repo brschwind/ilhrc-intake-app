@@ -3,11 +3,18 @@ import { supabase } from "./supabaseClient.js";
 import { classifyScan, totalLocationQuantity } from "./locationInventory.js";
 import CameraBarcodeScanner from "./CameraBarcodeScanner.jsx";
 
-const MODES = [
-  { id: "intake", label: "Intake", help: "Add each scanned copy to Processing." },
-  { id: "shelving", label: "Shelving", help: "Approve a shelf for each processed copy." },
-  { id: "shelf_audit", label: "Shelf Audit", help: "Count a shelf first, then reconcile it." },
+const PRIMARY_MODES = [
+  { id: "shelving", label: "Shelve Books", help: "Move labeled books from Processing to a shelf." },
+  { id: "shelf_audit", label: "Audit a Shelf", help: "Count one shelf and review differences before saving." },
 ];
+
+const QUICK_RECEIVE_MODE = {
+  id: "intake",
+  label: "Quick Receive Existing Books",
+  help: "Add another copy of a book that is already in the catalog.",
+};
+
+const MODES = [QUICK_RECEIVE_MODE, ...PRIMARY_MODES];
 
 function eventId() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random()}`;
@@ -21,7 +28,7 @@ function verificationLabel(location) {
 }
 
 export default function LocationInventoryWorkspace({ items = [], onInventoryChanged }) {
-  const [mode, setMode] = useState("intake");
+  const [mode, setMode] = useState("shelving");
   const [locations, setLocations] = useState([]);
   const [stock, setStock] = useState([]);
   const [events, setEvents] = useState([]);
@@ -366,40 +373,89 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     return `${item.title} ${item.sku} ${item.isbn} ${item.curriculum} ${item.publisher} ${locationText}`.toLowerCase().includes(search.toLowerCase());
   });
 
+  function selectMode(nextMode) {
+    setCameraOpen(false);
+    setPending(null);
+    setRecommendations([]);
+    setMode(nextMode);
+    setMessage("");
+  }
+
+  const shelfFieldLabel = mode === "shelf_audit" ? "Shelf to audit" : "Shelf you are stocking";
+  const scanPrompt = mode === "intake"
+    ? "Scan the ISBN, SKU, or barcode for the extra copy"
+    : mode === "shelf_audit"
+      ? "Scan every book physically on this shelf"
+      : "Scan a labeled book from Processing";
+  const finishLabel = mode === "intake" ? "Finish receiving" : "Finish shelving";
+
   return (
     <section className="location-inventory-workspace">
       <header className="location-inventory-header">
-        <div><p className="eyebrow">Physical shelf inventory</p><h2>Scan & Locate</h2></div>
-        <div className="awaiting-shelving"><strong>{awaitingShelving}</strong><span>awaiting shelving</span></div>
+        <div>
+          <p className="eyebrow">Physical shelf inventory</p>
+          <h2>Shelve Books</h2>
+          <p className="location-workspace-intro">Books saved through Add Item wait in Processing until you record their shelf here.</p>
+        </div>
+        <button
+          type="button"
+          className="awaiting-shelving"
+          disabled={Boolean(session)}
+          onClick={() => selectMode("shelving")}
+          aria-label={`${awaitingShelving} copies waiting to be shelved`}
+        >
+          <strong>{awaitingShelving}</strong><span>copies waiting to be shelved</span>
+        </button>
       </header>
 
+      <ol className="shelving-process" aria-label="Book intake and shelving process">
+        <li><strong>1. Add the book</strong><span>Saving puts each copy in Processing.</span></li>
+        <li><strong>2. Attach its label</strong><span>Print the queued SKU label.</span></li>
+        <li><strong>3. Record the shelf</strong><span>Choose a shelf, scan the book, and approve it.</span></li>
+      </ol>
+
       <div className="scan-mode-grid" aria-label="Scan mode">
-        {MODES.map((option) => <button key={option.id} className={mode === option.id ? "active" : ""} disabled={Boolean(session)} onClick={() => { setCameraOpen(false); setMode(option.id); setMessage(""); }}><strong>{option.label}</strong><span>{option.help}</span></button>)}
+        {PRIMARY_MODES.map((option) => <button key={option.id} className={mode === option.id ? "active" : ""} disabled={Boolean(session)} onClick={() => selectMode(option.id)}><strong>{option.label}</strong><span>{option.help}</span></button>)}
       </div>
 
+      <details className="quick-receive-disclosure" open={mode === "intake"}>
+        <summary>Receiving an extra copy of a book already in the catalog?</summary>
+        <p>Use this shortcut instead of Add Item. Do not use both workflows for the same copy.</p>
+        <button type="button" className={mode === "intake" ? "primary" : "secondary"} disabled={Boolean(session)} onClick={() => selectMode("intake")}>Open Quick Receive</button>
+      </details>
+
       <section className={`scan-console scan-console-${mode}`}>
+        <p className="mode-instructions">
+          {mode === "intake" && <><strong>This increases inventory.</strong> Scan only an extra copy that has not already been saved through Add Item.</>}
+          {mode === "shelving" && <><strong>Put-away steps:</strong> choose or scan the shelf, scan one labeled book, then approve its destination.</>}
+          {mode === "shelf_audit" && <><strong>Audit steps:</strong> choose the shelf, scan every physical copy on it, then review the count.</>}
+        </p>
         <div className="scan-context">
           <span className="mode-pill">{MODES.find((option) => option.id === mode)?.label}</span>
-          {(mode === "shelving" || mode === "shelf_audit") && <label>Current shelf<select value={locationId} disabled={session?.mode === "shelf_audit"} onChange={(event) => setLocationId(event.target.value)}><option value="">Scan or choose shelf</option>{locations.filter((location) => ["shelf", "display", "overflow", "needs_review"].includes(location.location_type)).map((location) => <option key={location.id} value={location.id}>{location.code} — {location.display_name}</option>)}</select></label>}
-          {selectedLocation && mode !== "intake" && <div className="selected-shelf"><small>DESTINATION</small><strong>{selectedLocation.code}</strong><span>{selectedLocation.display_name}</span></div>}
+          {(mode === "shelving" || mode === "shelf_audit") && <label>{shelfFieldLabel}<select value={locationId} disabled={session?.mode === "shelf_audit"} onChange={(event) => setLocationId(event.target.value)}><option value="">Scan or choose shelf</option>{locations.filter((location) => ["shelf", "display", "overflow", "needs_review"].includes(location.location_type)).map((location) => <option key={location.id} value={location.id}>{location.code} — {location.display_name}</option>)}</select></label>}
+          {selectedLocation && mode !== "intake" && <div className="selected-shelf"><small>{mode === "shelf_audit" ? "SHELF TO AUDIT" : "SHELF TO STOCK"}</small><strong>{selectedLocation.code}</strong><span>{selectedLocation.display_name}</span></div>}
         </div>
-        <form className="scan-entry" onSubmit={handleScan}><input ref={inputRef} autoFocus value={scanValue} onChange={(event) => setScanValue(event.target.value)} placeholder="Scan ISBN, SKU, barcode, or LOCATION:A1" aria-label="Scan value"/><button className="primary" disabled={busy}>Record scan</button><button type="button" className="secondary camera-start" disabled={cameraOpen} onClick={() => setCameraOpen(true)}>Scan with Camera</button></form>
+        <form className="scan-entry" onSubmit={handleScan}><input ref={inputRef} autoFocus value={scanValue} onChange={(event) => setScanValue(event.target.value)} placeholder={scanPrompt} aria-label="Scan value"/><button className="primary" disabled={busy}>Scan book</button><button type="button" className="secondary camera-start" disabled={cameraOpen} onClick={() => setCameraOpen(true)}>Use Camera</button></form>
         <CameraBarcodeScanner active={cameraOpen} onDetected={processScan} onClose={() => setCameraOpen(false)} onError={setMessage}/>
-        <div className="scan-session-actions"><span>{scanCount} scans this session</span><button className="secondary" disabled={!scanCount || busy} onClick={undoLastScan}>Undo last</button><button className="secondary" disabled={!session || busy} onClick={cancelSession}>Cancel session</button>{mode === "shelf_audit" ? <button className="primary" disabled={!session || busy} onClick={reviewAudit}>Review count</button> : <button className="primary" disabled={!session || busy} onClick={completeSession}>Finish session</button>}</div>
+        <div className="scan-session-actions"><span>{scanCount} scans this session</span><button className="secondary" disabled={!scanCount || busy} onClick={undoLastScan}>Undo last</button><button className="secondary" disabled={!session || busy} onClick={cancelSession}>Cancel session</button>{mode === "shelf_audit" ? <button className="primary" disabled={!session || busy} onClick={reviewAudit}>Review count</button> : <button className="primary" disabled={!session || busy} onClick={completeSession}>{finishLabel}</button>}</div>
         {message && <p className="scan-message" role="status">{message}</p>}
         {recent.length > 0 && <div className="recent-scans" aria-label="Recently scanned books"><strong>Recently scanned</strong><ol>{recent.map((entry) => <li key={entry.id}><span>{entry.item.title || "Untitled item"}</span><small>{entry.item.sku || entry.raw}</small></li>)}</ol></div>}
       </section>
 
-      {pending && <section className="scan-approval-card"><h3>Approve destination</h3><p><strong>{pending.item.title}</strong> · {pending.item.sku}</p>{recommendations.map((recommendation, index) => <button key={recommendation.location_id} className={index === 0 ? "recommendation recommended" : "recommendation"} onClick={() => approveShelving(recommendation.location_id)}><strong>{index === 0 ? "Recommended: " : "Option: "}{recommendation.code}</strong><span>{recommendation.reason}</span></button>)}<button className="primary" disabled={!locationId} onClick={() => approveShelving(locationId)}>Approve selected shelf {selectedLocation?.code}</button><button className="secondary" disabled={!locationId} onClick={() => approveShelving(locationId, true)}>Document another copy here</button><button className="secondary" onClick={() => setPending(null)}>Cancel this scan</button></section>}
+      {pending && <section className="scan-approval-card"><h3>Put this copy on a shelf</h3><p><strong>{pending.item.title}</strong> · {pending.item.sku}</p><p>Approving a shelf moves one copy out of Processing and records where it can be found.</p>{recommendations.map((recommendation, index) => <button key={recommendation.location_id} className={index === 0 ? "recommendation recommended" : "recommendation"} onClick={() => approveShelving(recommendation.location_id)}><strong>{index === 0 ? "Recommended: " : "Option: "}{recommendation.code}</strong><span>{recommendation.reason}</span></button>)}<button className="primary" disabled={!locationId} onClick={() => approveShelving(locationId)}>Put on selected shelf {selectedLocation?.code}</button><button className="secondary" onClick={() => setPending(null)}>Cancel this scan</button><details className="discovered-copy-action"><summary>Book was not recorded in Processing?</summary><p>Only use this when you found an unrecorded physical copy. This adds a copy at the selected shelf instead of moving one from Processing.</p><button className="secondary" disabled={!locationId} onClick={() => approveShelving(locationId, true)}>Add a previously unrecorded copy here</button></details></section>}
 
       {unknownScan && <section className="quick-add-card"><h3>Quick Add</h3><p>Barcode: <strong>{unknownScan}</strong></p><label>Title<input value={quickTitle} onChange={(event) => setQuickTitle(event.target.value)} placeholder="Minimum title" /></label><p>The record will stay hidden publicly and marked for catalog review.</p><button className="primary" disabled={!quickTitle.trim() || busy} onClick={quickAdd}>Create and count this copy</button><button className="secondary" onClick={() => setUnknownScan("")}>Cancel</button></section>}
 
       {auditReviewed && <section className="audit-review"><h3>{selectedLocation?.code} discrepancy review</h3>{auditReview.length > 0 ? <div className="audit-table"><div className="audit-row audit-heading"><span>Book</span><span>Expected</span><span>Observed</span><span>Difference</span></div>{auditReview.map((row) => <div className="audit-row" key={row.item_id}><span>{itemById[row.item_id]?.title || row.item_id}</span><span>{row.expected_quantity}</span><span>{row.observed_quantity}</span><strong className={row.difference ? "difference" : ""}>{row.difference > 0 ? "+" : ""}{row.difference}</strong></div>)}</div> : <p>No books are expected or observed on this shelf. Approving will verify the shelf as empty.</p>}<button className="primary" onClick={reconcileAudit}>Approve reconciliation</button></section>}
 
-      <div className="location-inventory-columns">
-        <section className="card"><h3>Move Stock</h3><form className="move-stock-form" onSubmit={moveStock}><label>SKU / ISBN<input value={moveDraft.itemId} onChange={(event) => setMoveDraft({ ...moveDraft, itemId: event.target.value })}/></label><label>From<select value={moveDraft.from} onChange={(event) => setMoveDraft({ ...moveDraft, from: event.target.value })}><option value="">Choose source</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.code}</option>)}</select></label><label>To<select value={moveDraft.to} onChange={(event) => setMoveDraft({ ...moveDraft, to: event.target.value })}><option value="">Choose destination</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.code}</option>)}</select></label><label>Copies<input type="number" min="1" value={moveDraft.quantity} onChange={(event) => setMoveDraft({ ...moveDraft, quantity: event.target.value })}/></label><button className="primary" disabled={!moveDraft.itemId || !moveDraft.from || !moveDraft.to}>Move atomically</button></form><details className="manual-adjustment"><summary>Manual location adjustment</summary><form onSubmit={adjustStock}><label>SKU / ISBN<input value={adjustDraft.itemId} onChange={(event) => setAdjustDraft({ ...adjustDraft, itemId: event.target.value })}/></label><label>Location<select value={adjustDraft.location} onChange={(event) => setAdjustDraft({ ...adjustDraft, location: event.target.value })}><option value="">Choose location</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.code}</option>)}</select></label><label>Change (+/−)<input type="number" value={adjustDraft.delta} onChange={(event) => setAdjustDraft({ ...adjustDraft, delta: event.target.value })}/></label><label>Reason<input value={adjustDraft.notes} onChange={(event) => setAdjustDraft({ ...adjustDraft, notes: event.target.value })}/></label><button className="secondary" disabled={!adjustDraft.itemId || !adjustDraft.location || Number(adjustDraft.delta) === 0}>Apply adjustment</button></form></details></section>
-        <section className="card"><h3>Shelf verification</h3><form className="new-shelf-form" onSubmit={addShelf}><input aria-label="New shelf code" placeholder="Shelf code, e.g. A1" value={newShelf.code} onChange={(event) => setNewShelf({ ...newShelf, code: event.target.value })}/><input aria-label="New shelf display name" placeholder="Display name (optional)" value={newShelf.displayName} onChange={(event) => setNewShelf({ ...newShelf, displayName: event.target.value })}/><button className="secondary">Add shelf</button></form><div className="verification-list">{locations.filter((location) => location.location_type === "shelf").map((location) => <div key={location.id}><strong>{location.code}</strong><span className={`verification-${verificationLabel(location).toLowerCase().replace(" ", "-")}`}>{verificationLabel(location)}</span><small>{location.last_verified_at ? new Date(location.last_verified_at).toLocaleString() : `Label: LOCATION:${location.code}`}</small></div>)}</div></section>
-      </div>
+      <details className="advanced-location-tools">
+        <summary>Location tools and shelf setup</summary>
+        <p>Use these tools for corrections, moving several copies, or creating shelf labels.</p>
+        <div className="location-inventory-columns">
+          <section className="card"><h3>Move Stock</h3><form className="move-stock-form" onSubmit={moveStock}><label>SKU / ISBN<input value={moveDraft.itemId} onChange={(event) => setMoveDraft({ ...moveDraft, itemId: event.target.value })}/></label><label>From<select value={moveDraft.from} onChange={(event) => setMoveDraft({ ...moveDraft, from: event.target.value })}><option value="">Choose source</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.code}</option>)}</select></label><label>To<select value={moveDraft.to} onChange={(event) => setMoveDraft({ ...moveDraft, to: event.target.value })}><option value="">Choose destination</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.code}</option>)}</select></label><label>Copies<input type="number" min="1" value={moveDraft.quantity} onChange={(event) => setMoveDraft({ ...moveDraft, quantity: event.target.value })}/></label><button className="primary" disabled={!moveDraft.itemId || !moveDraft.from || !moveDraft.to}>Move stock</button></form><details className="manual-adjustment"><summary>Manual location adjustment</summary><form onSubmit={adjustStock}><label>SKU / ISBN<input value={adjustDraft.itemId} onChange={(event) => setAdjustDraft({ ...adjustDraft, itemId: event.target.value })}/></label><label>Location<select value={adjustDraft.location} onChange={(event) => setAdjustDraft({ ...adjustDraft, location: event.target.value })}><option value="">Choose location</option>{locations.map((location) => <option key={location.id} value={location.id}>{location.code}</option>)}</select></label><label>Change (+/−)<input type="number" value={adjustDraft.delta} onChange={(event) => setAdjustDraft({ ...adjustDraft, delta: event.target.value })}/></label><label>Reason<input value={adjustDraft.notes} onChange={(event) => setAdjustDraft({ ...adjustDraft, notes: event.target.value })}/></label><button className="secondary" disabled={!adjustDraft.itemId || !adjustDraft.location || Number(adjustDraft.delta) === 0}>Apply adjustment</button></form></details></section>
+          <section className="card"><h3>Shelf setup and verification</h3><form className="new-shelf-form" onSubmit={addShelf}><input aria-label="New shelf code" placeholder="Shelf code, e.g. A1" value={newShelf.code} onChange={(event) => setNewShelf({ ...newShelf, code: event.target.value })}/><input aria-label="New shelf display name" placeholder="Display name (optional)" value={newShelf.displayName} onChange={(event) => setNewShelf({ ...newShelf, displayName: event.target.value })}/><button className="secondary">Add shelf</button></form><div className="verification-list">{locations.filter((location) => location.location_type === "shelf").map((location) => <div key={location.id}><strong>{location.code}</strong><span className={`verification-${verificationLabel(location).toLowerCase().replace(" ", "-")}`}>{verificationLabel(location)}</span><small>{location.last_verified_at ? new Date(location.last_verified_at).toLocaleString() : `Label: LOCATION:${location.code}`}</small></div>)}</div></section>
+        </div>
+      </details>
 
       <section className="card location-search"><div className="location-search-heading"><div><h3>Location-aware inventory</h3><p>Totals are calculated from every active location.</p></div><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Title, ISBN, SKU, curriculum, publisher, location"/></div>{inventoryRows.slice(0, 100).map((item) => { const rows = stock.filter((row) => String(row.item_id) === String(item.id)); return <article key={item.id} className="location-item-row"><div><strong>{item.title}</strong><small>{item.sku} {item.needs_catalog_review ? "· Incomplete catalog record" : ""}</small></div><div className="location-total"><strong>{totalLocationQuantity(rows)}</strong><span>Total available</span></div><div className="location-chips">{rows.length ? rows.map((row) => <span key={row.location_id}>{row.code} — {row.quantity}</span>) : <span>No stock locations</span>}</div></article>; })}</section>
 
