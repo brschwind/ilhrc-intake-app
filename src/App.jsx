@@ -1,4 +1,4 @@
-import { suggestBookCategory } from "./bookPricing.js";
+import { suggestBookCategory, canonicalCategory, priceCategory } from "./bookPricing.js";
 import { useRef, useState, useEffect } from "react";
 import CameraBarcodeScanner from "./CameraBarcodeScanner";
 import "./App.css";
@@ -1402,6 +1402,7 @@ async function loadOptionLists() {
     const { data: categories } = await supabase
       .from("category_options")
       .select(isAuthenticated ? "*" : "name")
+      .eq("active", true)
       .order("name");
 
     const { data: locations } = isAuthenticated
@@ -1472,8 +1473,17 @@ async function loadExactIsbnMemory(isbn) {
 
 async function applyRulesToImportedBook(importedBook, sourceType) {
   const ruleResult = applyIntakeRules(importedBook, intakeRules);
+  if (ruleResult.sources.category && !ruleResult.sources.final_price) {
+    const option = categoryOptions.find(x => x.name === canonicalCategory(ruleResult.book.category));
+    if (option) {
+      const pricing = priceCategory(option, ruleResult.book);
+      ruleResult.book.final_price = pricing.default_price;
+      ruleResult.book.suggested_price = pricing.default_price;
+    }
+  }
   const isbnMemory = await loadExactIsbnMemory(importedBook.isbn);
   const result = mergeExactIsbnMemory(ruleResult, isbnMemory);
+  result.book.category = canonicalCategory(result.book.category);
   setIntakeDetailsOpen(!String(result.book.title || "").trim());
   setRuleSources(result.sources);
   setRuleConflicts(result.conflicts);
@@ -3420,7 +3430,8 @@ setBookData(await applyRulesToImportedBook({
       const suggested = suggestPricingCategory({
   title: openLibraryData.title || "",
   publisher: openLibraryData.publishers?.[0] || "",
-  categories: [],
+  categories: openLibraryData.subjects || [],
+  number_of_pages: openLibraryData.number_of_pages,
 });
       const weightEstimate = estimateWeightFromMetadata({
         title: openLibraryData.title || "",
@@ -3443,9 +3454,9 @@ setBookData(await applyRulesToImportedBook({
         grade_level: "",
         edition: "",
         isbn: cleanIsbn,
-       category: suggested?.item_name || "",
-        suggested_price: suggested?.price || "",
-        final_price: suggested?.price || "",
+       category: suggested?.name || "",
+        suggested_price: suggested?.default_price ?? "",
+        final_price: suggested?.default_price ?? "",
         quantity: 1,
         weight_ounces: weightEstimate.weight_ounces,
         weight_note: weightEstimate.note,
@@ -8738,9 +8749,8 @@ function renderUserManagement() {
               <select id="intake-category"
                 value={bookData.category || ""}
                 onChange={(e) => {
-                  const selected = categoryOptions.find(
-                    (item) => item.name === e.target.value
-                  );
+                  const option = categoryOptions.find(item => item.name === e.target.value);
+                  const selected = option ? priceCategory(option, bookData) : null;
 
                  updateIntakeField("category", selected?.name || "", {
                    suggested_price: selected?.default_price || "",
@@ -8764,9 +8774,7 @@ function renderUserManagement() {
                   <p>
                     <strong>Suggested Price:</strong> $
                     {
-                      categoryOptions.find(
-                        (item) => item.name === bookData.category
-                      )?.default_price
+                      bookData.suggested_price
                     }
                   </p>
                 )} 

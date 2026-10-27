@@ -124,7 +124,7 @@ export function mergeExactIsbnMemory(ruleResult, memory) {
   const conflicts = { ...ruleResult.conflicts };
 
   for (const field of ["curriculum", "subject", "grade_level", "category", "final_price"]) {
-    const value = String(memory[field] || "").trim();
+    const value = String(memory[field] ?? "").trim();
     if (!value) continue;
 
     book[field] = value;

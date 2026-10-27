@@ -1860,6 +1860,9 @@ Allowed catalog values supplied by this app: ${JSON.stringify(catalogOptions)}
 Use supplied subjects and grades when there is a supported match; otherwise leave blank.
 Select category ONLY from the supplied categories, or leave blank when uncertain.
 Distinguish a student text, consumable workbook, teacher edition, answer key, and tests.
+book_format may be picture book, early reader, chapter book, novel, workbook, worktext, teacher guide, answer key, textbook, reference book, media, game, or kit, only when supported by the images. Leave it blank when uncertain.
+Never guess page count, dimensions, or whether a workbook is substantial from a front cover alone.
+The eight pricing categories group product formats: Student Text; Workbook & Tests; Teacher Guide; Answer Key; Reading Book (picture books, early readers, novels, biographies, Bibles, devotionals); Reference & Resource; Learning Materials & Media; Bundle / Kit. Use only categories present in the supplied list.
 An answer key to a workbook is an Answer Key, not a Workbook. A teacher edition is not a student textbook.
 Tests with answers or solutions belong with Answer Key; blank student tests belong with Workbook when available.
 Classify the physical product: a puzzle book is not a boxed Game; a book about experiments is not a Science Kit.
@@ -1881,6 +1884,7 @@ Return ONLY valid JSON in this exact format:
 "publisher": "",
 "category": "",
 "publisher_item_number": "",
+"book_format": "",
 "subject": "",
 "grade": "",
 "edition": "",
