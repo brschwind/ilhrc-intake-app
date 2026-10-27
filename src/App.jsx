@@ -8319,15 +8319,22 @@ function renderUserManagement() {
 
    {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "add" && (
   <>
-    <section className="staff-page-heading">
+    <section className="staff-page-heading intake-page-heading">
       <span>Book Intake</span>
-      <h2>Add Item</h2>
+      <div className="intake-title-row">
+        <h2>Add Item</h2>
+        <details className="intake-help">
+          <summary aria-label="Book processing help" title="Book processing help">?</summary>
+          <div className="intake-help-content">
       <p>Add the book details here. Saving automatically records every copy in Processing—you will choose the physical shelf later.</p>
       <ol className="intake-next-steps" aria-label="New book workflow">
         <li><strong>1. Save the book</strong><span>Copies go to Processing.</span></li>
         <li><strong>2. Attach labels</strong><span>Print the queued SKU labels.</span></li>
         <li><strong>3. Shelve books</strong><span>Record each copy's physical shelf.</span></li>
       </ol>
+          </div>
+        </details>
+      </div>
     </section>
 
     {intakeCompletionMessage && (
@@ -8343,19 +8350,10 @@ function renderUserManagement() {
       }`}
     >
       <div className="bundle-intake-heading">
-        <div>
-          <strong>Bundle mode</strong>
-          <p>
-            {bundleDraft.active && bundleDraft.source === "inventory"
-              ? "An inventory bundle is in progress. Return to Inventory to finish or cancel it."
-              : bundleDraft.active
-              ? "Each saved book will remain in this set until you finish or cancel it."
-              : "Create one sellable set while preserving every book's individual SKU and price."}
-          </p>
-        </div>
         <label className="bundle-toggle">
           <input
             type="checkbox"
+            aria-label="Bundle"
             checked={bundleDraft.active && bundleDraft.source === "intake"}
             disabled={
               bundleActionLoading ||
@@ -8372,9 +8370,7 @@ function renderUserManagement() {
             }}
           />
           <span aria-hidden="true" />
-          <b>
-            {bundleDraft.active && bundleDraft.source === "intake" ? "On" : "Off"}
-          </b>
+          <b>Bundle</b>
         </label>
       </div>
 
@@ -8500,12 +8496,11 @@ function renderUserManagement() {
         onBlur={() => { barcodeScannerBufferRef.current = ""; }}
         title="Click for the camera, or focus this button and use the Symbol scanner"
       >
-        <span>{isScanningBarcode && barcodeScanTarget === "book" ? "Scanning..." : "Scan a Barcode"}</span>
-        <small>Camera or Symbol scanner</small>
+        <span>{isScanningBarcode && barcodeScanTarget === "book" ? "Scanning..." : "Scan Barcode"}</span>
       </button>
 
       <button className="secondary" type="button" onClick={() => startCoverCamera("analysis")}>
-        Analyze Book Cover
+        Scan Cover
       </button>
 
       <button className="secondary" onClick={startManualEntry}>
