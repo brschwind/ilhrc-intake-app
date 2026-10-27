@@ -1,3 +1,4 @@
+import { suggestBookCategory } from "./bookPricing.js";
 import { useRef, useState, useEffect } from "react";
 import CameraBarcodeScanner from "./CameraBarcodeScanner";
 import "./App.css";
@@ -3335,85 +3336,7 @@ function handleEditCoverPhoto(event) {
 }
 
 function suggestPricingCategory(book) {
-  const text = `${book.title || ""} ${book.publisher || ""} ${
-    book.categories?.join(" ") || ""
-  }`.toLowerCase();
-
-  if (!categoryOptions.length) return null;
-
-  let suggestedName = "Reader / Chapter Book";
-
-  if (
-    text.includes("student activity") ||
-    text.includes("student workbook") ||
-    text.includes("workbook")
-  ) {
-    suggestedName = "Workbook";
-  } else if (
-    text.includes("answer key") ||
-    text.includes("solution") ||
-    text.includes("solutions manual")
-  ) {
-    suggestedName = "Answer Key";
-  } else if (
-    text.includes("teacher") ||
-    text.includes("manual") ||
-    text.includes("resource")
-  ) {
-    suggestedName = "Teacher Resource";
-  } else if (
-    text.includes("bible")
-  ) {
-    suggestedName = "Bible";
-  } else if (
-    text.includes("devotional") ||
-    text.includes("devotion")
-  ) {
-    suggestedName = "Devotional";
-  } else if (
-    text.includes("biography") ||
-    text.includes("memoir")
-  ) {
-    suggestedName = "Biography";
-  } else if (
-    text.includes("picture book")
-  ) {
-    suggestedName = "Picture Book";
-  } else if (
-    text.includes("early reader") ||
-    text.includes("beginning reader")
-  ) {
-    suggestedName = "Early Reader";
-  } else if (
-    text.includes("science kit") ||
-    text.includes("experiment kit")
-  ) {
-    suggestedName = "Science Kit";
-  } else if (
-    text.includes("dvd") ||
-    text.includes("video")
-  ) {
-    suggestedName = "DVD / Media";
-  } else if (
-    text.includes("game")
-  ) {
-    suggestedName = "Game";
-  } else if (
-    text.includes("flashcard") ||
-    text.includes("flash card")
-  ) {
-    suggestedName = "Flashcards";
-  } else if (
-    text.includes("science") ||
-    text.includes("history") ||
-    text.includes("math") ||
-    text.includes("grammar") ||
-    text.includes("textbook")
-  ) {
-    suggestedName = "Textbook";
-  }
-
-  return categoryOptions.find((item) => item.name === suggestedName);
+  return suggestBookCategory(book, categoryOptions);
 }
 
 async function lookupBookByIsbn(isbn) {
@@ -3783,6 +3706,7 @@ async function analyzePhotoWithFile(file, pendingIdentifier = null) {
   try {
     const formData = new FormData();
     formData.append("cover", file);
+    formData.append("catalogOptions", JSON.stringify({ categories: categoryOptions.map(x => x.name), subjects: subjectOptions, grades: gradeOptions, curricula: curriculumOptions }));
 
     setAnalysisStatus("Sending image to AI server...");
 
@@ -3812,16 +3736,16 @@ const analyzedBook = await applyRulesToImportedBook({
   ...improvedData,
   ...(pendingIdentifier || {}),
   ...(inferredPublisherItemNumber ? { publisher_item_number: inferredPublisherItemNumber } : {}),
-  category: improvedData.category || suggested?.name || "",
+  category: suggested?.name || "",
   weight_ounces: getWeightFromBookData(improvedData) ?? "",
   weight_note:
     getWeightFromBookData(improvedData) !== null
       ? "Estimated by AI. Please adjust if needed."
       : "",
   suggested_price:
-    improvedData.suggested_price || suggested?.default_price || "",
+    suggested?.default_price ?? "",
   final_price:
-    improvedData.final_price || suggested?.default_price || "",
+    suggested?.default_price ?? "",
 }, "cover_analysis");
 
 setBookData(analyzedBook);
