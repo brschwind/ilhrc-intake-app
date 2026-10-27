@@ -5379,6 +5379,7 @@ try {
     requestAnimationFrame(() => {
       window.scrollTo({ top: 0, behavior: "auto" });
       intakeScanButtonRef.current?.focus({ preventScroll: true });
+      scanBarcode("book");
     });
   }
 
