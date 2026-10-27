@@ -1,3 +1,4 @@
+import { loadShelvingWorkspace } from "./shelvingWorkspaceData.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient.js";
 import { classifyScan, totalLocationQuantity } from "./locationInventory.js";
@@ -31,6 +32,9 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
   const [mode, setMode] = useState("shelving");
   const [locations, setLocations] = useState([]);
   const [stock, setStock] = useState([]);
+  const [queueItems, setQueueItems] = useState([]);
+  const [workspaceStatus, setWorkspaceStatus] = useState("loading");
+  const scanBusyRef = useRef(false);
   const [events, setEvents] = useState([]);
   const [session, setSession] = useState(null);
   const [locationId, setLocationId] = useState("");
@@ -59,47 +63,40 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     .reduce((sum, row) => sum + Number(row.quantity || 0), 0);
 
   const itemById = useMemo(
-    () => Object.fromEntries(items.map((item) => [String(item.id), item])),
-    [items]
+    () => Object.fromEntries([...items, ...queueItems].map((item) => [String(item.id), item])),
+    [items, queueItems]
   );
   const locationById = useMemo(
     () => Object.fromEntries(locations.map((location) => [location.id, location])),
     [locations]
   );
 
+  function applyWorkspace(data) {
+    setLocations(data.locations);
+    setStock(data.stock);
+    setEvents(data.events);
+    setQueueItems(data.queueItems);
+    setWorkspaceStatus("ready");
+  }
+
   async function loadWorkspace() {
-    const [locationsResult, stockResult, eventsResult] = await Promise.all([
-      supabase.from("inventory_locations").select("*").eq("active", true).order("code"),
-      supabase.from("inventory_location_details").select("*").gt("quantity", 0),
-      supabase.from("inventory_events").select("*").order("created_at", { ascending: false }).limit(20),
-    ]);
-    const error = locationsResult.error || stockResult.error || eventsResult.error;
-    if (error) {
-      setMessage(`Location inventory is not ready: ${error.message}`);
-      return;
+    try {
+      applyWorkspace(await loadShelvingWorkspace(supabase));
+    } catch (error) {
+      setWorkspaceStatus("error");
+      setMessage("Could not load the shelving queue: " + error.message);
     }
-    setLocations(locationsResult.data || []);
-    setStock(stockResult.data || []);
-    setEvents(eventsResult.data || []);
   }
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
-      supabase.from("inventory_locations").select("*").eq("active", true).order("code"),
-      supabase.from("inventory_location_details").select("*").gt("quantity", 0),
-      supabase.from("inventory_events").select("*").order("created_at", { ascending: false }).limit(20),
-    ]).then(([locationsResult, stockResult, eventsResult]) => {
-      if (cancelled) return;
-      const error = locationsResult.error || stockResult.error || eventsResult.error;
-      if (error) setMessage(`Location inventory is not ready: ${error.message}`);
-      else {
-        setLocations(locationsResult.data || []);
-        setStock(stockResult.data || []);
-        setEvents(eventsResult.data || []);
-      }
+    loadShelvingWorkspace(supabase).then((data) => {
+      if (!cancelled) applyWorkspace(data);
     }).catch((error) => {
-      if (!cancelled) setMessage(error.message || "Location inventory could not be loaded.");
+      if (!cancelled) {
+        setWorkspaceStatus("error");
+        setMessage("Could not load the shelving queue: " + error.message);
+      }
     });
     return () => { cancelled = true; };
   }, []);
@@ -152,7 +149,8 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
 
   async function processScan(rawValue, source = "manual") {
     const parsed = classifyScan(rawValue);
-    if (!parsed.raw || busy) return;
+    if (!parsed.raw || busy || scanBusyRef.current || (pending && parsed.kind !== "location") || unknownScan) return;
+    scanBusyRef.current = true;
     setBusy(true);
     setMessage("");
     try {
@@ -191,6 +189,7 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     } catch (error) {
       setMessage(error.message || "The scan could not be recorded.");
     } finally {
+      scanBusyRef.current = false;
       setBusy(false);
       setScanValue("");
       setTimeout(() => inputRef.current?.focus(), 0);
@@ -203,7 +202,8 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
   }
 
   async function approveShelving(destinationId = locationId, discover = false) {
-    if (!pending || !destinationId) return;
+    if (!pending || !destinationId || busy || scanBusyRef.current) return;
+    scanBusyRef.current = true;
     setBusy(true);
     try {
       const recommendedId = recommendations[0]?.location_id;
@@ -219,7 +219,11 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
       setRecommendations([]);
     } catch (error) {
       setMessage(error.message || "Shelving could not be completed.");
-    } finally { setBusy(false); }
+    } finally {
+      scanBusyRef.current = false;
+      setBusy(false);
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
   }
 
   async function quickAdd() {
@@ -394,8 +398,7 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
       <header className="location-inventory-header">
         <div>
           <p className="eyebrow">Physical shelf inventory</p>
-          <h2>Shelve Books</h2>
-          <p className="location-workspace-intro">Books saved through Add Item wait in Processing until you record their shelf here.</p>
+          <div className="shelving-title-row"><h2>Shelve Books</h2><details className="shelving-help"><summary aria-label="Shelving help">?</summary><p>Books saved through Add Item wait in Processing until you record their shelf here. Print and attach their SKU labels, choose a shelf, scan a book, then approve its destination.</p></details></div>
         </div>
         <button
           type="button"
@@ -404,45 +407,46 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
           onClick={() => selectMode("shelving")}
           aria-label={`${awaitingShelving} copies waiting to be shelved`}
         >
-          <strong>{awaitingShelving}</strong><span>copies waiting to be shelved</span>
+          <strong>{workspaceStatus === "ready" ? awaitingShelving : "—"}</strong><span>{workspaceStatus === "loading" ? "Loading queue…" : workspaceStatus === "error" ? "Queue unavailable" : "copies to shelve"}</span>
         </button>
       </header>
 
-      <ol className="shelving-process" aria-label="Book intake and shelving process">
-        <li><strong>1. Add the book</strong><span>Saving puts each copy in Processing.</span></li>
-        <li><strong>2. Attach its label</strong><span>Print the queued SKU label.</span></li>
-        <li><strong>3. Record the shelf</strong><span>Choose a shelf, scan the book, and approve it.</span></li>
-      </ol>
-
-      <div className="scan-mode-grid" aria-label="Scan mode">
-        {PRIMARY_MODES.map((option) => <button key={option.id} className={mode === option.id ? "active" : ""} disabled={Boolean(session)} onClick={() => selectMode(option.id)}><strong>{option.label}</strong><span>{option.help}</span></button>)}
-      </div>
-
+      <details className="shelving-other-tools" open={mode !== "shelving"}>
+        <summary>Audit or receive extra copies</summary>
+        <div className="scan-mode-grid" aria-label="Scan mode">{PRIMARY_MODES.map((option) => <button key={option.id} className={mode === option.id ? "active" : ""} disabled={Boolean(session)} onClick={() => selectMode(option.id)}><strong>{option.label}</strong><span>{option.help}</span></button>)}</div>
       <details className="quick-receive-disclosure" open={mode === "intake"}>
         <summary>Receiving an extra copy of a book already in the catalog?</summary>
         <p>Use this shortcut instead of Add Item. Do not use both workflows for the same copy.</p>
         <button type="button" className={mode === "intake" ? "primary" : "secondary"} disabled={Boolean(session)} onClick={() => selectMode("intake")}>Open Quick Receive</button>
       </details>
 
+
+      </details>
+      {mode === "shelving" && <details className="shelving-queue">
+        <summary>Waiting in Processing {workspaceStatus === "ready" ? "(" + awaitingShelving + " copies)" : ""}</summary>
+        <button type="button" className="text-button" disabled={busy} onClick={refresh}>Refresh queue</button>
+        {workspaceStatus === "loading" ? <p>Loading books…</p> : workspaceStatus === "error" ? <p>The queue could not load. Refresh to try again.</p> : awaitingShelving === 0 ? <p>No copies are currently recorded in Processing.</p> : <ul className="shelving-queue-list">{stock.filter((row) => row.location_id === processingLocation?.id).map((row) => <li key={row.item_id}><div><strong>{itemById[String(row.item_id)]?.title || "Book " + row.item_id}</strong><small>{itemById[String(row.item_id)]?.sku} · {row.quantity} {Number(row.quantity) === 1 ? "copy" : "copies"}</small></div><button type="button" className="secondary" disabled={busy || Boolean(pending) || !locationId || workspaceStatus !== "ready"} onClick={() => processScan(itemById[String(row.item_id)]?.sku || itemById[String(row.item_id)]?.isbn || "")}>Shelve</button></li>)}</ul>}
+      </details>}
+
       <section className={`scan-console scan-console-${mode}`}>
-        <p className="mode-instructions">
+        <p className="mode-instructions" hidden={mode === "shelving"}>
           {mode === "intake" && <><strong>This increases inventory.</strong> Scan only an extra copy that has not already been saved through Add Item.</>}
           {mode === "shelving" && <><strong>Put-away steps:</strong> choose or scan the shelf, scan one labeled book, then approve its destination.</>}
           {mode === "shelf_audit" && <><strong>Audit steps:</strong> choose the shelf, scan every physical copy on it, then review the count.</>}
         </p>
         <div className="scan-context">
-          <span className="mode-pill">{MODES.find((option) => option.id === mode)?.label}</span>
+          <span className="mode-pill" hidden={mode === "shelving"}>{MODES.find((option) => option.id === mode)?.label}</span>
           {(mode === "shelving" || mode === "shelf_audit") && <label>{shelfFieldLabel}<select value={locationId} disabled={session?.mode === "shelf_audit"} onChange={(event) => setLocationId(event.target.value)}><option value="">Scan or choose shelf</option>{locations.filter((location) => ["shelf", "display", "overflow", "needs_review"].includes(location.location_type)).map((location) => <option key={location.id} value={location.id}>{location.code} — {location.display_name}</option>)}</select></label>}
           {selectedLocation && mode !== "intake" && <div className="selected-shelf"><small>{mode === "shelf_audit" ? "SHELF TO AUDIT" : "SHELF TO STOCK"}</small><strong>{selectedLocation.code}</strong><span>{selectedLocation.display_name}</span></div>}
         </div>
-        <form className="scan-entry" onSubmit={handleScan}><input ref={inputRef} autoFocus value={scanValue} onChange={(event) => setScanValue(event.target.value)} placeholder={scanPrompt} aria-label="Scan value"/><button className="primary" disabled={busy}>Scan book</button><button type="button" className="secondary camera-start" disabled={cameraOpen} onClick={() => setCameraOpen(true)}>Use Camera</button></form>
-        <CameraBarcodeScanner active={cameraOpen} onDetected={processScan} onClose={() => setCameraOpen(false)} onError={setMessage}/>
+        <form className="scan-entry" onSubmit={handleScan}><input ref={inputRef} autoFocus value={scanValue} onChange={(event) => setScanValue(event.target.value)} placeholder={scanPrompt} aria-label="Scan value"/><button className="primary" disabled={busy || Boolean(pending) || workspaceStatus !== "ready"}>Scan book</button><button type="button" className="secondary camera-start" disabled={cameraOpen} onClick={() => setCameraOpen(true)}>Use Camera</button></form>
+        <CameraBarcodeScanner active={cameraOpen && !pending && !unknownScan} onDetected={processScan} onClose={() => setCameraOpen(false)} onError={setMessage}/>
         <div className="scan-session-actions"><span>{scanCount} scans this session</span><button className="secondary" disabled={!scanCount || busy} onClick={undoLastScan}>Undo last</button><button className="secondary" disabled={!session || busy} onClick={cancelSession}>Cancel session</button>{mode === "shelf_audit" ? <button className="primary" disabled={!session || busy} onClick={reviewAudit}>Review count</button> : <button className="primary" disabled={!session || busy} onClick={completeSession}>{finishLabel}</button>}</div>
         {message && <p className="scan-message" role="status">{message}</p>}
         {recent.length > 0 && <div className="recent-scans" aria-label="Recently scanned books"><strong>Recently scanned</strong><ol>{recent.map((entry) => <li key={entry.id}><span>{entry.item.title || "Untitled item"}</span><small>{entry.item.sku || entry.raw}</small></li>)}</ol></div>}
       </section>
 
-      {pending && <section className="scan-approval-card"><h3>Put this copy on a shelf</h3><p><strong>{pending.item.title}</strong> · {pending.item.sku}</p><p>Approving a shelf moves one copy out of Processing and records where it can be found.</p>{recommendations.map((recommendation, index) => <button key={recommendation.location_id} className={index === 0 ? "recommendation recommended" : "recommendation"} onClick={() => approveShelving(recommendation.location_id)}><strong>{index === 0 ? "Recommended: " : "Option: "}{recommendation.code}</strong><span>{recommendation.reason}</span></button>)}<button className="primary" disabled={!locationId} onClick={() => approveShelving(locationId)}>Put on selected shelf {selectedLocation?.code}</button><button className="secondary" onClick={() => setPending(null)}>Cancel this scan</button><details className="discovered-copy-action"><summary>Book was not recorded in Processing?</summary><p>Only use this when you found an unrecorded physical copy. This adds a copy at the selected shelf instead of moving one from Processing.</p><button className="secondary" disabled={!locationId} onClick={() => approveShelving(locationId, true)}>Add a previously unrecorded copy here</button></details></section>}
+      {pending && <section className="scan-approval-card"><h3>Confirm shelf</h3><p><strong>{pending.item.title}</strong> · {pending.item.sku}</p>{recommendations.map((recommendation, index) => <button key={recommendation.location_id} className={index === 0 ? "recommendation recommended" : "recommendation"} disabled={busy} onClick={() => approveShelving(recommendation.location_id)}><strong>{index === 0 ? "Recommended: " : "Option: "}{recommendation.code}</strong><span>{recommendation.reason}</span></button>)}<button className="primary" disabled={!locationId || busy} onClick={() => approveShelving(locationId)}>{busy ? "Shelving…" : "Shelve & Next"} · {selectedLocation?.code}</button><button className="secondary" disabled={busy} onClick={() => setPending(null)}>Cancel this scan</button><details className="discovered-copy-action"><summary>Book was not recorded in Processing?</summary><p>Only use this when you found an unrecorded physical copy. This adds a copy at the selected shelf instead of moving one from Processing.</p><button className="secondary" disabled={!locationId} onClick={() => approveShelving(locationId, true)}>Add a previously unrecorded copy here</button></details></section>}
 
       {unknownScan && <section className="quick-add-card"><h3>Quick Add</h3><p>Barcode: <strong>{unknownScan}</strong></p><label>Title<input value={quickTitle} onChange={(event) => setQuickTitle(event.target.value)} placeholder="Minimum title" /></label><p>The record will stay hidden publicly and marked for catalog review.</p><button className="primary" disabled={!quickTitle.trim() || busy} onClick={quickAdd}>Create and count this copy</button><button className="secondary" onClick={() => setUnknownScan("")}>Cancel</button></section>}
 
@@ -457,9 +461,11 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
         </div>
       </details>
 
-      <section className="card location-search"><div className="location-search-heading"><div><h3>Location-aware inventory</h3><p>Totals are calculated from every active location.</p></div><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Title, ISBN, SKU, curriculum, publisher, location"/></div>{inventoryRows.slice(0, 100).map((item) => { const rows = stock.filter((row) => String(row.item_id) === String(item.id)); return <article key={item.id} className="location-item-row"><div><strong>{item.title}</strong><small>{item.sku} {item.needs_catalog_review ? "· Incomplete catalog record" : ""}</small></div><div className="location-total"><strong>{totalLocationQuantity(rows)}</strong><span>Total available</span></div><div className="location-chips">{rows.length ? rows.map((row) => <span key={row.location_id}>{row.code} — {row.quantity}</span>) : <span>No stock locations</span>}</div></article>; })}</section>
+      <details className="shelving-reference"><summary>Find stock locations</summary><section className="card location-search"><div className="location-search-heading"><div><h3>Location-aware inventory</h3><p>Totals are calculated from every active location.</p></div><input type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Title, ISBN, SKU, curriculum, publisher, location"/></div>{inventoryRows.slice(0, 100).map((item) => { const rows = stock.filter((row) => String(row.item_id) === String(item.id)); return <article key={item.id} className="location-item-row"><div><strong>{item.title}</strong><small>{item.sku} {item.needs_catalog_review ? "· Incomplete catalog record" : ""}</small></div><div className="location-total"><strong>{totalLocationQuantity(rows)}</strong><span>Total available</span></div><div className="location-chips">{rows.length ? rows.map((row) => <span key={row.location_id}>{row.code} — {row.quantity}</span>) : <span>No stock locations</span>}</div></article>; })}</section>
 
-      <section className="card"><h3>Recently moved or adjusted</h3>{events.slice(0, 10).map((event) => <div className="recent-inventory-event" key={event.id}><span>{event.action_type.replaceAll("_", " ")}</span><strong>{itemById[event.item_id]?.title || event.item_id}</strong><small>{new Date(event.created_at).toLocaleString()}</small></div>)}</section>
+      </details>
+      <details className="shelving-reference"><summary>Recent inventory activity</summary><section className="card"><h3>Recently moved or adjusted</h3>{events.slice(0, 10).map((event) => <div className="recent-inventory-event" key={event.id}><span>{event.action_type.replaceAll("_", " ")}</span><strong>{itemById[event.item_id]?.title || event.item_id}</strong><small>{new Date(event.created_at).toLocaleString()}</small></div>)}</section>
+      </details>
     </section>
   );
 }

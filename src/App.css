@@ -5457,3 +5457,20 @@ button:disabled {
 .intake-save-bar > button { width: 100%; min-height: 44px; margin: 0; }
 .intake-review-card { padding-bottom: 0; overflow: visible; }
 @media (max-width: 760px) { .intake-save-bar { bottom: calc(69px + env(safe-area-inset-bottom)); } }
+
+.shelving-title-row { display: flex; align-items: center; gap: 10px; }
+.shelving-title-row h2 { margin: 0; }
+.shelving-help { position: relative; }
+.shelving-help > summary { display: flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid var(--border-strong); border-radius: 50%; list-style: none; cursor: pointer; font-weight: 700; }
+.shelving-help > summary::-webkit-details-marker { display: none; }
+.shelving-help p { position: absolute; top: 24px; right: 0; z-index: 30; width: min(300px, calc(100vw - 36px)); padding: 14px; border: 1px solid var(--border); border-radius: 8px; background: white; box-shadow: var(--shadow); font-size: .85rem; }
+.shelving-other-tools, .shelving-queue, .shelving-reference { margin: 10px 0; }
+.shelving-other-tools > summary, .shelving-queue > summary, .shelving-reference > summary { cursor: pointer; color: var(--sage-dark); font-weight: 700; font-size: .9rem; padding: 8px 0; }
+.shelving-queue-list { list-style: none; padding: 0; max-height: 300px; overflow: auto; }
+.shelving-queue-list li { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--border); }
+.shelving-queue-list small { display: block; color: var(--muted); }
+.shelving-queue-list button { flex-shrink: 0; margin: 0; }
+.location-inventory-workspace .mode-instructions[hidden], .location-inventory-workspace .mode-pill[hidden] { display: none; }
+.location-inventory-workspace .scan-console { margin-top: 8px; padding: 12px; }
+.location-inventory-workspace .scan-approval-card { position: sticky; bottom: 0; z-index: 20; padding: 12px; }
+@media (max-width: 760px) { .location-inventory-workspace .scan-approval-card { bottom: calc(69px + env(safe-area-inset-bottom)); } .location-inventory-header { gap: 10px; } .location-inventory-header .awaiting-shelving { display: flex; align-items: center; gap: 8px; width: auto; padding: 8px 12px; } }
