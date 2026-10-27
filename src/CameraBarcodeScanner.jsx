@@ -13,7 +13,7 @@ function cameraErrorMessage(error) {
   return "Camera scanning is unavailable. You can continue with the scanner or barcode field.";
 }
 
-export default function CameraBarcodeScanner({ active, onDetected, onClose, onError }) {
+export default function CameraBarcodeScanner({ active, onDetected, onClose, onError, singleShot = false }) {
   const videoRef = useRef(null);
   const detectedRef = useRef(onDetected);
   const closeRef = useRef(onClose);
@@ -30,13 +30,15 @@ export default function CameraBarcodeScanner({ active, onDetected, onClose, onEr
     if (!active) return undefined;
     const videoElement = videoRef.current;
     let disposed = false;
+    let accepted = false;
     let animationFrame = 0;
     let stream;
     let fallbackControls;
     const gate = createCameraDuplicateGate();
 
     const accept = (value) => {
-      if (disposed || !gate.shouldAccept(value)) return;
+      if (disposed || (singleShot && accepted) || !gate.shouldAccept(value)) return;
+      accepted = true;
       Promise.resolve(detectedRef.current(String(value).trim(), "camera")).catch((error) => {
         errorRef.current(error?.message || "The camera scan could not be processed.");
       });
@@ -73,6 +75,7 @@ export default function CameraBarcodeScanner({ active, onDetected, onClose, onEr
 
     async function startFallback() {
       const { BrowserMultiFormatReader } = await import("@zxing/browser");
+      if (disposed) return;
       const reader = new BrowserMultiFormatReader(undefined, {
         delayBetweenScanAttempts: 180,
         delayBetweenScanSuccess: 300,
@@ -80,6 +83,7 @@ export default function CameraBarcodeScanner({ active, onDetected, onClose, onEr
       fallbackControls = await reader.decodeFromVideoDevice(undefined, videoElement, (result) => {
         if (result) accept(result.getText());
       });
+      if (disposed) { fallbackControls.stop(); return; }
       setStarting(false);
     }
 
@@ -104,7 +108,7 @@ export default function CameraBarcodeScanner({ active, onDetected, onClose, onEr
       stream?.getTracks().forEach((track) => track.stop());
       if (videoElement) videoElement.srcObject = null;
     };
-  }, [active]);
+  }, [active, singleShot]);
 
   if (!active) return null;
   return <section className="camera-scanner" aria-label="Camera barcode scanner"><div className="camera-preview"><video ref={videoRef} muted playsInline aria-label="Live camera preview"/><div className="camera-target" aria-hidden="true"/></div><div className="camera-scanner-actions"><p>{starting ? "Starting rear camera…" : "Center one barcode inside the frame."}</p><button type="button" className="secondary" onClick={onClose}>Stop camera</button></div></section>;

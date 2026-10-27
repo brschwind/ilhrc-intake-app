@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from "react";
-import { BrowserMultiFormatReader } from "@zxing/browser";
+import CameraBarcodeScanner from "./CameraBarcodeScanner";
 import "./App.css";
 import { supabase } from "./supabaseClient";
 import jsPDF from "jspdf";
@@ -466,6 +466,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const coverCaptureInputRef = useRef(null);
   const coverCameraVideoRef = useRef(null);
   const coverCameraStreamRef = useRef(null);
+  const coverCameraRequestRef = useRef(0);
   const isbnInputRef = useRef(null);
   const earlyDuplicateLookupIdRef = useRef(0);
 
@@ -723,6 +724,8 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
 
   useEffect(() => {
     if (view === "add") return;
+    coverCameraRequestRef.current += 1;
+    setIsScanningBarcode(false);
 
     coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
     coverCameraStreamRef.current = null;
@@ -732,6 +735,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
 
   useEffect(
     () => () => {
+      coverCameraRequestRef.current += 1;
       coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
     },
     []
@@ -3049,6 +3053,7 @@ async function handleCoverPhoto(event) {
 }
 
 function stopCoverCamera() {
+  coverCameraRequestRef.current += 1;
   coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
   coverCameraStreamRef.current = null;
 
@@ -3063,7 +3068,11 @@ function stopCoverCamera() {
   setAnalysisStatus("");
 }
 
-async function attachCoverCameraStream(stream) {
+async function attachCoverCameraStream(stream, requestId) {
+  if (requestId !== coverCameraRequestRef.current) {
+    stream.getTracks().forEach((track) => track.stop());
+    return;
+  }
   coverCameraStreamRef.current = stream;
 
   if (!coverCameraVideoRef.current) {
@@ -3073,22 +3082,27 @@ async function attachCoverCameraStream(stream) {
 
   coverCameraVideoRef.current.srcObject = stream;
   await coverCameraVideoRef.current.play();
+  if (requestId !== coverCameraRequestRef.current) return;
 
   const activeDeviceId = stream.getVideoTracks()[0]?.getSettings?.().deviceId || "";
   setCoverCameraDeviceId(activeDeviceId);
 
   try {
     const devices = await navigator.mediaDevices.enumerateDevices();
+    if (requestId !== coverCameraRequestRef.current) return;
     setCoverCameraDevices(devices.filter((device) => device.kind === "videoinput"));
   } catch {
     setCoverCameraDevices([]);
   }
 
+  if (requestId !== coverCameraRequestRef.current) return;
   setCoverCameraReady(true);
   setAnalysisStatus("");
 }
 
 async function startCoverCamera(purpose = "analysis") {
+  setIsScanningBarcode(false);
+  const requestId = ++coverCameraRequestRef.current;
   coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
   coverCameraStreamRef.current = null;
   setCoverCameraPurpose(purpose);
@@ -3099,6 +3113,7 @@ async function startCoverCamera(purpose = "analysis") {
 
   await new Promise((resolve) => window.requestAnimationFrame(resolve));
 
+  if (requestId !== coverCameraRequestRef.current) return;
   if (!navigator.mediaDevices?.getUserMedia) {
     setAnalysisStatus("");
     setCoverCameraError(
@@ -3120,6 +3135,7 @@ async function startCoverCamera(purpose = "analysis") {
         audio: false,
       });
     } catch (error) {
+      if (requestId !== coverCameraRequestRef.current) return;
       if (error?.name === "NotAllowedError" || error?.name === "SecurityError") {
         throw error;
       }
@@ -3134,8 +3150,9 @@ async function startCoverCamera(purpose = "analysis") {
       });
     }
 
-    await attachCoverCameraStream(stream);
+    await attachCoverCameraStream(stream, requestId);
   } catch (error) {
+    if (requestId !== coverCameraRequestRef.current) return;
     coverCameraStreamRef.current?.getTracks().forEach((track) => track.stop());
     coverCameraStreamRef.current = null;
     setAnalysisStatus("");
@@ -3152,6 +3169,7 @@ async function startCoverCamera(purpose = "analysis") {
 }
 
 async function switchCoverCamera() {
+  const requestId = ++coverCameraRequestRef.current;
   if (coverCameraDevices.length < 2) {
     setCoverCameraError("No other camera is available in this browser.");
     return;
@@ -3178,8 +3196,9 @@ async function switchCoverCamera() {
       audio: false,
     });
 
-    await attachCoverCameraStream(stream);
+    await attachCoverCameraStream(stream, requestId);
   } catch {
+    if (requestId !== coverCameraRequestRef.current) return;
     setAnalysisStatus("");
     setCoverCameraError("The other camera could not start. Please try again.");
   }
@@ -3229,6 +3248,8 @@ async function captureCoverCameraPhoto() {
 }
 
 function startManualEntry() {
+  stopCoverCamera();
+  setIsScanningBarcode(false);
   setIntakeDetailsOpen(true);
   clearRuleFeedback();
   setEarlyDuplicateMatch(null);
@@ -3707,26 +3728,16 @@ function handleScannerButtonKeyDown(event, target = "book") {
   }
 }
 
-async function scanBarcode(target = "book") {
+function scanBarcode(target = "book") {
+  stopCoverCamera();
   setBarcodeScanTarget(target);
   setIsScanningBarcode(true);
+}
 
-  try {
-    const codeReader = new BrowserMultiFormatReader();
-
-    const result = await codeReader.decodeOnceFromVideoDevice(
-      undefined,
-      "barcode-video"
-    );
-
-    const scannedValue = result.getText();
-    if (target === "publisher") await capturePublisherBarcode(scannedValue);
-    else await lookupBookByBarcode(scannedValue);
-  } catch (error) {
-    alert("Barcode scan failed: " + error.message);
-  } finally {
-    setIsScanningBarcode(false);
-  }
+async function handleIntakeCameraBarcode(scannedValue) {
+  setIsScanningBarcode(false);
+  if (barcodeScanTarget === "publisher") await capturePublisherBarcode(scannedValue);
+  else await lookupBookByBarcode(scannedValue);
 }
 
 function improveDetectedBookData(data) {
@@ -8525,10 +8536,12 @@ function renderUserManagement() {
       </button>
     </div>
 
-    <video
-      id="barcode-video"
-      className="barcode-video"
-      hidden={!isScanningBarcode}
+    <CameraBarcodeScanner
+      active={isScanningBarcode}
+      singleShot
+      onDetected={handleIntakeCameraBarcode}
+      onClose={() => setIsScanningBarcode(false)}
+      onError={(message) => setAnalysisStatus(message)}
     />
 
 {coverCameraOpen && (
