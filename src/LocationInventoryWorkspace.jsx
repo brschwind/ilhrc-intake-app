@@ -378,13 +378,18 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
 
   useEffect(() => {
     if (!shelfViewId) return undefined;
+    const frame = requestAnimationFrame(() => shelfContentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    return () => cancelAnimationFrame(frame);
+  }, [shelfViewId]);
+
+  useEffect(() => {
+    if (!shelfViewId) return undefined;
     let cancelled = false;
     setShelfBooksStatus("loading");
-    const frame = requestAnimationFrame(() => shelfContentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     loadShelfBooks(supabase, stock, shelfViewId).then((books) => {
       if (!cancelled) { setShelfBooks(books); setShelfBooksStatus("ready"); }
     }).catch(() => { if (!cancelled) setShelfBooksStatus("error"); });
-    return () => { cancelled = true; cancelAnimationFrame(frame); };
+    return () => { cancelled = true; };
   }, [shelfViewId, stock]);
 
   function selectMode(nextMode) {
