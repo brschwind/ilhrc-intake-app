@@ -5474,3 +5474,18 @@ button:disabled {
 .location-inventory-workspace .scan-console { margin-top: 8px; padding: 12px; }
 .location-inventory-workspace .scan-approval-card { position: sticky; bottom: 0; z-index: 20; padding: 12px; }
 @media (max-width: 760px) { .location-inventory-workspace .scan-approval-card { bottom: calc(69px + env(safe-area-inset-bottom)); } .location-inventory-header { gap: 10px; } .location-inventory-header .awaiting-shelving { display: flex; align-items: center; gap: 8px; width: auto; padding: 8px 12px; } }
+
+.location-inventory-workspace { gap: 8px; }
+.location-inventory-workspace > .shelving-other-tools, .location-inventory-workspace > .shelving-queue, .location-inventory-workspace > .shelving-reference { margin: 0; }
+.scan-console-shelving .selected-shelf { display: none; }
+.location-inventory-workspace .scan-context label { display: grid; gap: 6px; width: 100%; min-width: 0; font-size: .85rem; font-weight: 700; }
+.location-inventory-workspace .scan-context select { width: 100%; min-height: 40px; box-sizing: border-box; }
+.location-inventory-workspace .scan-entry { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.location-inventory-workspace .scan-entry input { grid-column: 1 / -1; min-height: 44px; min-width: 0; width: 100%; box-sizing: border-box; font-size: .95rem; }
+.location-inventory-workspace .scan-entry button { min-width: 0; min-height: 44px; margin: 0; padding: 8px; font-size: .85rem; }
+.location-inventory-workspace .scan-session-actions { gap: 8px; font-size: .8rem; }
+.location-inventory-workspace .scan-session-actions > button { margin: 0; min-height: 36px; font-size: .8rem; }
+.shelving-session-tools { position: relative; }
+.shelving-session-tools > summary { cursor: pointer; padding: 8px 0; color: var(--sage-dark); }
+.shelving-session-tools[open] { padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: white; }
+.shelving-help p { right: auto; left: -140px; }
