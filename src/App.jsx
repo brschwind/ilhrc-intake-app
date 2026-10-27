@@ -1,3 +1,4 @@
+import { HOMESCHOOL_CURRICULA, knownCurriculum, curriculumFromBook } from "./homeschoolCurriculum.js";
 import { suggestBookCategory, canonicalCategory, priceCategory } from "./bookPricing.js";
 import { useRef, useState, useEffect } from "react";
 import CameraBarcodeScanner from "./CameraBarcodeScanner";
@@ -1410,7 +1411,7 @@ async function loadOptionLists() {
       ? await supabase.from("location_options").select("*").order("name")
       : { data: [], error: null };
 
-  setCurriculumOptions([...new Set(curricula?.map((x) => x.name) || [])]);
+  setCurriculumOptions([...new Set([...HOMESCHOOL_CURRICULA, ...(curricula || []).map(x => knownCurriculum(x.name)).filter(Boolean)])].sort());
   setSubjectOptions([...new Set(subjects?.map((x) => x.name) || [])]);
   setGradeOptions([...new Set(grades?.map((x) => x.name) || [])]);
   setCategoryOptions(categories || []);
@@ -1485,6 +1486,7 @@ async function applyRulesToImportedBook(importedBook, sourceType) {
   const isbnMemory = await loadExactIsbnMemory(importedBook.isbn);
   const result = mergeExactIsbnMemory(ruleResult, isbnMemory);
   result.book.category = canonicalCategory(result.book.category);
+  result.book.curriculum = curriculumFromBook(result.book);
   setIntakeDetailsOpen(!String(result.book.title || "").trim());
   setRuleSources(result.sources);
   setRuleConflicts(result.conflicts);
@@ -2175,7 +2177,7 @@ function optionExists(options, name) {
 
 async function addManagedTextOption(optionType) {
   const config = getManagedOptionConfig(optionType);
-  const cleanedName = cleanLocationName(optionAddNames[optionType]);
+  const cleanedName = optionType === "curriculum" ? knownCurriculum(optionAddNames[optionType]) : cleanLocationName(optionAddNames[optionType]);
 
   if (!cleanedName) {
     alert(`Enter a ${config.label.toLowerCase()} name.`);
@@ -3461,7 +3463,7 @@ setBookData(await applyRulesToImportedBook({
           ? openLibraryData.authors.map((author) => author.name || author.key || "").filter(Boolean).join(", ")
           : "",
         publisher: openLibraryData.publishers?.[0] || "",
-        curriculum: openLibraryData.publishers?.[0] || "",
+        curriculum: knownCurriculum(openLibraryData.publishers?.[0]),
         subject: "",
         grade_level: "",
         edition: "",
@@ -3572,7 +3574,7 @@ async function lookupBookByPublisherIdentifier(identification, currentBook = {})
     const importedBook = {
       ...currentBook,
       title: matched?.title || currentBook.title || "",
-      curriculum: remembered?.curriculum || currentBook.curriculum || matchedPublisher || "",
+      curriculum: knownCurriculum(remembered?.curriculum) || knownCurriculum(currentBook.curriculum) || knownCurriculum(matchedPublisher),
       publisher: matchedPublisher || currentBook.publisher || "",
       subject: remembered?.subject || curriculumPackage?.subject || curriculumContext?.group_label || currentBook.subject || "",
       grade_level: remembered?.grade_level || curriculumPackage?.grade_level || currentBook.grade_level || "",
@@ -3696,10 +3698,10 @@ async function handleIntakeCameraBarcode(scannedValue) {
 
 function improveDetectedBookData(data) {
   const text = `${data.title || ""} ${data.curriculum || ""} ${
-    data.notes || ""
+    data.publisher || ""
   }`.toLowerCase();
 
-  let curriculum = data.curriculum || "";
+  let curriculum = curriculumFromBook(data);
   let grade_level = data.grade_level || data.grade || "";
 
   if (text.includes("teaching textbook")) curriculum = "Teaching Textbooks";
@@ -3726,7 +3728,7 @@ function improveDetectedBookData(data) {
 
   return {
     ...data,
-    curriculum,
+    curriculum: knownCurriculum(curriculum),
     grade_level,
   };
 }
@@ -4694,7 +4696,7 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
   }
 
 async function saveOptionIfNew(tableName, value) {
-  const cleanedValue = (value || "").trim();
+  const cleanedValue = tableName === "curriculum_options" ? knownCurriculum(value) : (value || "").trim();
 
   if (!cleanedValue || cleanedValue === "Other") return;
 
@@ -4907,7 +4909,7 @@ async function saveItem() {
   try {
   const itemDraft = {
     title: bookData.title || "",
-    curriculum: bookData.curriculum || "",
+    curriculum: knownCurriculum(bookData.curriculum),
     publisher: String(bookData.publisher || "").trim(),
     subject: bookData.subject || "",
     grade_level: bookData.grade_level || bookData.grade || "",
@@ -5637,7 +5639,7 @@ async function updateItem() {
     .from("items")
     .update({
       title: editData.title || "",
-      curriculum: editData.curriculum || "",
+      curriculum: knownCurriculum(editData.curriculum),
       subject: editData.subject || "",
       publisher: editData.publisher || "",
       grade_level: editData.grade_level || "",
@@ -8699,34 +8701,19 @@ function renderUserManagement() {
               value={
                 curriculumOptions.includes(bookData.curriculum)
                   ? bookData.curriculum
-                  : "Other"
+                  : ""
               }
               onChange={(e) =>
                 updateIntakeField("curriculum", e.target.value === "Other" ? "" : e.target.value)
               }
             >
-              <option value="">Choose curriculum</option>
+              <option value="">No known curriculum</option>
               {curriculumOptions.map((option) => (
                 <option key={option} value={option}>
                   {option}
                 </option>
               ))}
             </select>
-
-            {(!curriculumOptions.includes(bookData.curriculum) ||
-              bookData.curriculum === "") && (
-              <>
-                <input
-                  placeholder="Add new curriculum"
-                  value={bookData.curriculum || ""}
-                  onChange={(e) => updateIntakeField("curriculum", e.target.value)}
-                />
-
-                <p className="helper-text">
-                  This will be added to your curriculum list when you save.
-                </p>
-              </>
-            )}
 
             {ruleSources.curriculum && (
               <p className="rule-source">{getIntakeSourceLabel(ruleSources.curriculum)}</p>
@@ -9269,7 +9256,7 @@ function renderUserManagement() {
   value={
     curriculumOptions.includes(editData.curriculum)
       ? editData.curriculum
-      : "Other"
+      : ""
   }
   onChange={(e) =>
     setEditData({
@@ -9278,24 +9265,13 @@ function renderUserManagement() {
     })
   }
 >
-  <option value="">Choose curriculum</option>
+  <option value="">No known curriculum</option>
   {curriculumOptions.map((option) => (
     <option key={option} value={option}>
       {option}
     </option>
   ))}
 </select>
-
-{(!curriculumOptions.includes(editData.curriculum) ||
-  editData.curriculum === "") && (
-  <input
-    placeholder="Enter curriculum"
-    value={editData.curriculum || ""}
-    onChange={(e) =>
-      setEditData({ ...editData, curriculum: e.target.value })
-    }
-  />
-)}
 
 <label>Publisher</label>
 <input

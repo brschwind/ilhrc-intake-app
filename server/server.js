@@ -1896,14 +1896,14 @@ Return ONLY valid JSON in this exact format:
 Rules:
 
 * Use the exact title visible on the book whenever possible.
-* Curriculum should be the homeschool publisher, curriculum provider, or educational brand if recognizable.
+* Curriculum must be a recognized homeschool curriculum program or provider from the supplied curricula list. General publishers belong only in publisher. If no known homeschool curriculum is identifiable, return an empty curriculum string. Never return Unknown Curriculum, Other, or an invented curriculum.
 
 Common curriculum examples include:
 Apologia, Abeka, BJU Press, Notgrass, IEW, Saxon, Math-U-See, Master Books, The Good and the Beautiful, Teaching Textbooks, Sonlight, Mystery of History, All About Reading, All About Spelling, Singapore Math, Alpha Omega, Lifepac, Bob Jones, Rod & Staff, Christian Light Education, Easy Grammar, Shurley English, Veritas Press, Memoria Press, Answers in Genesis, ACE, and Classical Conversations.
 
 * If the curriculum is clearly visible, populate the curriculum field.
 
-* If the curriculum is not visible but strongly implied by branding, use your best judgment.
+* Do not infer a curriculum from a general publisher, subject, or uncertainty notes. Recognizable homeschool branding may identify a supplied curriculum.
 
 * If uncertain, leave curriculum blank and explain in notes.
 
