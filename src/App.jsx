@@ -440,11 +440,6 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
-  const [loginMethod, setLoginMethod] = useState("code");
-  const [loginCode, setLoginCode] = useState("");
-  const [codeSentTo, setCodeSentTo] = useState("");
-  const [codeMessage, setCodeMessage] = useState("");
-  const [codeResendAt, setCodeResendAt] = useState(0);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
   const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
@@ -978,65 +973,22 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
       return;
     }
     setLoginPassword("");
-    setLoginCode("");
-    setCodeSentTo("");
-    setCodeMessage("");
     setStaffSignInOpen(false);
     setView("add");
-  }
-
-  async function sendLoginCode() {
-    const email = loginEmail.trim();
-    if (!email || !email.includes("@")) {
-      setAuthMessage("Enter your team email address first.");
-      return;
-    }
-    if (Date.now() < codeResendAt) {
-      setAuthMessage("Please wait a minute before requesting another code.");
-      return;
-    }
-    setLoginLoading(true);
-    setAuthMessage("");
-    setCodeMessage("");
-    try {
-      const { error } = await supabase.auth.signInWithOtp({
-        email,
-        options: { shouldCreateUser: false },
-      });
-      if (error) {
-        setAuthMessage(error.status === 429
-          ? "Too many requests. Please wait before requesting another code."
-          : "Could not send a code. Check your team email address or use password sign-in.");
-        return;
-      }
-      setCodeSentTo(email);
-      setLoginCode("");
-      setCodeResendAt(Date.now() + 60000);
-      setCodeMessage("If this email belongs to a team account, a sign-in code is on its way. Check your inbox and spam folder, then enter it here.");
-    } catch {
-      setAuthMessage("Could not connect. Please try again.");
-    } finally {
-      setLoginLoading(false);
-    }
   }
 
   async function handleLogin(event) {
     event.preventDefault();
     if (loginLoading) return;
-    if (loginMethod === "code" && !codeSentTo) {
-      await sendLoginCode();
-      return;
-    }
     setLoginLoading(true);
     setAuthMessage("");
     try {
-      const { data, error } = loginMethod === "code"
-        ? await supabase.auth.verifyOtp({ email: codeSentTo, token: loginCode.trim(), type: "email" })
-        : await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPassword });
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: loginEmail.trim(),
+        password: loginPassword,
+      });
       if (error || !data.session) {
-        setAuthMessage(loginMethod === "code"
-          ? "That code is invalid or expired. Try again or request a new code."
-          : "Invalid email or password.");
+        setAuthMessage("Invalid email or password.");
         return;
       }
       await finishStaffLogin(data.session);
@@ -6529,7 +6481,7 @@ function renderLoginPanel() {
   return (
     <section className="card auth-card">
       <h2>Staff Sign In</h2>
-      <p>Use a code sent to your team email. Enter it here to stay in this browser.</p>
+      <p>Sign in with your IL HRC team account to use intake and inventory tools.</p>
 
       <form onSubmit={forgotPasswordOpen ? requestPasswordReset : handleLogin}>
         <label htmlFor="staff-login-email">Email</label>
@@ -6538,7 +6490,7 @@ function renderLoginPanel() {
           id="staff-login-email"
           name="email"
           required
-          disabled={loginLoading || Boolean(codeSentTo)}
+          disabled={loginLoading}
           autoCapitalize="none"
           spellCheck={false}
           value={loginEmail}
@@ -6546,7 +6498,7 @@ function renderLoginPanel() {
           onChange={(e) => setLoginEmail(e.target.value)}
         />
 
-        {!forgotPasswordOpen && loginMethod === "password" && (
+        {!forgotPasswordOpen && (
           <>
             <label htmlFor="staff-login-password">Password</label>
             <input
@@ -6561,21 +6513,6 @@ function renderLoginPanel() {
           </>
         )}
 
-        {!forgotPasswordOpen && loginMethod === "code" && codeSentTo && (
-          <>
-            <label htmlFor="staff-login-code">Email sign-in code</label>
-            <input id="staff-login-code" name="code" type="text" inputMode="numeric"
-              autoComplete="one-time-code" required autoFocus pattern="[0-9]{6,10}"
-              value={loginCode} onChange={(event) => setLoginCode(event.target.value.replace(/\D/g, ""))} />
-            <p>Code sent to {codeSentTo}</p>
-            <div className="auth-actions">
-              <button type="button" className="text-button" disabled={loginLoading} onClick={sendLoginCode}>Resend code</button>
-              <button type="button" className="text-button" disabled={loginLoading}
-                onClick={() => { setCodeSentTo(""); setLoginCode(""); setCodeMessage(""); setAuthMessage(""); }}>Use a different email</button>
-            </div>
-          </>
-        )}
-        {codeMessage && <p className="status-message" role="status">{codeMessage}</p>}
         {authMessage && <p className="warning-text">{authMessage}</p>}
         {forgotPasswordMessage && (
           <p className="status-message">{forgotPasswordMessage}</p>
@@ -6596,9 +6533,9 @@ function renderLoginPanel() {
                 : "Send Reset Link"
               : loginLoading
                 ? "Signing In..."
-                : loginMethod === "code" ? (codeSentTo ? "Verify Code & Sign In" : "Email Me a Code") : "Sign In"}
+                : "Sign In"}
           </button>
-          {loginMethod === "password" && <button
+          <button
             className="text-button"
             type="button"
             disabled={loginLoading || forgotPasswordLoading}
@@ -6610,14 +6547,6 @@ function renderLoginPanel() {
             }}
           >
             {forgotPasswordOpen ? "Back to sign in" : "Forgot password?"}
-          </button>}
-          <button className="text-button" type="button" disabled={loginLoading || forgotPasswordLoading}
-            onClick={() => {
-              setLoginMethod((current) => current === "code" ? "password" : "code");
-              setForgotPasswordOpen(false); setCodeSentTo(""); setLoginCode(""); setLoginPassword("");
-              setCodeMessage(""); setAuthMessage(""); setForgotPasswordMessage(""); setForgotPasswordError("");
-            }}>
-            {loginMethod === "code" ? "Use a password instead" : "Use an email code instead"}
           </button>
         </div>
       </form>
