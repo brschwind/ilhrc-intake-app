@@ -5489,3 +5489,36 @@ button:disabled {
 .shelving-session-tools > summary { cursor: pointer; padding: 8px 0; color: var(--sage-dark); }
 .shelving-session-tools[open] { padding: 8px; border: 1px solid var(--border); border-radius: 8px; background: white; }
 .shelving-help p { right: auto; left: -140px; }
+
+.location-inventory-header { position: relative; flex-direction: row; align-items: center; }
+.shelf-settings-button { margin: 0; width: 40px; height: 40px; padding: 0; border: 1px solid var(--border); border-radius: 50%; background: white; color: var(--sage-dark); font-size: 1.5rem; }
+.shelf-mode-toggle { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px; border-radius: 10px; background: #e8ede9; }
+.shelf-mode-toggle > button { min-height: 40px; margin: 0; border: 0; border-radius: 7px; background: transparent; color: var(--sage-dark); font-weight: 700; }
+.shelf-mode-toggle > button[aria-pressed="true"] { background: var(--sage-dark); color: white; }
+.location-inventory-workspace > .awaiting-shelving { display: flex; align-items: center; gap: 10px; width: 100%; margin: 0; padding: 10px 14px; text-align: left; }
+.location-inventory-workspace > .awaiting-shelving::after { content: "›"; margin-left: auto; font-size: 1.5rem; }
+.shelf-camera-start { width: 100%; min-height: 46px; margin-top: 12px; }
+.shelf-camera-hint { margin: 6px 0 0; color: var(--muted); font-size: .8rem; }
+.shelf-tile-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.shelf-tile { display: grid; gap: 5px; min-height: 66px; margin: 0; padding: 10px; border: 1px solid var(--border); border-radius: 8px; background: white; color: var(--sage-dark); }
+.shelf-tile strong { font-size: 1rem; }
+.shelf-tile span { font-size: .75rem; }
+.shelf-tile.active { border: 2px solid var(--sage-dark); background: var(--sage-light); }
+.shelf-browser h3, .shelving-queue h3 { margin: 8px 0; font-size: 1rem; }
+.shelf-book-list { padding: 12px; margin-top: 10px; background: white; border: 1px solid var(--border); border-radius: 8px; }
+.shelf-book-list ul { margin: 0; padding: 0; list-style: none; max-height: 420px; overflow: auto; }
+.shelf-book-list li { display: flex; justify-content: space-between; align-items: start; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: .85rem; }
+.shelf-book-list small { display: block; color: var(--muted); margin-top: 4px; }
+.shelf-book-list li > span { flex-shrink: 0; font-size: .75rem; }
+.shelf-list-heading { display: flex; align-items: center; justify-content: space-between; }
+.shelf-settings-panel { display: grid; gap: 12px; }
+.shelf-settings-panel > details > summary { cursor: pointer; font-weight: 700; }
+.shelf-settings-panel label { display: grid; gap: 4px; }
+.shelf-settings-panel .advanced-location-tools { border: 0; padding: 0; background: transparent; }
+
+.camera-scan-guidance { margin: 8px 0; font-size: .82rem; }
+.camera-scanner-actions { justify-content: flex-end; gap: 8px; }
+.camera-scanner-actions > button { min-height: 40px; margin: 0; font-size: .85rem; }
+.camera-zoom { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: .8rem; }
+.camera-zoom input { flex: 1; min-width: 0; }
+.shelf-settings-button:focus-visible, .shelf-tile:focus-visible { outline: 3px solid var(--sage-dark); outline-offset: 2px; }

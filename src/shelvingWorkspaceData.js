@@ -28,3 +28,18 @@ export async function loadShelvingWorkspace(client) {
   }
   return { locations: locationsResult.data || [], stock, events: eventsResult.data || [], queueItems };
 }
+
+export async function loadShelfBooks(client, stock, locationId) {
+  const rows = stock.filter((row) => row.location_id === locationId && Number(row.quantity) > 0);
+  const ids = [...new Set(rows.map((row) => String(row.item_id)))];
+  const books = [];
+  for (let offset = 0; offset < ids.length; offset += 200) {
+    const { data, error } = await client.from("items").select("id,title,sku,isbn,curriculum,publisher")
+      .in("id", ids.slice(offset, offset + 200));
+    if (error) throw error;
+    books.push(...(data || []));
+  }
+  const byId = Object.fromEntries(books.map((book) => [String(book.id), book]));
+  return rows.map((row) => ({ ...(byId[String(row.item_id)] || { id: row.item_id, title: "Catalog record unavailable" }), quantity: Number(row.quantity) }))
+    .sort((a, b) => (a.title || "").localeCompare(b.title || ""));
+}

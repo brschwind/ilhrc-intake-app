@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { loadAllLocationStock, loadShelvingWorkspace } from "./shelvingWorkspaceData.js";
+import { loadAllLocationStock, loadShelvingWorkspace, loadShelfBooks } from "./shelvingWorkspaceData.js";
 function fixture(stock, failOffset = -1) {
   const ranges = [];
   const client = { from(table) {
@@ -39,4 +39,15 @@ test("empty stock remains a valid loaded queue", async () => {
   const { client } = fixture([]);
   const result = await loadShelvingWorkspace(client);
   assert.deepEqual(result.stock, []); assert.deepEqual(result.queueItems, []);
+});
+
+test("shelf browser loads every book in batches and preserves copy counts", async () => {
+  const stock = Array.from({length: 450}, (_, i) => ({item_id: String(i),location_id:"A1",quantity: i + 1}));
+  stock.push({item_id:"other", location_id:"A2", quantity:99});
+  const {client}=fixture(stock);
+  const books=await loadShelfBooks(client, stock, "A1");
+  assert.equal(books.length,450);
+  assert.equal(books.find(book=>book.id==="449").quantity,450);
+  assert.ok(books.every(book=>book.sku));
+  assert.ok(!books.some(book=>book.id==="other"));
 });
