@@ -3810,11 +3810,46 @@ button:disabled {
     backdrop-filter: blur(12px);
   }
 
-  .staff-mobile-nav.has-connections {
-    grid-template-columns: repeat(6, minmax(0, 1fr));
+  .staff-mobile-more {
+    position: relative;
+    min-width: 0;
   }
 
-  .staff-mobile-nav button {
+  .staff-mobile-more > summary {
+    list-style: none;
+  }
+
+  .staff-mobile-more > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .staff-mobile-more-panel {
+    position: absolute;
+    right: 0;
+    bottom: calc(100% + 14px);
+    width: min(260px, calc(100vw - 24px));
+    max-height: calc(100dvh - 110px - env(safe-area-inset-bottom));
+    overflow-y: auto;
+    padding: 8px;
+    border: 1px solid var(--border-strong);
+    border-radius: 12px;
+    background: white;
+    box-shadow: 0 -6px 28px rgba(24, 33, 28, 0.18);
+  }
+
+  .staff-mobile-nav .staff-mobile-more-panel button {
+    width: 100%;
+    min-height: 48px;
+    padding: 10px 12px;
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    font-size: 0.9rem;
+    line-height: 1.3;
+  }
+
+  .staff-mobile-nav button,
+  .staff-mobile-more > summary {
     position: relative;
     display: flex;
     min-width: 0;
@@ -3835,12 +3870,15 @@ button:disabled {
     cursor: pointer;
   }
 
-  .staff-mobile-nav button.active {
+  .staff-mobile-nav button.active,
+  .staff-mobile-more > summary.active,
+  .staff-mobile-more[open] > summary {
     background: var(--sage-light);
     color: var(--sage-dark);
   }
 
-  .staff-mobile-nav button:focus-visible {
+  .staff-mobile-nav button:focus-visible,
+  .staff-mobile-more > summary:focus-visible {
     outline: 3px solid rgba(112, 138, 129, 0.38);
     outline-offset: -2px;
   }

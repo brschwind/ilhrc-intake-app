@@ -440,6 +440,11 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginLoading, setLoginLoading] = useState(false);
+  const [loginMethod, setLoginMethod] = useState("code");
+  const [loginCode, setLoginCode] = useState("");
+  const [codeSentTo, setCodeSentTo] = useState("");
+  const [codeMessage, setCodeMessage] = useState("");
+  const [codeResendAt, setCodeResendAt] = useState(0);
   const [forgotPasswordOpen, setForgotPasswordOpen] = useState(false);
   const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
   const [forgotPasswordMessage, setForgotPasswordMessage] = useState("");
@@ -685,7 +690,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
     initializeAuth();
 
     const { data: listener } = supabase.auth.onAuthStateChange(
-      async (event, nextSession) => {
+      (event, nextSession) => {
         if (event === "PASSWORD_RECOVERY") {
           setPasswordRecoveryMode(true);
           setRecoveryPasswordError("");
@@ -695,7 +700,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
         setPasswordSetupRequired(sessionRequiresPasswordSetup(nextSession));
 
         if (nextSession) {
-          await refreshProfile(nextSession);
+          setTimeout(() => { refreshProfile(nextSession); }, 0);
         } else {
           setProfile(null);
           setProfileLoading(false);
@@ -965,38 +970,81 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
     ]);
   }
 
-  async function handleLogin(event) {
-    event.preventDefault();
-    setLoginLoading(true);
-    setAuthMessage("");
-
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email: loginEmail.trim(),
-      password: loginPassword,
-    });
-
-    if (error) {
-      setAuthMessage("Invalid email or password.");
-      setLoginLoading(false);
-      return;
-    }
-
-    const nextProfile = await refreshProfile(data.session);
-    setLoginLoading(false);
-
-    if (!nextProfile) {
-      setLoginLoading(false);
-      return;
-    }
-
+  async function finishStaffLogin(nextSession) {
+    const nextProfile = await refreshProfile(nextSession);
+    if (!nextProfile) return;
     if (nextProfile.is_active === false) {
       setAuthMessage("This account is inactive. Please contact an Admin.");
       return;
     }
-
     setLoginPassword("");
+    setLoginCode("");
+    setCodeSentTo("");
+    setCodeMessage("");
     setStaffSignInOpen(false);
     setView("add");
+  }
+
+  async function sendLoginCode() {
+    const email = loginEmail.trim();
+    if (!email || !email.includes("@")) {
+      setAuthMessage("Enter your team email address first.");
+      return;
+    }
+    if (Date.now() < codeResendAt) {
+      setAuthMessage("Please wait a minute before requesting another code.");
+      return;
+    }
+    setLoginLoading(true);
+    setAuthMessage("");
+    setCodeMessage("");
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: false },
+      });
+      if (error) {
+        setAuthMessage(error.status === 429
+          ? "Too many requests. Please wait before requesting another code."
+          : "Could not send a code. Check your team email address or use password sign-in.");
+        return;
+      }
+      setCodeSentTo(email);
+      setLoginCode("");
+      setCodeResendAt(Date.now() + 60000);
+      setCodeMessage("If this email belongs to a team account, a sign-in code is on its way. Check your inbox and spam folder, then enter it here.");
+    } catch {
+      setAuthMessage("Could not connect. Please try again.");
+    } finally {
+      setLoginLoading(false);
+    }
+  }
+
+  async function handleLogin(event) {
+    event.preventDefault();
+    if (loginLoading) return;
+    if (loginMethod === "code" && !codeSentTo) {
+      await sendLoginCode();
+      return;
+    }
+    setLoginLoading(true);
+    setAuthMessage("");
+    try {
+      const { data, error } = loginMethod === "code"
+        ? await supabase.auth.verifyOtp({ email: codeSentTo, token: loginCode.trim(), type: "email" })
+        : await supabase.auth.signInWithPassword({ email: loginEmail.trim(), password: loginPassword });
+      if (error || !data.session) {
+        setAuthMessage(loginMethod === "code"
+          ? "That code is invalid or expired. Try again or request a new code."
+          : "Invalid email or password.");
+        return;
+      }
+      await finishStaffLogin(data.session);
+    } catch {
+      setAuthMessage("Could not connect. Please try again.");
+    } finally {
+      setLoginLoading(false);
+    }
   }
 
   async function requestPasswordReset(event) {
@@ -6481,22 +6529,31 @@ function renderLoginPanel() {
   return (
     <section className="card auth-card">
       <h2>Staff Sign In</h2>
-      <p>Sign in with your IL HRC team account to use intake and inventory tools.</p>
+      <p>Use a code sent to your team email. Enter it here to stay in this browser.</p>
 
       <form onSubmit={forgotPasswordOpen ? requestPasswordReset : handleLogin}>
-        <label>Email</label>
+        <label htmlFor="staff-login-email">Email</label>
         <input
           type="email"
+          id="staff-login-email"
+          name="email"
+          required
+          disabled={loginLoading || Boolean(codeSentTo)}
+          autoCapitalize="none"
+          spellCheck={false}
           value={loginEmail}
           autoComplete="email"
           onChange={(e) => setLoginEmail(e.target.value)}
         />
 
-        {!forgotPasswordOpen && (
+        {!forgotPasswordOpen && loginMethod === "password" && (
           <>
-            <label>Password</label>
+            <label htmlFor="staff-login-password">Password</label>
             <input
               type="password"
+              id="staff-login-password"
+              name="password"
+              required
               value={loginPassword}
               autoComplete="current-password"
               onChange={(e) => setLoginPassword(e.target.value)}
@@ -6504,6 +6561,21 @@ function renderLoginPanel() {
           </>
         )}
 
+        {!forgotPasswordOpen && loginMethod === "code" && codeSentTo && (
+          <>
+            <label htmlFor="staff-login-code">Email sign-in code</label>
+            <input id="staff-login-code" name="code" type="text" inputMode="numeric"
+              autoComplete="one-time-code" required autoFocus pattern="[0-9]{6,10}"
+              value={loginCode} onChange={(event) => setLoginCode(event.target.value.replace(/\D/g, ""))} />
+            <p>Code sent to {codeSentTo}</p>
+            <div className="auth-actions">
+              <button type="button" className="text-button" disabled={loginLoading} onClick={sendLoginCode}>Resend code</button>
+              <button type="button" className="text-button" disabled={loginLoading}
+                onClick={() => { setCodeSentTo(""); setLoginCode(""); setCodeMessage(""); setAuthMessage(""); }}>Use a different email</button>
+            </div>
+          </>
+        )}
+        {codeMessage && <p className="status-message" role="status">{codeMessage}</p>}
         {authMessage && <p className="warning-text">{authMessage}</p>}
         {forgotPasswordMessage && (
           <p className="status-message">{forgotPasswordMessage}</p>
@@ -6524,9 +6596,9 @@ function renderLoginPanel() {
                 : "Send Reset Link"
               : loginLoading
                 ? "Signing In..."
-                : "Sign In"}
+                : loginMethod === "code" ? (codeSentTo ? "Verify Code & Sign In" : "Email Me a Code") : "Sign In"}
           </button>
-          <button
+          {loginMethod === "password" && <button
             className="text-button"
             type="button"
             disabled={loginLoading || forgotPasswordLoading}
@@ -6538,6 +6610,14 @@ function renderLoginPanel() {
             }}
           >
             {forgotPasswordOpen ? "Back to sign in" : "Forgot password?"}
+          </button>}
+          <button className="text-button" type="button" disabled={loginLoading || forgotPasswordLoading}
+            onClick={() => {
+              setLoginMethod((current) => current === "code" ? "password" : "code");
+              setForgotPasswordOpen(false); setCodeSentTo(""); setLoginCode(""); setLoginPassword("");
+              setCodeMessage(""); setAuthMessage(""); setForgotPasswordMessage(""); setForgotPasswordError("");
+            }}>
+            {loginMethod === "code" ? "Use a password instead" : "Use an email code instead"}
           </button>
         </div>
       </form>
@@ -7998,7 +8078,7 @@ function renderUserManagement() {
       )}
 
       {showStaffShell && (
-        <nav className={`staff-mobile-nav ${connectionsStaffEnabled && connectionsWorkflowService ? "has-connections" : ""}`} aria-label="Primary staff navigation">
+        <nav className="staff-mobile-nav" aria-label="Primary staff navigation">
           <button
             type="button"
             className={view === "add" ? "active" : ""}
@@ -8039,6 +8119,54 @@ function renderUserManagement() {
           </button>
           <button
             type="button"
+            className={view === "requests" ? "active" : ""}
+            aria-current={view === "requests" ? "page" : undefined}
+            onClick={() => {
+              setView("requests");
+              cancelEditing();
+              loadItems();
+            }}
+          >
+            <span className="staff-mobile-nav-icon-wrap">
+              <StaffNavIcon name="requests" />
+              {staffRequestAttentionCount > 0 && (
+                <span className="staff-mobile-nav-badge">
+                  {staffRequestAttentionCount}
+                </span>
+              )}
+            </span>
+            <span>Requests</span>
+          </button>
+          <details
+            className="staff-mobile-more"
+            onBlur={(event) => {
+              if (!event.currentTarget.contains(event.relatedTarget)) event.currentTarget.open = false;
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.currentTarget.open = false;
+                event.currentTarget.querySelector("summary").focus();
+              }
+            }}
+          >
+            <summary className={["labels", "users", "curricula", "connections", "options"].includes(view) ? "active" : ""} aria-label="More navigation options">
+              <svg className="staff-mobile-nav-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+                <circle cx="5" cy="12" r="2" /><circle cx="12" cy="12" r="2" /><circle cx="19" cy="12" r="2" />
+              </svg>
+              <span>More</span>
+            </summary>
+            <div className="staff-mobile-more-panel" role="group" aria-label="More staff navigation"
+              onClick={(event) => {
+                if (event.target.closest("button:not(:disabled)")) event.currentTarget.closest("details").open = false;
+              }}
+            >
+              <button type="button" className={view === "labels" ? "active" : ""}
+                aria-current={view === "labels" ? "page" : undefined}
+                onClick={() => { setView("labels"); cancelEditing(); loadItems(); }}>
+                <StaffNavIcon name="labels" /><span>Print Labels</span>
+              </button>
+          <button
+            type="button"
             className={view === "users" ? "active" : ""}
             aria-current={view === "users" ? "page" : undefined}
             aria-label={isAdmin ? "Team" : "Team, admin access required"}
@@ -8064,26 +8192,7 @@ function renderUserManagement() {
             <StaffNavIcon name="lists" />
             <span>Lists</span>
           </button>
-          <button
-            type="button"
-            className={view === "requests" ? "active" : ""}
-            aria-current={view === "requests" ? "page" : undefined}
-            onClick={() => {
-              setView("requests");
-              cancelEditing();
-              loadItems();
-            }}
-          >
-            <span className="staff-mobile-nav-icon-wrap">
-              <StaffNavIcon name="requests" />
-              {staffRequestAttentionCount > 0 && (
-                <span className="staff-mobile-nav-badge">
-                  {staffRequestAttentionCount}
-                </span>
-              )}
-            </span>
-            <span>Requests</span>
-          </button>
+
           {connectionsStaffEnabled && connectionsWorkflowService && (
             <button
               type="button"
@@ -8098,6 +8207,14 @@ function renderUserManagement() {
               <span>Connections</span>
             </button>
           )}
+
+              <button type="button" className={view === "options" ? "active" : ""}
+                aria-current={view === "options" ? "page" : undefined}
+                onClick={() => { setView("options"); cancelEditing(); loadItems(); loadOptionLists(); }}>
+                <StaffNavIcon name="settings" /><span>Settings</span>
+              </button>
+            </div>
+          </details>
         </nav>
       )}
 
