@@ -106,6 +106,25 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     return () => { cancelled = true; };
   }, []);
 
+  async function clearShelvingQueue() {
+    if (busy || scanBusyRef.current || session || workspaceStatus !== "ready" || awaitingShelving <= 0) return;
+    if (!confirm("Move all " + awaitingShelving + " waiting copies to Unverified Inventory? Book records and total copy counts will be preserved. They will no longer appear in the shelving queue, and no shelf will be assigned.")) return;
+    scanBusyRef.current = true;
+    setBusy(true);
+    setCameraOpen(false);
+    try {
+      const { data, error } = await supabase.rpc("clear_shelving_queue", { p_expected_copies: awaitingShelving });
+      if (error) throw error;
+      await refresh();
+      setMessage((data?.[0]?.moved_copies ?? awaitingShelving) + " copies moved to Unverified Inventory. Book records and total counts are unchanged.");
+    } catch (error) {
+      setMessage("Queue was not cleared: " + error.message);
+    } finally {
+      scanBusyRef.current = false;
+      setBusy(false);
+    }
+  }
+
   async function refresh() {
     await Promise.all([loadWorkspace(), onInventoryChanged?.()]);
   }
@@ -432,6 +451,8 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
 
       {queueOpen && <section className="shelving-queue" id="shelving-ready-books" aria-label="Books ready to shelve">
         <h3>Ready to shelve</h3>
+        <button type="button" className="secondary" disabled={busy || Boolean(session) || workspaceStatus !== "ready" || awaitingShelving === 0} title={session ? "Finish the current scan session before clearing the queue" : "Move waiting copies to Unverified Inventory; preserve counts"} onClick={clearShelvingQueue}>Clear shelving queue</button>
+        {session && <p className="helper-text">Finish the current scan session to clear the queue.</p>}
         <button type="button" className="text-button" disabled={busy} onClick={refresh}>Refresh queue</button>{!locationId && <p className="helper-text">Choose a shelf below to enable the Shelve buttons.</p>}
         {workspaceStatus === "loading" ? <p>Loading books…</p> : workspaceStatus === "error" ? <p>The queue could not load. Refresh to try again.</p> : awaitingShelving === 0 ? <p>No copies are currently recorded in Processing.</p> : <ul className="shelving-queue-list">{stock.filter((row) => row.location_id === processingLocation?.id).map((row) => <li key={row.item_id}><div><strong>{itemById[String(row.item_id)]?.title || "Book " + row.item_id}</strong><small>{itemById[String(row.item_id)]?.sku} · {row.quantity} {Number(row.quantity) === 1 ? "copy" : "copies"}</small></div><button type="button" className="secondary" disabled={mode !== "shelving" || busy || Boolean(pending) || !locationId || workspaceStatus !== "ready"} onClick={() => processScan(itemById[String(row.item_id)]?.sku || itemById[String(row.item_id)]?.isbn || "")}>Shelve</button></li>)}</ul>}
       </section>}

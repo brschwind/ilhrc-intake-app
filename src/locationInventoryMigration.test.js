@@ -174,3 +174,27 @@ test("continuous shelving preserves totals, rejects exhausted Processing, and su
     assert.equal(Number(await scalar(db,"select total_quantity from public.inventory_item_totals where item_id='auto-book'")),2);
   } finally { await db.close(); }
 });
+
+test("clearing the shelving queue moves copies to unverified and preserves all inventory totals", async () => {
+  const db = await database();
+  try {
+    await db.exec(await readFile(new URL("../supabase/migrations/20261027200000_clear_shelving_queue.sql", import.meta.url), "utf8"));
+    await db.exec("insert into public.items (id,sku,title,quantity) values ('clear-one','CLEAR-1','First book',0),('clear-two','CLEAR-2','Second book',0)");
+    const processing = await scalar(db, "select id from public.inventory_locations where code='PROCESSING'");
+    const unverified = await scalar(db, "select id from public.inventory_locations where code='UNVERIFIED_LEGACY'");
+    await db.query("select public.adjust_inventory_at_location('clear-one',$1,2,'intake')",[processing]);
+    await db.query("select public.adjust_inventory_at_location('clear-two',$1,1,'intake')",[processing]);
+    await db.query("select public.adjust_inventory_at_location('clear-one',$1,3,'legacy_backfill')",[unverified]);
+    await assert.rejects(db.query("select * from public.clear_shelving_queue(2)"), /queue changed/);
+    assert.equal(Number(await scalar(db,"select sum(quantity) from public.inventory_by_location where location_id=$1",[processing])),3);
+    const result = await db.query("select * from public.clear_shelving_queue(3)");
+    assert.equal(Number(result.rows[0].moved_copies),3);
+    assert.equal(Number(result.rows[0].moved_titles),2);
+    assert.equal(Number(await scalar(db,"select sum(quantity) from public.inventory_by_location where location_id=$1",[processing])),0);
+    assert.equal(Number(await scalar(db,"select sum(quantity) from public.inventory_by_location where location_id=$1",[unverified])),6);
+    assert.equal(Number(await scalar(db,"select count(*) from public.items")),2);
+    assert.equal(Number(await scalar(db,"select count(*) from public.inventory_events where notes like 'Shelving queue cleared%'")),2);
+    await db.exec("create or replace function public.current_profile_is_active() returns boolean language sql stable as $$ select false $$");
+    await assert.rejects(db.query("select * from public.clear_shelving_queue(0)"), /Active staff access required/);
+  } finally { await db.close(); }
+});
