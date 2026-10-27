@@ -152,3 +152,25 @@ test("completed sessions cannot undo already committed scans", async () => {
   assert.equal(Number(await scalar(db, "select total_quantity from public.inventory_item_totals where item_id='book'")), 1);
   await db.close();
 });
+
+test("continuous shelving preserves totals, rejects exhausted Processing, and supports undo", async () => {
+  const db = await database();
+  try {
+    await db.exec(await readFile(new URL("../supabase/migrations/20261027190000_continuous_shelving.sql", import.meta.url), "utf8"));
+    await db.exec("insert into public.inventory_locations (code,display_name,location_type) values ('A1','A1','shelf'),('A2','A2','shelf'); insert into public.items (id,sku,title,quantity) values ('auto-book','AUTO-1','Automatic shelving book',0)");
+    const processing = await scalar(db, "select id from public.inventory_locations where code='PROCESSING'");
+    const a1 = await scalar(db, "select id from public.inventory_locations where code='A1'");
+    const a2 = await scalar(db, "select id from public.inventory_locations where code='A2'");
+    await db.query("select public.adjust_inventory_at_location('auto-book',$1,2,'intake')", [processing]);
+    const session = await scalar(db, "select id from public.start_inventory_scan_session('shelving',$1)", [a1]);
+    await db.query("select public.record_inventory_scan($1,'auto-book','AUTO-1','auto-1',$2,false)", [session,a1]);
+    await db.query("select public.record_inventory_scan($1,'auto-book','AUTO-1','auto-2',$2,false)", [session,a2]);
+    assert.equal(Number(await scalar(db,"select total_quantity from public.inventory_item_totals where item_id='auto-book'")),2);
+    await assert.rejects(db.query("select public.record_inventory_scan($1,'auto-book','AUTO-1','auto-3',$2,false)",[session,a2]), /No copies.*Processing/);
+    assert.equal(Number(await scalar(db,"select total_quantity from public.inventory_item_totals where item_id='auto-book'")),2);
+    await db.query("select public.undo_last_inventory_scan($1)",[session]);
+    assert.equal(Number(await scalar(db,"select quantity from public.inventory_by_location where item_id='auto-book' and location_id=$1",[processing])),1);
+    await db.query("select public.record_inventory_scan($1,'auto-book','AUTO-1','auto-4',$2,false)",[session,a1]);
+    assert.equal(Number(await scalar(db,"select total_quantity from public.inventory_item_totals where item_id='auto-book'")),2);
+  } finally { await db.close(); }
+});

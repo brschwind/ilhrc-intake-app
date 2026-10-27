@@ -143,7 +143,9 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     setScanCount((current) => current + 1);
     setAuditReview([]);
     setAuditReviewed(false);
-    setMessage(`${item.title || "Untitled item"} scanned successfully.`);
+    setMessage(mode === "shelving" && destination
+      ? (item.title || "Untitled item") + " → " + (locationById[destination]?.code || "selected shelf") + ". Scan the next book."
+      : (item.title || "Untitled item") + " scanned successfully.");
     await refresh();
   }
 
@@ -178,11 +180,8 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
       }
       const activeSession = session || await startSession();
       if (mode === "shelving") {
-        const { data, error } = await supabase.rpc("get_shelving_recommendations", { p_item_id: String(item.id) });
-        if (error) throw error;
-        setRecommendations(data || []);
-        setPending({ item, raw: parsed.raw, session: activeSession });
-        setMessage("Review the recommendation, then approve a destination.");
+        if (!locationId) throw new Error("Choose or scan the shelf before scanning books.");
+        await recordItemScan(activeSession, item, parsed.raw, locationId);
       } else {
         await recordItemScan(activeSession, item, parsed.raw);
       }
@@ -398,7 +397,7 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
       <header className="location-inventory-header">
         <div>
           <p className="eyebrow">Physical shelf inventory</p>
-          <div className="shelving-title-row"><h2>Shelve Books</h2><details className="shelving-help"><summary aria-label="Shelving help">?</summary><p>Books saved through Add Item wait in Processing until you record their shelf here. Print and attach their SKU labels, choose a shelf, scan a book, then approve its destination.</p></details></div>
+          <div className="shelving-title-row"><h2>Shelve Books</h2><details className="shelving-help"><summary aria-label="Shelving help">?</summary><p>Books saved through Add Item wait in Processing until you record their shelf here. Print and attach their SKU labels, choose a shelf, then scan books. Each scan moves one copy from Processing to that shelf. Change the shelf whenever needed.</p></details></div>
         </div>
         <button
           type="button"
@@ -429,9 +428,9 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
       </details>}
 
       <section className={`scan-console scan-console-${mode}`}>
-        <p className="mode-instructions" hidden={mode === "shelving"}>
+        <p className="mode-instructions">
           {mode === "intake" && <><strong>This increases inventory.</strong> Scan only an extra copy that has not already been saved through Add Item.</>}
-          {mode === "shelving" && <><strong>Put-away steps:</strong> choose or scan the shelf, scan one labeled book, then approve its destination.</>}
+          {mode === "shelving" && <><strong>Scan to shelve:</strong> each book goes straight onto the selected shelf. Keep scanning until you change shelves.</>}
           {mode === "shelf_audit" && <><strong>Audit steps:</strong> choose the shelf, scan every physical copy on it, then review the count.</>}
         </p>
         <div className="scan-context">
@@ -440,8 +439,8 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
           {selectedLocation && mode !== "intake" && <div className="selected-shelf"><small>{mode === "shelf_audit" ? "SHELF TO AUDIT" : "SHELF TO STOCK"}</small><strong>{selectedLocation.code}</strong><span>{selectedLocation.display_name}</span></div>}
         </div>
         <form className="scan-entry" onSubmit={handleScan}><input ref={inputRef} autoFocus value={scanValue} onChange={(event) => setScanValue(event.target.value)} placeholder={scanPrompt} aria-label="Scan value"/><button className="primary" disabled={busy || Boolean(pending) || workspaceStatus !== "ready"}>Scan book</button><button type="button" className="secondary camera-start" disabled={cameraOpen} onClick={() => setCameraOpen(true)}>Use Camera</button></form>
-        <CameraBarcodeScanner active={cameraOpen && !pending && !unknownScan} onDetected={processScan} onClose={() => setCameraOpen(false)} onError={setMessage}/>
-        <div className="scan-session-actions"><span>{scanCount} scans this session</span><details className="shelving-session-tools"><summary>Session tools</summary><button className="secondary" disabled={!scanCount || busy} onClick={undoLastScan}>Undo last</button><button className="secondary" disabled={!session || busy} onClick={cancelSession}>Cancel session</button></details>{mode === "shelf_audit" ? <button className="primary" disabled={!session || busy} onClick={reviewAudit}>Review count</button> : <button className="primary" disabled={!session || busy} onClick={completeSession}>{finishLabel}</button>}</div>
+        <CameraBarcodeScanner active={cameraOpen && !pending && !unknownScan} requireClearFrame={mode === "shelving"} paused={busy} onDetected={processScan} onClose={() => setCameraOpen(false)} onError={setMessage}/>
+        <div className="scan-session-actions"><span>{scanCount} scans this session</span><button className="secondary" disabled={!scanCount || busy} onClick={undoLastScan}>Undo last</button><details className="shelving-session-tools"><summary>Session tools</summary><button className="secondary" disabled={!session || busy} onClick={cancelSession}>Cancel session</button></details>{mode === "shelf_audit" ? <button className="primary" disabled={!session || busy} onClick={reviewAudit}>Review count</button> : <button className="primary" disabled={!session || busy} onClick={completeSession}>{finishLabel}</button>}</div>
         {message && <p className="scan-message" role="status">{message}</p>}
         {recent.length > 0 && <div className="recent-scans" aria-label="Recently scanned books"><strong>Recently scanned</strong><ol>{recent.map((entry) => <li key={entry.id}><span>{entry.item.title || "Untitled item"}</span><small>{entry.item.sku || entry.raw}</small></li>)}</ol></div>}
       </section>

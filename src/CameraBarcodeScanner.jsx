@@ -1,3 +1,4 @@
+import { createCameraScanLatch } from "./cameraScanLatch.js";
 import { useEffect, useRef, useState } from "react";
 import { createCameraDuplicateGate } from "./locationInventory.js";
 
@@ -13,8 +14,10 @@ function cameraErrorMessage(error) {
   return "Camera scanning is unavailable. You can continue with the scanner or barcode field.";
 }
 
-export default function CameraBarcodeScanner({ active, onDetected, onClose, onError, singleShot = false }) {
+export default function CameraBarcodeScanner({ active, onDetected, onClose, onError, singleShot = false, requireClearFrame = false, paused = false }) {
   const videoRef = useRef(null);
+  const pausedRef = useRef(paused);
+  useEffect(() => { pausedRef.current = paused; }, [paused]);
   const detectedRef = useRef(onDetected);
   const closeRef = useRef(onClose);
   const errorRef = useRef(onError);
@@ -35,9 +38,11 @@ export default function CameraBarcodeScanner({ active, onDetected, onClose, onEr
     let stream;
     let fallbackControls;
     const gate = createCameraDuplicateGate();
+    const latch = createCameraScanLatch();
 
     const accept = (value) => {
-      if (disposed || (singleShot && accepted) || !gate.shouldAccept(value)) return;
+      if (disposed || pausedRef.current || (singleShot && accepted) || !gate.shouldAccept(value)) return;
+      if (requireClearFrame && !latch.accept(value)) return;
       accepted = true;
       Promise.resolve(detectedRef.current(String(value).trim(), "camera")).catch((error) => {
         errorRef.current(error?.message || "The camera scan could not be processed.");
@@ -65,6 +70,7 @@ export default function CameraBarcodeScanner({ active, onDetected, onClose, onEr
         try {
           const codes = await detector.detect(videoElement);
           if (codes?.[0]?.rawValue) accept(codes[0].rawValue);
+          else latch.clear();
         } catch (error) {
           if (error?.name !== "NotFoundError") errorRef.current("Camera is still open, but that frame could not be read.");
         }
@@ -82,6 +88,7 @@ export default function CameraBarcodeScanner({ active, onDetected, onClose, onEr
       });
       fallbackControls = await reader.decodeFromVideoDevice(undefined, videoElement, (result) => {
         if (result) accept(result.getText());
+        else latch.clear();
       });
       if (disposed) { fallbackControls.stop(); return; }
       setStarting(false);
@@ -108,7 +115,7 @@ export default function CameraBarcodeScanner({ active, onDetected, onClose, onEr
       stream?.getTracks().forEach((track) => track.stop());
       if (videoElement) videoElement.srcObject = null;
     };
-  }, [active, singleShot]);
+  }, [active, singleShot, requireClearFrame]);
 
   if (!active) return null;
   return <section className="camera-scanner" aria-label="Camera barcode scanner"><div className="camera-preview"><video ref={videoRef} muted playsInline aria-label="Live camera preview"/><div className="camera-target" aria-hidden="true"/></div><div className="camera-scanner-actions"><p>{starting ? "Starting rear camera…" : "Center one barcode inside the frame."}</p><button type="button" className="secondary" onClick={onClose}>Stop camera</button></div></section>;
