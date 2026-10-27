@@ -5440,3 +5440,20 @@ button:disabled {
 .bundle-intake-panel .bundle-toggle input:checked + span::after { transform: translateX(14px); }
 .intake-actions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; margin: 4px 0 6px; }
 .intake-actions > button { display: flex; align-items: center; justify-content: center; width: 100%; min-width: 0; min-height: 44px; margin: 0; padding: 8px 6px; box-sizing: border-box; font-size: .82rem; line-height: 1.2; text-align: center; }
+
+/* Fast review: summary, editable essentials, optional metadata, save. */
+.intake-book-summary { display: flex; align-items: flex-start; gap: 12px; margin-bottom: 12px; }
+.intake-book-summary img { width: 64px; height: 88px; object-fit: contain; flex-shrink: 0; }
+.intake-book-summary h3 { margin: 0 0 5px; font-size: 1.1rem; }
+.intake-book-summary p { margin: 3px 0; color: var(--muted); font-size: .85rem; }
+.intake-edit-details, .intake-more-details { margin: 12px 0; border-top: 1px solid var(--border); padding-top: 10px; }
+.intake-edit-details > summary, .intake-more-details > summary, .intake-image-preview > summary { cursor: pointer; color: var(--sage-dark); font-size: .9rem; font-weight: 700; padding: 6px 0; }
+.intake-detail-fields { padding: 4px 0 8px; }
+.intake-price-quantity { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 6px 14px; align-items: start; margin: 14px 0; }
+.intake-price-quantity > label { margin: 0; grid-row: 1; }
+.intake-price-quantity > input { grid-row: 2; width: 100%; min-width: 0; box-sizing: border-box; }
+.intake-price-quantity > .rule-source { grid-column: 1; grid-row: 3; margin: 0; }
+.intake-save-bar { position: sticky; bottom: 0; z-index: 20; padding: 10px 0; background: var(--surface); border-top: 1px solid var(--border); }
+.intake-save-bar > button { width: 100%; min-height: 44px; margin: 0; }
+.intake-review-card { padding-bottom: 0; overflow: visible; }
+@media (max-width: 760px) { .intake-save-bar { bottom: calc(69px + env(safe-area-inset-bottom)); } }

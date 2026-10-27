@@ -479,6 +479,8 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [coverCameraDeviceId, setCoverCameraDeviceId] = useState("");
   const [isbnPhoto, setIsbnPhoto] = useState(null);
   const [bookData, setBookData] = useState(null);
+  const [intakeDetailsOpen, setIntakeDetailsOpen] = useState(false);
+  const intakeScanButtonRef = useRef(null);
   const [earlyDuplicateMatch, setEarlyDuplicateMatch] = useState(null);
   const [earlyDuplicateAction, setEarlyDuplicateAction] = useState("");
 
@@ -1467,6 +1469,7 @@ async function applyRulesToImportedBook(importedBook, sourceType) {
   const ruleResult = applyIntakeRules(importedBook, intakeRules);
   const isbnMemory = await loadExactIsbnMemory(importedBook.isbn);
   const result = mergeExactIsbnMemory(ruleResult, isbnMemory);
+  setIntakeDetailsOpen(!String(result.book.title || "").trim());
   setRuleSources(result.sources);
   setRuleConflicts(result.conflicts);
   setIntakeContext({
@@ -3226,6 +3229,7 @@ async function captureCoverCameraPhoto() {
 }
 
 function startManualEntry() {
+  setIntakeDetailsOpen(true);
   clearRuleFeedback();
   setEarlyDuplicateMatch(null);
   setEarlyDuplicateAction("");
@@ -4374,7 +4378,7 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
     }));
     clearSavedBook();
     await loadItems();
-    alert(`${materializedItem.title || "Book"} was added to the active bundle.`);
+    setIntakeCompletionMessage(`${materializedItem.title || "Book"} was added to the active bundle.`);
   }
 
   async function removeBundleDraftComponent(component) {
@@ -4971,7 +4975,7 @@ if ((itemDraft.publisher_item_number || itemDraft.publisher_barcode) && !itemDra
 
 if (bundleDraft.active) {
   await saveBundleComponent(itemDraft);
-  return;
+  return true;
 }
 
 let existingItem = null;
@@ -5216,7 +5220,7 @@ try {
       `${receivedQuantity === 1 ? "Its label is" : "Their labels are"} in the print queue. ` +
       `After labeling, use Shelve Books to record the shelf.`;
     setIntakeCompletionMessage(completionMessage);
-    alert(completionMessage);
+
 } else {
   setAnalysisStatus("Saving new item...");
 
@@ -5336,7 +5340,7 @@ try {
     `${Number(itemDraft.quantity || 1)} ${Number(itemDraft.quantity || 1) === 1 ? "copy is" : "copies are"} now in Processing. ` +
     `Print and attach the queued ${Number(itemDraft.quantity || 1) === 1 ? "label" : "labels"}, then use Shelve Books to record the shelf.`;
   setIntakeCompletionMessage(completionMessage);
-  alert(completionMessage);
+
 }
 
   setBookData(null);
@@ -5346,6 +5350,8 @@ try {
   setCoverPhoto(null);
   setCoverFile(null);
   setIsbnPhoto(null);
+  setIntakeDetailsOpen(false);
+  return true;
 
   } catch (error) {
     alert("Save failed: " + error.message);
@@ -5354,6 +5360,16 @@ try {
     setIsSaving(false);
   }
 } 
+
+  async function saveAndNext() {
+    const saved = await saveItem();
+    if (!saved) return;
+    setIntakeDetailsOpen(false);
+    requestAnimationFrame(() => {
+      window.scrollTo({ top: 0, behavior: "auto" });
+      intakeScanButtonRef.current?.focus({ preventScroll: true });
+    });
+  }
 
   function startEditing(item) {
     inventoryEditorTriggerRef.current = document.activeElement;
@@ -8491,6 +8507,7 @@ function renderUserManagement() {
     <div className="intake-actions">
       <button
         className="secondary scanner-button"
+        ref={intakeScanButtonRef}
         onClick={() => scanBarcode("book")}
         onKeyDown={(event) => handleScannerButtonKeyDown(event, "book")}
         onBlur={() => { barcodeScannerBufferRef.current = ""; }}
@@ -8611,24 +8628,32 @@ function renderUserManagement() {
           />
 
           {coverPhoto && (
-            <section className="preview">
+            <details className="intake-image-preview"><summary>View cover photo</summary><section className="preview">
               <h2>Cover</h2>
               <img src={coverPhoto} alt="Book cover" />
-            </section>
+            </section></details>
           )}
 
           {isbnPhoto && (
-            <section className="preview">
+            <details className="intake-image-preview"><summary>View barcode photo</summary><section className="preview">
               <h2>ISBN / Barcode</h2>
               <img src={isbnPhoto} alt="ISBN or barcode" />
-            </section>
+            </section></details>
           )}
 
 
           {bookData && (
-            <section className="card">
-  <h2>Review & Edit Details</h2>
-
+            <section className="card intake-review-card">
+  <h2>Review Book</h2>
+  <div className="intake-book-summary" aria-label="Book summary">
+    {(coverPhoto || bookData.image_url) && <BookCoverImage src={coverPhoto || bookData.image_url} alt={bookData.title || "Book cover"} width={64} height={88} eager />}
+    <div>
+      <h3>{bookData.title || "Add a title"}</h3>
+      <p>{[bookData.curriculum, bookData.subject, bookData.grade_level || bookData.grade].filter(Boolean).join(" · ") || "Add curriculum, subject and grade in Edit book details."}</p>
+      <p>{bookData.category || "Category not set"}</p>
+      {(bookData.publisher || bookData.edition) && <p>{[bookData.publisher, bookData.edition].filter(Boolean).join(" · ")}</p>}
+    </div>
+  </div>
   {Object.keys(ruleConflicts).length > 0 && (
     <div className="rule-conflict-box">
       <strong>Rule choices need review</strong>
@@ -8650,33 +8675,51 @@ function renderUserManagement() {
     </div>
   )}
 
-<button
-  className="secondary"
-  type="button"
-  onClick={openListingCoverCamera}
->
-  Add Actual Cover Photo to Listing
-</button>
 
-<input
-  id="listing-cover-upload"
-  ref={listingPhotoInputRef}
-  type="file"
-  accept="image/*"
-  capture="environment"
-  onChange={handleListingPhoto}
-  hidden
-/>
+              {earlyDuplicateMatch && earlyDuplicateMatch.isbn === normalizeIsbn(bookData.isbn) && (
+                <div className="rule-conflict-box" role="alert">
+                  <strong>Existing ISBN found</strong>
+                  <p>
+                    {earlyDuplicateMatch.item.title} · SKU {earlyDuplicateMatch.item.sku} · Current quantity: {earlyDuplicateMatch.item.quantity || 0} · Price: ${Number(earlyDuplicateMatch.item.final_price || 0).toFixed(2)}
+                  </p>
+                  <p>Choose how this copy should be handled before saving.</p>
+                  <div className="intake-actions">
+                    <button
+                      type="button"
+                      className={earlyDuplicateAction === "merge" ? "primary" : "secondary"}
+                      onClick={() => setEarlyDuplicateAction("merge")}
+                    >
+                      Add to Existing Listing
+                    </button>
+                    <button
+                      type="button"
+                      className={earlyDuplicateAction === "separate" ? "primary" : "secondary"}
+                      onClick={() => setEarlyDuplicateAction("separate")}
+                    >
+                      Create Separate Listing
+                    </button>
+                  </div>
+                  {earlyDuplicateAction === "merge" && (
+                    <p className="status-message">Saving will add this copy to SKU {earlyDuplicateMatch.item.sku}.</p>
+                  )}
+                  {earlyDuplicateAction === "separate" && (
+                    <p className="status-message">Saving will create a separate listing.</p>
+                  )}
+                </div>
+              )}
 
 
-              <label>Title</label>
-              <input
+  <details className="intake-edit-details" open={intakeDetailsOpen} onToggle={(event) => setIntakeDetailsOpen(event.currentTarget.open)}>
+    <summary>Edit book details</summary>
+    <div className="intake-detail-fields">
+              <label htmlFor="intake-title">Title</label>
+              <input id="intake-title"
                 value={bookData.title || ""}
                 onChange={(e) => updateIntakeField("title", e.target.value)}
               />
 
-              <label>Curriculum</label>
-              <select
+              <label htmlFor="intake-curriculum">Curriculum</label>
+              <select id="intake-curriculum"
               value={
                 curriculumOptions.includes(bookData.curriculum)
                   ? bookData.curriculum
@@ -8713,15 +8756,8 @@ function renderUserManagement() {
               <p className="rule-source">{getIntakeSourceLabel(ruleSources.curriculum)}</p>
             )}
 
-<label>Publisher</label>
-<input
-  value={bookData.publisher || ""}
-  onChange={(e) => updateIntakeField("publisher", e.target.value)}
-/>
-
-
-              <label>Subject</label>
-              <select
+              <label htmlFor="intake-subject">Subject</label>
+              <select id="intake-subject"
               value={bookData.subject || ""}
               onChange={(e) => updateIntakeField("subject", e.target.value)}
             >
@@ -8737,8 +8773,8 @@ function renderUserManagement() {
             )}
 
            
-              <label>Grade Level</label>
-              <select
+              <label htmlFor="intake-grade-level">Grade Level</label>
+              <select id="intake-grade-level"
               value={
                 gradeOptions.includes(bookData.grade_level || bookData.grade)
                   ? (bookData.grade_level || bookData.grade)
@@ -8760,82 +8796,8 @@ function renderUserManagement() {
             )}
 
           
-              <label>Edition</label>
-              <input
-                value={bookData.edition || ""}
-                onChange={(e) =>
-                  setBookData({ ...bookData, edition: e.target.value })
-                }
-              />
-
-              <label>ISBN</label>
-              <input
-                value={bookData.isbn || ""}
-                onChange={(e) => updateIntakeField("isbn", e.target.value)}
-              />
-
-              {earlyDuplicateMatch && earlyDuplicateMatch.isbn === normalizeIsbn(bookData.isbn) && (
-                <div className="rule-conflict-box" role="alert">
-                  <strong>Existing ISBN found</strong>
-                  <p>
-                    {earlyDuplicateMatch.item.title} · SKU {earlyDuplicateMatch.item.sku} · Current quantity: {earlyDuplicateMatch.item.quantity || 0} · Price: ${Number(earlyDuplicateMatch.item.final_price || 0).toFixed(2)}
-                  </p>
-                  <p>Choose how this copy should be handled before saving.</p>
-                  <div className="intake-actions">
-                    <button
-                      type="button"
-                      className={earlyDuplicateAction === "merge" ? "primary" : "secondary"}
-                      onClick={() => setEarlyDuplicateAction("merge")}
-                    >
-                      Add to Existing Listing
-                    </button>
-                    <button
-                      type="button"
-                      className={earlyDuplicateAction === "separate" ? "primary" : "secondary"}
-                      onClick={() => setEarlyDuplicateAction("separate")}
-                    >
-                      Create Separate Listing
-                    </button>
-                  </div>
-                  {earlyDuplicateAction === "merge" && (
-                    <p className="status-message">Saving will add this copy to SKU {earlyDuplicateMatch.item.sku}.</p>
-                  )}
-                  {earlyDuplicateAction === "separate" && (
-                    <p className="status-message">Saving will create a separate listing.</p>
-                  )}
-                </div>
-              )}
-
-              <div className="publisher-scan-panel">
-                <div>
-                  <label>Publisher item number</label>
-                  <input
-                    value={bookData.publisher_item_number || ""}
-                    onChange={(e) => updateIntakeField("publisher_item_number", e.target.value)}
-                  />
-                </div>
-                <div>
-                  <label>Publisher barcode</label>
-                  <input
-                    value={bookData.publisher_barcode || ""}
-                    onChange={(e) => updateIntakeField("publisher_barcode", e.target.value)}
-                  />
-                </div>
-                <button
-                  type="button"
-                  className="secondary scanner-button"
-                  onClick={() => scanBarcode("publisher")}
-                  onKeyDown={(event) => handleScannerButtonKeyDown(event, "publisher")}
-                  onBlur={() => { barcodeScannerBufferRef.current = ""; }}
-                  title="Click for the camera, or focus this button and use the Symbol scanner"
-                >
-                  <span>{isScanningBarcode && barcodeScanTarget === "publisher" ? "Scanning..." : "Scan Publisher Number"}</span>
-                  <small>Camera or Symbol scanner</small>
-                </button>
-              </div>
-
-              <label>Category</label>
-              <select
+              <label htmlFor="intake-category">Category</label>
+              <select id="intake-category"
                 value={bookData.category || ""}
                 onChange={(e) => {
                   const selected = categoryOptions.find(
@@ -8871,8 +8833,12 @@ function renderUserManagement() {
                   </p>
                 )} 
 
-              <label>Final Price</label>
-              <input
+
+    </div>
+  </details>
+  <div className="intake-price-quantity">
+              <label htmlFor="intake-final-price">Final Price</label>
+              <input id="intake-final-price"
                 type="number"
                 step="0.01"
                 value={bookData.final_price || ""}
@@ -8882,8 +8848,8 @@ function renderUserManagement() {
                 <p className="rule-source">{getIntakeSourceLabel(ruleSources.final_price)}</p>
               )}
 
-              <label>Quantity</label>
-              <input
+              <label htmlFor="intake-quantity">Quantity</label>
+              <input id="intake-quantity"
                 type="number"
                 min="1"
                 value={bookData.quantity || 1}
@@ -8892,13 +8858,86 @@ function renderUserManagement() {
                 }
               />
 
+
+  </div>
+  <details className="intake-more-details">
+    <summary>More details</summary>
+    <div className="intake-detail-fields">
+<button
+  className="secondary"
+  type="button"
+  onClick={openListingCoverCamera}
+>
+  Add Actual Cover Photo to Listing
+</button>
+
+<input
+  id="listing-cover-upload"
+  ref={listingPhotoInputRef}
+  type="file"
+  accept="image/*"
+  capture="environment"
+  onChange={handleListingPhoto}
+  hidden
+/>
+
+
+<label htmlFor="intake-publisher">Publisher</label>
+<input id="intake-publisher"
+  value={bookData.publisher || ""}
+  onChange={(e) => updateIntakeField("publisher", e.target.value)}
+/>
+
+
+              <label htmlFor="intake-edition">Edition</label>
+              <input id="intake-edition"
+                value={bookData.edition || ""}
+                onChange={(e) =>
+                  setBookData({ ...bookData, edition: e.target.value })
+                }
+              />
+
+              <label htmlFor="intake-isbn">ISBN</label>
+              <input id="intake-isbn"
+                value={bookData.isbn || ""}
+                onChange={(e) => updateIntakeField("isbn", e.target.value)}
+              />
+
+              <div className="publisher-scan-panel">
+                <div>
+                  <label htmlFor="intake-publisher-item-number">Publisher item number</label>
+                  <input id="intake-publisher-item-number"
+                    value={bookData.publisher_item_number || ""}
+                    onChange={(e) => updateIntakeField("publisher_item_number", e.target.value)}
+                  />
+                </div>
+                <div>
+                  <label htmlFor="intake-publisher-barcode">Publisher barcode</label>
+                  <input id="intake-publisher-barcode"
+                    value={bookData.publisher_barcode || ""}
+                    onChange={(e) => updateIntakeField("publisher_barcode", e.target.value)}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="secondary scanner-button"
+                  onClick={() => scanBarcode("publisher")}
+                  onKeyDown={(event) => handleScannerButtonKeyDown(event, "publisher")}
+                  onBlur={() => { barcodeScannerBufferRef.current = ""; }}
+                  title="Click for the camera, or focus this button and use the Symbol scanner"
+                >
+                  <span>{isScanningBarcode && barcodeScanTarget === "publisher" ? "Scanning..." : "Scan Publisher Number"}</span>
+                  <small>Camera or Symbol scanner</small>
+                </button>
+              </div>
+
               <label>Weight</label>
               <div className="weight-inputs">
                 <input
                   type="number"
                   min="0"
                   step="1"
-                  placeholder="lb"
+                  placeholder="lb" aria-label="Weight in pounds"
                   value={getWeightPounds(bookData.weight_ounces)}
                   onChange={(e) =>
                     setBookData({
@@ -8914,7 +8953,7 @@ function renderUserManagement() {
                   type="number"
                   min="0"
                   step="1"
-                  placeholder="oz"
+                  placeholder="oz" aria-label="Additional weight in ounces"
                   value={getWeightRemainingOunces(bookData.weight_ounces)}
                   onChange={(e) =>
                     setBookData({
@@ -8934,8 +8973,8 @@ function renderUserManagement() {
                 <p className="helper-text">{bookData.weight_note}</p>
               )}
 
-              <label>Status</label>
-              <select
+              <label htmlFor="intake-status">Status</label>
+              <select id="intake-status"
                 value={bookData.status || "Available"}
                 onChange={(e) =>
                   setBookData({ ...bookData, status: e.target.value })
@@ -8949,8 +8988,8 @@ function renderUserManagement() {
 
               
 
-              <label>Notes</label>
-              <textarea
+              <label htmlFor="intake-notes">Notes</label>
+              <textarea id="intake-notes"
                 value={bookData.notes || ""}
                 onChange={(e) =>
                   setBookData({ ...bookData, notes: e.target.value })
@@ -8963,9 +9002,14 @@ function renderUserManagement() {
                 </p>
               )}
 
-              <button className="primary" onClick={saveItem} disabled={isSaving}>
-  {isSaving ? "Saving..." : bundleDraft.active ? "Add Book to Bundle" : "Save Item"}
-</button>
+
+    </div>
+  </details>
+  <div className="intake-save-bar">
+    <button className="primary" type="button" onClick={saveAndNext} disabled={isSaving}>
+      {isSaving ? "Saving..." : bundleDraft.active ? "Add to Bundle & Next" : "Save & Next"}
+    </button>
+  </div>
             </section>
           )}
         </>
