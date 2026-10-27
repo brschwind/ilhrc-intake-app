@@ -8809,14 +8809,19 @@ function renderUserManagement() {
               )}
 
               <label htmlFor="intake-quantity">Quantity</label>
-              <input id="intake-quantity"
-                type="number"
-                min="1"
-                value={bookData.quantity || 1}
-                onChange={(e) =>
-                  setBookData({ ...bookData, quantity: e.target.value })
-                }
-              />
+              <div className="intake-quantity-control">
+                <button type="button" className="secondary" aria-label="Decrease quantity"
+                  disabled={Number(bookData.quantity ?? 1) <= 1}
+                  onClick={() => setBookData(current => ({ ...current, quantity: Math.max(1, Math.floor(Number(current.quantity) || 1) - 1) }))}>▼</button>
+                <input id="intake-quantity"
+                  type="number" min="1" step="1" inputMode="numeric"
+                  value={bookData.quantity ?? 1}
+                  onChange={(e) => setBookData(current => ({ ...current, quantity: e.target.value }))}
+                  onBlur={() => setBookData(current => ({ ...current, quantity: Math.max(1, Math.floor(Number(current.quantity) || 1)) }))}
+                />
+                <button type="button" className="secondary" aria-label="Increase quantity"
+                  onClick={() => setBookData(current => ({ ...current, quantity: Math.max(1, Math.floor(Number(current.quantity) || 0) + 1) }))}>▲</button>
+              </div>
 
 
   </div>
