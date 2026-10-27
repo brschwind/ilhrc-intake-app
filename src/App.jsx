@@ -1,3 +1,4 @@
+import { loadCompleteInventory, inventoryMatchesSearch } from "./inventorySearch.js";
 import { HOMESCHOOL_CURRICULA, knownCurriculum, curriculumFromBook } from "./homeschoolCurriculum.js";
 import { suggestBookCategory, canonicalCategory, priceCategory } from "./bookPricing.js";
 import { useRef, useState, useEffect } from "react";
@@ -1325,19 +1326,13 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
     const tableName = isAuthenticated ? "items" : "public_catalog_items";
     const columns = isAuthenticated ? "*" : PUBLIC_CATALOG_COLUMNS;
 
-    let { data, error } = await supabase
-      .from(tableName)
-      .select(columns)
-      .order("created_at", { ascending: false });
+    let { data, error } = await loadCompleteInventory(supabase, tableName, columns);
 
     // Keep the public catalog usable while the matching-field migration and
     // the web deployment are rolling out. The richer query will be used as
     // soon as the updated view is available.
     if (error && !isAuthenticated) {
-      ({ data, error } = await supabase
-        .from(tableName)
-        .select(LEGACY_PUBLIC_CATALOG_COLUMNS)
-        .order("created_at", { ascending: false }));
+      ({ data, error } = await loadCompleteInventory(supabase, tableName, LEGACY_PUBLIC_CATALOG_COLUMNS));
     }
 
     if (error) {
@@ -5993,19 +5988,7 @@ const bundleParentByComponentId = bundleComponents.reduce((parents, link) => {
 }, {});
 
 const filteredItems = items.filter((item) => {
-  const text = `
-    ${item.title || ""}
-    ${item.curriculum || ""}
-    ${item.subject || ""}
-    ${item.grade_level || ""}
-    ${item.isbn || ""}
-    ${item.publisher_barcode || ""}
-    ${item.publisher_item_number || ""}
-    ${item.sku || ""}
-    ${item.category || ""}
-  `.toLowerCase();
-
-  const matchesSearch = text.includes(searchTerm.toLowerCase());
+  const matchesSearch = inventoryMatchesSearch(item, searchTerm);
 
   const matchesCurriculum =
     !curriculumFilter || item.curriculum === curriculumFilter;
