@@ -1,3 +1,4 @@
+import ShelfPicker from "./ShelfPicker.jsx";
 import { loadShelfBooks, loadShelvingWorkspace } from "./shelvingWorkspaceData.js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabaseClient.js";
@@ -465,7 +466,7 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
         </p>
         <div className="scan-context">
           <span className="mode-pill" hidden={mode === "shelving"}>{MODES.find((option) => option.id === mode)?.label}</span>
-          {(mode === "shelving" || mode === "shelf_audit") && <label>{shelfFieldLabel}<select value={locationId} disabled={session?.mode === "shelf_audit"} onChange={(event) => setLocationId(event.target.value)}><option value="">Scan or choose shelf</option>{locations.filter((location) => ["shelf", "display", "overflow", "needs_review"].includes(location.location_type)).map((location) => <option key={location.id} value={location.id}>{location.code} — {location.display_name}</option>)}</select></label>}
+          {(mode === "shelving" || mode === "shelf_audit") && <ShelfPicker label={shelfFieldLabel} value={locationId} disabled={session?.mode === "shelf_audit"} onChange={setLocationId} locations={locations.filter(location => ["shelf", "display", "overflow", "needs_review"].includes(location.location_type))} />}
           {selectedLocation && mode !== "intake" && <div className="selected-shelf"><small>{mode === "shelf_audit" ? "SHELF TO AUDIT" : "SHELF TO STOCK"}</small><strong>{selectedLocation.code}</strong><span>{selectedLocation.display_name}</span></div>}
         </div>
         {!cameraOpen && <button type="button" className="primary shelf-camera-start" disabled={busy || workspaceStatus !== "ready"} onClick={() => { setMessage(""); setCameraOpen(true); }}>Scan with camera</button>}

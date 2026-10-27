@@ -5533,3 +5533,8 @@ button:disabled {
 .intake-quantity-control input { width: 100%; min-width: 0; margin: 0; text-align: center; box-sizing: border-box; appearance: textfield; -moz-appearance: textfield; }
 .intake-quantity-control input::-webkit-inner-spin-button, .intake-quantity-control input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 .intake-quantity-control button { flex: 0 0 36px; min-width: 36px; min-height: 44px; padding: 0; margin: 0; }
+
+.shelf-picker { width:100%; }
+.shelf-picker-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:8px; }
+.shelf-picker-fields label { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.shelf-picker-fields select { width:100%; min-width:0; }
