@@ -14,3 +14,10 @@ test('recognized providers and aliases use canonical names',()=>{
 test('subjects and incidental text cannot establish curriculum',()=>{
  assert.equal(curriculumFromBook({title:'Science',notes:'possibly Apologia',publisher:'DK'}),'');
 });
+
+test('reviewed homeschool programs survive cleanup and recognition',()=>{
+ for(const name of ['History Odyssey','Visual Latin','Dianne Craft Right Brain Learning System','TruthQuest History','Mott Media']) assert.equal(knownCurriculum(name),name);
+ assert.equal(knownCurriculum('Thinkwell Corporation'),'Thinkwell');
+ assert.equal(curriculumFromBook({title:'Foundations in Personal Finance',curriculum:'Ramsey'}),'Ramsey Education');
+ assert.equal(curriculumFromBook({title:'Battle of the Chores',curriculum:'Ramsey',publisher:'Ramsey Press'}),'');
+});
