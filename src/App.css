@@ -5522,3 +5522,5 @@ button:disabled {
 .camera-zoom { display: flex; align-items: center; gap: 10px; margin-top: 8px; font-size: .8rem; }
 .camera-zoom input { flex: 1; min-width: 0; }
 .shelf-settings-button:focus-visible, .shelf-tile:focus-visible { outline: 3px solid var(--sage-dark); outline-offset: 2px; }
+
+.shelf-book-list { scroll-margin-top: 76px; }

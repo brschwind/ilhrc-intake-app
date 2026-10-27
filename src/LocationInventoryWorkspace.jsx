@@ -59,6 +59,7 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
   const [adjustDraft, setAdjustDraft] = useState({ itemId: "", location: "", delta: 1, notes: "" });
   const [newShelf, setNewShelf] = useState({ code: "", displayName: "" });
   const inputRef = useRef(null);
+  const shelfContentsRef = useRef(null);
 
   const selectedLocation = locations.find((location) => location.id === locationId);
   const processingLocation = locations.find((location) => location.code === "PROCESSING");
@@ -379,10 +380,11 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
     if (!shelfViewId) return undefined;
     let cancelled = false;
     setShelfBooksStatus("loading");
+    const frame = requestAnimationFrame(() => shelfContentsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }));
     loadShelfBooks(supabase, stock, shelfViewId).then((books) => {
       if (!cancelled) { setShelfBooks(books); setShelfBooksStatus("ready"); }
     }).catch(() => { if (!cancelled) setShelfBooksStatus("error"); });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; cancelAnimationFrame(frame); };
   }, [shelfViewId, stock]);
 
   function selectMode(nextMode) {
@@ -461,7 +463,7 @@ export default function LocationInventoryWorkspace({ items = [], onInventoryChan
           const copies = stock.filter((row) => row.location_id === location.id).reduce((sum, row) => sum + Number(row.quantity), 0);
           return <button key={location.id} type="button" className={shelfViewId === location.id ? "shelf-tile active" : "shelf-tile"} aria-expanded={shelfViewId === location.id} onClick={() => setShelfViewId(shelfViewId === location.id ? "" : location.id)}><strong>{location.code}</strong><span>{copies} {copies === 1 ? "book" : "books"}</span></button>;
         })}</div>
-        {shelfViewId && <section className="shelf-book-list" aria-label="Books recorded on shelf"><div className="shelf-list-heading"><h3>Recorded on {locationById[shelfViewId]?.code}</h3><button className="text-button" onClick={() => setShelfViewId("")}>Close</button></div>
+        {shelfViewId && <section ref={shelfContentsRef} className="shelf-book-list" aria-label="Books recorded on shelf"><div className="shelf-list-heading"><h3>Recorded on {locationById[shelfViewId]?.code}</h3><button className="text-button" onClick={() => setShelfViewId("")}>Close</button></div>
           {shelfBooksStatus === "loading" ? <p>Loading books…</p> : shelfBooksStatus === "error" ? <p>Could not load books. Close and reopen the shelf to retry.</p> : shelfBooks.length === 0 ? <p>No books are recorded on this shelf.</p> : <ul>{shelfBooks.map((book) => <li key={book.id}><div><strong>{book.title}</strong><small>{book.sku}{book.curriculum ? " · " + book.curriculum : ""}</small></div><span>{book.quantity} {book.quantity === 1 ? "copy" : "copies"}</span></li>)}</ul>}
         </section>}
       </section>
