@@ -5524,3 +5524,6 @@ button:disabled {
 .shelf-settings-button:focus-visible, .shelf-tile:focus-visible { outline: 3px solid var(--sage-dark); outline-offset: 2px; }
 
 .shelf-book-list { scroll-margin-top: 76px; }
+
+.intake-required-cover { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin:12px 0; }
+.intake-required-cover > span { font-weight:600; }

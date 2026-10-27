@@ -34,7 +34,7 @@ test("cover camera streams are stopped after capture, cancellation, or navigatio
 
 test("actual listing cover opens the camera without submitting or replacing form state", () => {
   const actualCoverButton = appSource.match(
-    /<button\s+className="secondary"[\s\S]*?>\s*Add Actual Cover Photo to Listing\s*<\/button>/
+    /<button\s+className="secondary"[\s\S]*?>\s*\{coverFile \? "Retake Cover Photo" : "Take Cover Photo"\}\s*<\/button>/
   )?.[0];
 
   assert.ok(actualCoverButton, "actual cover button should be present");

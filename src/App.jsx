@@ -464,6 +464,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   });
 
   const coverInputRef = useRef(null);
+  const barcodePhotoPendingRef = useRef(false);
   const coverCaptureInputRef = useRef(null);
   const coverCameraVideoRef = useRef(null);
   const coverCameraStreamRef = useRef(null);
@@ -1504,6 +1505,10 @@ async function applyRulesToImportedBook(importedBook, sourceType) {
     isbn_memory: result.isbnMemory || null,
     manual_fields: [],
   });
+  if (barcodePhotoPendingRef.current) {
+    barcodePhotoPendingRef.current = false;
+    requestAnimationFrame(() => startCoverCamera("listing"));
+  }
   return result.book;
 }
 
@@ -3018,6 +3023,7 @@ async function applyBulkEdit() {
 
 
 async function processCoverPhoto(file) {
+  setCoverFile(null);
   setAnalysisStatus("Loading camera photo...");
 
   const pendingIdentifier = bookData?.publisher_item_number || bookData?.publisher_barcode
@@ -3259,6 +3265,8 @@ async function captureCoverCameraPhoto() {
 }
 
 function startManualEntry() {
+  setCoverFile(null);
+  setCoverPhoto(null);
   stopCoverCamera();
   setIsScanningBarcode(false);
   setIntakeDetailsOpen(true);
@@ -3310,8 +3318,10 @@ function startManualEntry() {
   }
 
 async function processListingPhoto(file) {
-  setCoverPhoto(URL.createObjectURL(file));
-  setCoverFile(await shrinkImageFile(file));
+  const optimized = await shrinkImageFile(file, 1400, 0.82, { requireReadableImage: true });
+  setCoverPhoto(URL.createObjectURL(optimized));
+  setCoverFile(optimized);
+  stopCoverCamera();
 }
 
 async function handleListingPhoto(event) {
@@ -3320,6 +3330,8 @@ async function handleListingPhoto(event) {
 
   try {
     await processListingPhoto(file);
+  } catch (error) {
+    setAnalysisStatus(error.message || "The photo could not be processed. Please try again.");
   } finally {
     event.target.value = "";
   }
@@ -3643,7 +3655,7 @@ async function submitHardwareScan(value, target = "book") {
   const scannedValue = String(value || "").trim();
   if (!scannedValue) return;
   if (target === "publisher") await capturePublisherBarcode(scannedValue);
-  else await lookupBookByBarcode(scannedValue);
+  else await lookupBookWithRequiredPhoto(scannedValue);
 }
 
 function handleScannerButtonKeyDown(event, target = "book") {
@@ -3668,10 +3680,18 @@ function scanBarcode(target = "book") {
   setIsScanningBarcode(true);
 }
 
+async function lookupBookWithRequiredPhoto(value) {
+  setCoverPhoto(null);
+  setCoverFile(null);
+  barcodePhotoPendingRef.current = true;
+  try { await lookupBookByBarcode(value); }
+  finally { barcodePhotoPendingRef.current = false; }
+}
+
 async function handleIntakeCameraBarcode(scannedValue) {
   setIsScanningBarcode(false);
   if (barcodeScanTarget === "publisher") await capturePublisherBarcode(scannedValue);
-  else await lookupBookByBarcode(scannedValue);
+  else await lookupBookWithRequiredPhoto(scannedValue);
 }
 
 function improveDetectedBookData(data) {
@@ -4874,6 +4894,11 @@ function getWeightFromBookData(data) {
 
 async function saveItem() {
   if (!bookData || isSaving) return;
+  if (!coverFile) {
+    setAnalysisStatus("Take a cover photo before saving this book.");
+    await startCoverCamera("listing");
+    return;
+  }
 
   setIsSaving(true);
   setIntakeCompletionMessage("");
@@ -5076,7 +5101,9 @@ if (!existingItem && !exactIsbnMatchDeclined && !exactPublisherMatchDeclined) {
       Number(existingItem.quantity || 0) + receivedQuantity;
     const queuedAt = new Date().toISOString();
 
+    const duplicateImageUrl = await uploadCoverImage(coverFile);
     const duplicateUpdates = {
+      image_url: duplicateImageUrl,
       updated_at: queuedAt,
       ...buildDuplicateLabelQueueUpdate(existingItem, receivedQuantity, queuedAt),
     };
@@ -8806,15 +8833,14 @@ function renderUserManagement() {
 
 
   </div>
-  <details className="intake-more-details">
-    <summary>More details</summary>
-    <div className="intake-detail-fields">
-<button
+  <div className="intake-required-cover">
+    <span role="status">{coverFile ? "Cover photo ready" : "Cover photo required"}</span>
+    <button
   className="secondary"
   type="button"
   onClick={openListingCoverCamera}
 >
-  Add Actual Cover Photo to Listing
+  {coverFile ? "Retake Cover Photo" : "Take Cover Photo"}
 </button>
 
 <input
@@ -8828,6 +8854,11 @@ function renderUserManagement() {
 />
 
 
+
+  </div>
+  <details className="intake-more-details">
+    <summary>More details</summary>
+    <div className="intake-detail-fields">
 <label htmlFor="intake-publisher">Publisher</label>
 <input id="intake-publisher"
   value={bookData.publisher || ""}
