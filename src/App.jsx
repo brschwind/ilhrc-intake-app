@@ -1,3 +1,4 @@
+import { getIntakeAttention, hasUncertainIdentification } from "./intakeAttention";
 import { useRef, useState, useEffect } from "react";
 import { BrowserMultiFormatReader } from "@zxing/browser";
 import "./App.css";
@@ -480,6 +481,7 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [isbnPhoto, setIsbnPhoto] = useState(null);
   const [bookData, setBookData] = useState(null);
   const [intakeDetailsOpen, setIntakeDetailsOpen] = useState(false);
+  const [identificationReviewed, setIdentificationReviewed] = useState(false);
   const intakeScanButtonRef = useRef(null);
   const [earlyDuplicateMatch, setEarlyDuplicateMatch] = useState(null);
   const [earlyDuplicateAction, setEarlyDuplicateAction] = useState("");
@@ -638,6 +640,9 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [reservationMessage, setReservationMessage] = useState("");
   const [reservationResult, setReservationResult] = useState(null);
   const [reservationSubmitting, setReservationSubmitting] = useState(false);
+
+  const intakeAttention = getIntakeAttention(bookData, ruleConflicts);
+  const uncertainIdentification = hasUncertainIdentification(bookData) && !identificationReviewed;
 
   const isAuthenticated = Boolean(session && profile && profile.is_active !== false);
   const isAdmin = profile?.role === "admin";
@@ -1469,6 +1474,7 @@ async function applyRulesToImportedBook(importedBook, sourceType) {
   const ruleResult = applyIntakeRules(importedBook, intakeRules);
   const isbnMemory = await loadExactIsbnMemory(importedBook.isbn);
   const result = mergeExactIsbnMemory(ruleResult, isbnMemory);
+  setIdentificationReviewed(false);
   setIntakeDetailsOpen(!String(result.book.title || "").trim());
   setRuleSources(result.sources);
   setRuleConflicts(result.conflicts);
@@ -3229,6 +3235,7 @@ async function captureCoverCameraPhoto() {
 }
 
 function startManualEntry() {
+  setIdentificationReviewed(false);
   setIntakeDetailsOpen(true);
   clearRuleFeedback();
   setEarlyDuplicateMatch(null);
@@ -8654,6 +8661,29 @@ function renderUserManagement() {
       {(bookData.publisher || bookData.edition) && <p>{[bookData.publisher, bookData.edition].filter(Boolean).join(" · ")}</p>}
     </div>
   </div>
+  {(intakeAttention.length > 0 || uncertainIdentification) ? (
+    <section className="intake-attention" aria-label="Details needing attention">
+      <strong id="intake-attention-note">Needs attention: review missing or conflicting details.</strong>
+      <div className="intake-attention-links">
+        {intakeAttention.map((issue) => (
+          <button key={issue.field} type="button" className="secondary" onClick={() => {
+            const field = document.getElementById("intake-" + issue.field.replaceAll("_", "-"));
+            if (!field) return;
+            const section = field.closest("details");
+            if (section?.classList.contains("intake-edit-details")) setIntakeDetailsOpen(true);
+            else if (section) section.open = true;
+            requestAnimationFrame(() => { field.scrollIntoView({ block: "center", behavior: "smooth" }); field.focus({ preventScroll: true }); });
+          }}><span>{issue.label}</span><small>{issue.reason}</small></button>
+        ))}
+      </div>
+      {uncertainIdentification && <div className="intake-identification-warning">
+        <p>Cover recognition is uncertain. Check the title, curriculum, subject and grade against the book.</p>
+        <button type="button" className="text-button" onClick={() => setIntakeDetailsOpen(true)}>Review identification</button>
+        <label><input type="checkbox" checked={identificationReviewed} onChange={(event) => setIdentificationReviewed(event.target.checked)} /> I checked the identification</label>
+      </div>}
+      <small>Review these details before saving. Optional fields stay under More details.</small>
+    </section>
+  ) : <p className="intake-ready" role="status">Core details complete. Ready to save.</p>}
   {Object.keys(ruleConflicts).length > 0 && (
     <div className="rule-conflict-box">
       <strong>Rule choices need review</strong>
@@ -8713,13 +8743,13 @@ function renderUserManagement() {
     <summary>Edit book details</summary>
     <div className="intake-detail-fields">
               <label htmlFor="intake-title">Title</label>
-              <input id="intake-title"
+              <input id="intake-title" className={intakeAttention.some((issue) => issue.field === "title") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "title") ? "intake-attention-note" : undefined}
                 value={bookData.title || ""}
                 onChange={(e) => updateIntakeField("title", e.target.value)}
               />
 
               <label htmlFor="intake-curriculum">Curriculum</label>
-              <select id="intake-curriculum"
+              <select id="intake-curriculum" className={intakeAttention.some((issue) => issue.field === "curriculum") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "curriculum") ? "intake-attention-note" : undefined}
               value={
                 curriculumOptions.includes(bookData.curriculum)
                   ? bookData.curriculum
@@ -8757,7 +8787,7 @@ function renderUserManagement() {
             )}
 
               <label htmlFor="intake-subject">Subject</label>
-              <select id="intake-subject"
+              <select id="intake-subject" className={intakeAttention.some((issue) => issue.field === "subject") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "subject") ? "intake-attention-note" : undefined}
               value={bookData.subject || ""}
               onChange={(e) => updateIntakeField("subject", e.target.value)}
             >
@@ -8774,7 +8804,7 @@ function renderUserManagement() {
 
            
               <label htmlFor="intake-grade-level">Grade Level</label>
-              <select id="intake-grade-level"
+              <select id="intake-grade-level" className={intakeAttention.some((issue) => issue.field === "grade_level") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "grade_level") ? "intake-attention-note" : undefined}
               value={
                 gradeOptions.includes(bookData.grade_level || bookData.grade)
                   ? (bookData.grade_level || bookData.grade)
@@ -8797,7 +8827,7 @@ function renderUserManagement() {
 
           
               <label htmlFor="intake-category">Category</label>
-              <select id="intake-category"
+              <select id="intake-category" className={intakeAttention.some((issue) => issue.field === "category") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "category") ? "intake-attention-note" : undefined}
                 value={bookData.category || ""}
                 onChange={(e) => {
                   const selected = categoryOptions.find(
@@ -8838,10 +8868,10 @@ function renderUserManagement() {
   </details>
   <div className="intake-price-quantity">
               <label htmlFor="intake-final-price">Final Price</label>
-              <input id="intake-final-price"
+              <input id="intake-final-price" className={intakeAttention.some((issue) => issue.field === "final_price") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "final_price") ? "intake-attention-note" : undefined}
                 type="number"
                 step="0.01"
-                value={bookData.final_price || ""}
+                value={bookData.final_price ?? ""}
                 onChange={(e) => updateIntakeField("final_price", e.target.value)}
               />
               {ruleSources.final_price && (
@@ -8849,7 +8879,7 @@ function renderUserManagement() {
               )}
 
               <label htmlFor="intake-quantity">Quantity</label>
-              <input id="intake-quantity"
+              <input id="intake-quantity" className={intakeAttention.some((issue) => issue.field === "quantity") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "quantity") ? "intake-attention-note" : undefined}
                 type="number"
                 min="1"
                 value={bookData.quantity || 1}
@@ -8883,14 +8913,14 @@ function renderUserManagement() {
 
 
 <label htmlFor="intake-publisher">Publisher</label>
-<input id="intake-publisher"
+<input id="intake-publisher" className={intakeAttention.some((issue) => issue.field === "publisher") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "publisher") ? "intake-attention-note" : undefined}
   value={bookData.publisher || ""}
   onChange={(e) => updateIntakeField("publisher", e.target.value)}
 />
 
 
               <label htmlFor="intake-edition">Edition</label>
-              <input id="intake-edition"
+              <input id="intake-edition" className={intakeAttention.some((issue) => issue.field === "edition") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "edition") ? "intake-attention-note" : undefined}
                 value={bookData.edition || ""}
                 onChange={(e) =>
                   setBookData({ ...bookData, edition: e.target.value })
@@ -8898,7 +8928,7 @@ function renderUserManagement() {
               />
 
               <label htmlFor="intake-isbn">ISBN</label>
-              <input id="intake-isbn"
+              <input id="intake-isbn" className={intakeAttention.some((issue) => issue.field === "isbn") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "isbn") ? "intake-attention-note" : undefined}
                 value={bookData.isbn || ""}
                 onChange={(e) => updateIntakeField("isbn", e.target.value)}
               />
@@ -8906,14 +8936,14 @@ function renderUserManagement() {
               <div className="publisher-scan-panel">
                 <div>
                   <label htmlFor="intake-publisher-item-number">Publisher item number</label>
-                  <input id="intake-publisher-item-number"
+                  <input id="intake-publisher-item-number" className={intakeAttention.some((issue) => issue.field === "publisher_item_number") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "publisher_item_number") ? "intake-attention-note" : undefined}
                     value={bookData.publisher_item_number || ""}
                     onChange={(e) => updateIntakeField("publisher_item_number", e.target.value)}
                   />
                 </div>
                 <div>
                   <label htmlFor="intake-publisher-barcode">Publisher barcode</label>
-                  <input id="intake-publisher-barcode"
+                  <input id="intake-publisher-barcode" className={intakeAttention.some((issue) => issue.field === "publisher_barcode") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "publisher_barcode") ? "intake-attention-note" : undefined}
                     value={bookData.publisher_barcode || ""}
                     onChange={(e) => updateIntakeField("publisher_barcode", e.target.value)}
                   />
@@ -8974,7 +9004,7 @@ function renderUserManagement() {
               )}
 
               <label htmlFor="intake-status">Status</label>
-              <select id="intake-status"
+              <select id="intake-status" className={intakeAttention.some((issue) => issue.field === "status") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "status") ? "intake-attention-note" : undefined}
                 value={bookData.status || "Available"}
                 onChange={(e) =>
                   setBookData({ ...bookData, status: e.target.value })
@@ -8989,7 +9019,7 @@ function renderUserManagement() {
               
 
               <label htmlFor="intake-notes">Notes</label>
-              <textarea id="intake-notes"
+              <textarea id="intake-notes" className={intakeAttention.some((issue) => issue.field === "notes") ? "intake-field-attention" : undefined} aria-describedby={intakeAttention.some((issue) => issue.field === "notes") ? "intake-attention-note" : undefined}
                 value={bookData.notes || ""}
                 onChange={(e) =>
                   setBookData({ ...bookData, notes: e.target.value })

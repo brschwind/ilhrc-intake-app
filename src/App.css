@@ -5457,3 +5457,13 @@ button:disabled {
 .intake-save-bar > button { width: 100%; min-height: 44px; margin: 0; }
 .intake-review-card { padding-bottom: 0; overflow: visible; }
 @media (max-width: 760px) { .intake-save-bar { bottom: calc(69px + env(safe-area-inset-bottom)); } }
+
+.intake-attention { margin: 12px 0; padding: 12px; border: 1px solid #d9b05e; border-radius: 8px; background: #fff9ec; color: #64450f; }
+.intake-attention-links { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.intake-attention-links > button { display: flex; flex-direction: column; gap: 3px; align-items: flex-start; margin: 0; padding: 8px 10px; font-size: .82rem; border-color: #cba252; background: white; color: #64450f; }
+.intake-attention-links small { font-size: .72rem; font-weight: 400; }
+.intake-review-card .intake-field-attention { border: 2px solid #bc861f; background: #fffaf0; }
+.intake-identification-warning p { margin: 8px 0; font-size: .85rem; }
+.intake-identification-warning label { display: flex; align-items: center; gap: 8px; font-size: .85rem; }
+.intake-identification-warning input { width: auto; }
+.intake-ready { color: var(--sage-dark); font-size: .85rem; margin: 10px 0; }
