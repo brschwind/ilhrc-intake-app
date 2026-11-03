@@ -1,3 +1,4 @@
+import RemoveCopies from "./RemoveCopies";
 import { loadCompleteInventory, inventoryMatchesSearch } from "./inventorySearch.js";
 import { HOMESCHOOL_CURRICULA, knownCurriculum, curriculumFromBook } from "./homeschoolCurriculum.js";
 import { suggestBookCategory, canonicalCategory, priceCategory } from "./bookPricing.js";
@@ -9379,6 +9380,8 @@ function renderUserManagement() {
                   <p className="helper-text">
                     New copies go to Processing, and the same number of stickers are added to the print queue.
                   </p>
+                  <RemoveCopies key={editingItem.id} supabase={supabase} itemId={editingItem.id}
+                    onRemoved={() => { cancelEditing(); loadItems(); }} />
                 </>
               )}
 

@@ -69,6 +69,9 @@ export function getLabelAffectingEditFields(originalItem, updatedItem) {
 export function getEditedItemLabelQuantity(originalItem, updatedItem) {
   const originalQuantity = Number(originalItem?.quantity);
   const updatedQuantity = Number(updatedItem?.quantity);
+  if (getLabelAffectingEditFields(originalItem, updatedItem).includes("final_price")) {
+    return Number.isFinite(updatedQuantity) ? Math.max(0, updatedQuantity) : 0;
+  }
   const addedQuantity = updatedQuantity - originalQuantity;
 
   return Number.isFinite(addedQuantity) && addedQuantity > 0
@@ -80,7 +83,7 @@ export function buildEditedItemLabelQueueUpdate(originalItem, updatedItem, queue
   return {
     label_printed: false,
     pending_label_quantity:
-      getQueuedLabelQuantity(originalItem) +
+      (getLabelAffectingEditFields(originalItem, updatedItem).includes("final_price") ? 0 : getQueuedLabelQuantity(originalItem)) +
       getEditedItemLabelQuantity(originalItem, updatedItem),
     label_queued_at: queuedAt,
   };
