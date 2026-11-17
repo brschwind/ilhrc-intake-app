@@ -68,3 +68,14 @@ export function getAceSuggestedPrice(draft, prices = ACE_PRICES) {
   else if (draft.materialType === 'Score Key') suggested = Number(prices.scoreKey);
   return suggested !== null && Number.isFinite(suggested) ? Math.round(suggested * 100) / 100 : null;
 }
+
+export function findAceDuplicates(client, candidate) {
+  return client.from('items').select('*')
+    .eq('ace_details', JSON.stringify(candidate.ace_details))
+    .eq('final_price', candidate.final_price)
+    .eq('subject', candidate.subject)
+    .eq('grade_level', candidate.grade_level)
+    .eq('edition', candidate.edition)
+    .eq('condition', candidate.condition)
+    .in('status', ['Available', 'Hold']);
+}

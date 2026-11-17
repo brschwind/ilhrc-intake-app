@@ -33,6 +33,7 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   let savedPayload;
   let receiptCalls = 0;
+  let duplicateListing = null;
   await page.route('https://ace-test.supabase.co/**', async route => {
     const url = route.request().url();
     let body;
@@ -41,10 +42,20 @@ try {
       const request = route.request().postDataJSON();
       receiptCalls += 1;
       savedPayload = request.p_item;
-      body = { ...request.p_item, id: 100, sku: request.p_item.sku || 'ILHRC-999999', quantity: request.p_quantity, received_quantity: request.p_quantity };
+      body = { ...request.p_item, id: 100, sku: request.p_item.sku || (request.p_existing_id ? duplicateListing?.sku : 'ILHRC-999999'), quantity: request.p_quantity, received_quantity: request.p_quantity };
     } else if (url.includes('/storage/')) {
       await route.fulfill({ contentType: 'image/png', body: Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jcGoAAAAASUVORK5CYII=', 'base64') });
       return;
+    } else if (url.includes('/rest/v1/items')) {
+      try {
+        const filter = new URL(url).searchParams.get('ace_details');
+        if (!filter?.startsWith('eq.')) throw new Error('Missing exact duplicate filter');
+        JSON.parse(filter.slice(3));
+      } catch {
+        await route.fulfill({ status: 400, contentType: 'application/json', body: JSON.stringify({ code: '22P02', message: 'invalid input syntax for type json' }) });
+        return;
+      }
+      body = duplicateListing ? [duplicateListing] : [];
     } else body = [];
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify(body), headers: { 'access-control-allow-origin': '*' } });
   });
@@ -109,10 +120,20 @@ try {
   assert.equal(await page.evaluate(() => window.acePrints[2].label_quantity), 1);
   assert.equal(savedPayload.condition, 'Not assessed');
   assert.equal(savedPayload.notes.includes('Condition:'), false);
+  duplicateListing = { ...savedPayload, id: 100, sku: 'EXISTING-WORD-BUILDING', quantity: 4 };
+  await page.getByLabel('All 12 student PACEs are present').check();
+  await page.getByRole('button', { name: 'Save & Add Another', exact: true }).click();
+  await page.getByRole('heading', { name: 'Matching listing found', exact: true }).waitFor();
+  assert.equal(receiptCalls, 3);
+  await page.getByRole('button', { name: 'Increase Existing Quantity', exact: true }).click();
+  await page.waitForFunction(() => window.acePrints.length === 4);
+  assert.equal(receiptCalls, 4);
+  assert.equal(await page.evaluate(() => window.acePrints[3].sku), 'EXISTING-WORD-BUILDING');
+  await page.waitForFunction(() => document.querySelector('#ace-sku')?.value === '');
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);
-  console.log('ACE browser checks passed: visible incomplete-set errors, automatic stickers before Square sync, one save action, next listing reset, keyboard save, no condition control and mobile width.');
+  console.log('ACE browser checks passed: real JSON duplicate filters and increase-existing flow, visible incomplete-set errors, automatic stickers before Square sync, one save action, next listing reset, keyboard save, no condition control and mobile width.');
 } finally {
   await browser?.close();
   server.kill();

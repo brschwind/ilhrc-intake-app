@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from './supabaseClient';
 import ListingPhotoCapture from './ListingPhotoCapture.jsx';
-import { ACE_PRICES, ACE_SUBJECTS, ACE_TYPES, aceNumbersForLevel, aceLevelForNumber, buildAceItem, getAceSuggestedPrice, newAceDraft } from './acePace';
+import { ACE_PRICES, ACE_SUBJECTS, ACE_TYPES, aceNumbersForLevel, aceLevelForNumber, buildAceItem, getAceSuggestedPrice, findAceDuplicates, newAceDraft } from './acePace';
 
 export function AcePricingSettings() {
   const [prices, setPrices] = useState(ACE_PRICES);
@@ -107,10 +107,7 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
       const retry = requestId.current?.candidateSignature === candidateSignature;
       if (retry) existingId = requestId.current.existingId;
       if (action === 'check' && !retry) {
-        const { data, error } = await supabase.from('items').select('*')
-          .eq('ace_details', candidate.ace_details).eq('final_price', candidate.final_price)
-          .eq('subject', candidate.subject).eq('grade_level', candidate.grade_level)
-          .eq('edition', candidate.edition).eq('condition', candidate.condition).in('status', ['Available', 'Hold']);
+        const { data, error } = await findAceDuplicates(supabase, candidate);
         if (error) throw error;
         if (data.length) {
           setDuplicates(data);
