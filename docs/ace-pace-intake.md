@@ -21,3 +21,14 @@ Administrators can adjust defaults in **Settings → Lists & Pricing → ACE res
 Apply `supabase/migrations/20261117140000_ace_pace_intake.sql` after the existing migrations, then deploy the frontend and server together. This migration adds columns and ACE-only tables/functions; it does not reclassify, reprice, or change existing stock. Staff can read ACE pricing; only administrators can update it. The form reports unavailable setup if the migration has not been applied.
 
 Run `npm run check`. Tests in `src/acePace.test.js` cover recognition, prices, listing accuracy, compatibility, partial sets, custom numbering, and search. `src/acePaceMigration.test.js` executes the new migration against PostgreSQL through PGlite with existing location inventory functions, checking ordinary-stock preservation, intake quantity, duplicate increments, request retries, and one-set sales through the existing allocation function. Before production rollout, verify the form and Square integration in a configured staging environment.
+
+
+## Revised intake layout and stickers
+
+ACE intake opens inline below Scan Barcode, Scan Cover, and Manual Entry, using the app's normal white fields and sage buttons. Grade / Level is a dropdown. Edition tracking and older-edition pricing controls are absent from intake; new listings keep Unknown edition internally for compatibility with existing records.
+
+Take Photo opens a live listing camera, with a native phone-camera fallback. Choose Photo also supports an existing image. The listing image uses the existing book-covers storage bucket. SKU may be entered manually or generated with the existing SKU sequence; leaving it blank assigns one when saved. A SKU already in use is rejected without receiving stock. Increasing a matching listing keeps that listing's SKU.
+
+Saving generates the existing 2 x 1-inch sticker PDF, with one label per received sellable unit. A complete 12-PACE set needs one label; three identical sets need three labels. Reprinting is available on the saved receipt and after Save & Add Another. Existing label queues remain available. The follow-up migration extends the same receipt transaction to persist the image and custom SKU.
+
+The GitHub validation branch runs database/unit tests, changed-file lint, a build, and a headless browser check with a simulated camera. It does not create real inventory or contact Square.

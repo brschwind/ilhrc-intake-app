@@ -1,6 +1,6 @@
 import RemoveCopies from "./RemoveCopies";
 import AcePaceIntake, { AcePricingSettings } from './AcePaceIntake.jsx';
-import { aceMatchesFilters, ACE_TYPES, ACE_SUBJECTS } from './acePace.js';
+import { aceMatchesFilters, aceStickerItem, ACE_TYPES, ACE_SUBJECTS } from './acePace.js';
 import { loadCompleteInventory, inventoryMatchesSearch } from "./inventorySearch.js";
 import { HOMESCHOOL_CURRICULA, knownCurriculum, curriculumFromBook } from "./homeschoolCurriculum.js";
 import { suggestBookCategory, canonicalCategory, priceCategory } from "./bookPricing.js";
@@ -5871,7 +5871,8 @@ function generateLabels(itemsToPrint) {
 
       firstLabel = false;
 
-      const isBundle = item.item_type === "bundle";
+      const isAceSet = /subject set$/.test(item.ace_details?.materialType || "");
+      const isBundle = item.item_type === "bundle" || isAceSet;
       const titleLines = formatLabelTitle(item.title, isBundle ? 38 : 32);
       const labelLayout = getLabelLayout(titleLines.length);
       const price =
@@ -5900,7 +5901,7 @@ function generateLabels(itemsToPrint) {
       if (isBundle) {
         pdf.setFont("helvetica", "bold");
         pdf.text(
-          `SET • ${Number(item.bundle_piece_count || 0)} PIECES`,
+          `SET - ${isAceSet ? item.ace_details.numbers.length : Number(item.bundle_piece_count || 0)} ${isAceSet ? "PACES" : "PIECES"}`,
           1.92,
           labelLayout.brandingY,
           { align: "right" }
@@ -8322,7 +8323,6 @@ function renderUserManagement() {
       <span>Book Intake</span>
       <div className="intake-title-row">
         <h2>Add Item</h2>
-        <button type="button" className="primary" onClick={() => setAceIntakeOpen(true)}>ACE PACE Intake</button>
         <details className="intake-help">
           <summary aria-label="Book processing help" title="Book processing help">?</summary>
           <div className="intake-help-content">
@@ -8344,7 +8344,7 @@ function renderUserManagement() {
       </section>
     )}
 
-    <section
+    {!aceIntakeOpen && <section
       className={`bundle-intake-panel ${
         bundleDraft.active && bundleDraft.source === "intake" ? "active" : ""
       }`}
@@ -8486,13 +8486,13 @@ function renderUserManagement() {
         </>
       )}
 
-    </section>
+    </section>}
 
     <div className="intake-actions">
       <button
         className="secondary scanner-button"
         ref={intakeScanButtonRef}
-        onClick={() => scanBarcode("book")}
+        onClick={() => { setAceIntakeOpen(false); scanBarcode("book"); }}
         onKeyDown={(event) => handleScannerButtonKeyDown(event, "book")}
         onBlur={() => { barcodeScannerBufferRef.current = ""; }}
         title="Click for the camera, or focus this button and use the Symbol scanner"
@@ -8500,14 +8500,30 @@ function renderUserManagement() {
         <span>{isScanningBarcode && barcodeScanTarget === "book" ? "Scanning..." : "Scan Barcode"}</span>
       </button>
 
-      <button className="secondary" type="button" onClick={() => startCoverCamera("analysis")}>
+      <button className="secondary" type="button" onClick={() => { setAceIntakeOpen(false); startCoverCamera("analysis"); }}>
         Scan Cover
       </button>
 
-      <button className="secondary" onClick={startManualEntry}>
+      <button className="secondary" onClick={() => { setAceIntakeOpen(false); startManualEntry(); }}>
         Manual Entry
       </button>
     </div>
+
+    <div className="ace-intake-entry">
+      <button className="secondary" type="button" aria-expanded={aceIntakeOpen}
+        onClick={() => { stopCoverCamera(); setIsScanningBarcode(false); setAceIntakeOpen(true); }}>
+        ACE PACE Intake
+      </button>
+    </div>
+    {aceIntakeOpen && <AcePaceIntake
+      onClose={() => setAceIntakeOpen(false)}
+      onSaved={loadItems}
+      syncSquare={syncAceSquare}
+      generateSku={generateSku}
+      uploadPhoto={async file => uploadCoverImage(await shrinkImageFile(file, 1400, 0.82, { requireReadableImage: true }))}
+      onPrint={saved => generateLabels([aceStickerItem(saved)])}
+    />}
+    {!aceIntakeOpen && <>
 
     <CameraBarcodeScanner
       active={isScanningBarcode}
@@ -8989,6 +9005,7 @@ function renderUserManagement() {
   </div>
             </section>
           )}
+        </>}
         </>
       )}
 
@@ -11119,7 +11136,6 @@ function renderUserManagement() {
 )}
   </section>
 )}
-      {showStaffShell && aceIntakeOpen && <AcePaceIntake onClose={()=>setAceIntakeOpen(false)} onSaved={loadItems} syncSquare={syncAceSquare} />}
       {showBackToTop && (
         <button
           type="button"

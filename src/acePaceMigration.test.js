@@ -16,7 +16,7 @@ async function database() {
     create table public.items(id text primary key default gen_random_uuid()::text,sku text unique,title text not null,
       location text,quantity integer not null default 0,isbn text,publisher_barcode text,publisher text,category text,subject text,
       curriculum text,status text,public_visible boolean,notes text,grade_level text,edition text,suggested_price numeric,final_price numeric,
-      item_type text default 'individual',label_printed boolean,pending_label_quantity integer default 0,label_queued_at timestamptz,
+      image_url text,item_type text default 'individual',label_printed boolean,pending_label_quantity integer default 0,label_queued_at timestamptz,
       created_at timestamptz default now());
     create table public.audit_logs(user_id uuid,action text,entity_type text,entity_id text,details jsonb);
     create table public.curriculum_materials(id uuid primary key default gen_random_uuid());
@@ -35,6 +35,7 @@ async function database() {
   await db.exec(allocation.match(/create or replace function public.allocate_sellable_inventory\([\s\S]*?\$\$;/)[0]);
   await db.exec(receive);
   await db.exec(await readFile(new URL('../supabase/migrations/20261117140000_ace_pace_intake.sql',import.meta.url),'utf8'));
+  await db.exec(await readFile(new URL('../supabase/migrations/20261117150000_ace_listing_photos_skus.sql',import.meta.url),'utf8'));
   return db;
 }
 const candidate=()=>buildAceItem({...newAceDraft(),confirmed:true});
@@ -62,4 +63,22 @@ test('ACE migration preserves ordinary inventory, receives bundles atomically, m
     await assert.rejects(receive(db,item,0),/Invalid quantity/);
     assert.equal((await db.query("select quantity from items where id='ordinary'")).rows[0].quantity,2);
   }finally{await db.close();}
+});
+
+test('custom SKU and listing photo persist together; SKU conflicts never receive stock', async () => {
+  const db = await database();
+  try {
+    const item = { ...candidate(), sku: 'ACE-ENGLISH-4', image_url: 'https://example.test/set.jpg' };
+    const saved = await receive(db, item, 1);
+    assert.equal(saved.sku, 'ACE-ENGLISH-4');
+    assert.equal(saved.image_url, item.image_url);
+    assert.equal(saved.quantity, 1);
+    await assert.rejects(receive(db, { ...item, sku: 'ace-english-4' }, 2), /already in use/);
+    assert.equal((await db.query('select quantity from items where id=$1', [saved.id])).rows[0].quantity, 1);
+    await assert.rejects(receive(db, { ...item, sku: 'DIFFERENT-SKU' }, 1, saved.id), /existing listing SKU/);
+    const updated = await receive(db, { ...item, image_url: 'https://example.test/new.jpg' }, 1, saved.id);
+    assert.equal(updated.image_url, 'https://example.test/new.jpg');
+    assert.equal(updated.quantity, 2);
+    await assert.rejects(receive(db, { ...item, sku: 'invalid sku' }), /SKU must/);
+  } finally { await db.close(); }
 });
