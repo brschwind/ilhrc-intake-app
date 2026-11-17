@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { supabase } from './supabaseClient';
 import ListingPhotoCapture from './ListingPhotoCapture.jsx';
-import { ACE_PRICES, ACE_SUBJECTS, ACE_TYPES, aceNumbersForLevel, aceLevelForNumber, buildAceItem, newAceDraft } from './acePace';
+import { ACE_PRICES, ACE_SUBJECTS, ACE_TYPES, aceNumbersForLevel, aceLevelForNumber, buildAceItem, getAceSuggestedPrice, newAceDraft } from './acePace';
 
 export function AcePricingSettings() {
   const [prices, setPrices] = useState(ACE_PRICES);
@@ -72,6 +72,7 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
     setDraft(current => ({ ...current, sku: '', quantity: 1, price: '', confirmed: false }));
   }
 
+  const suggestedPrice = getAceSuggestedPrice(draft, prices);
   let item, error;
   try { item = buildAceItem({ ...draft, confirmed: true }, prices); }
   catch (e) { error = e.message; }
@@ -218,8 +219,8 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
         </div>
         <section className="ace-listing-preview" aria-label="Listing preview">
           <h3>{item?.title || 'Listing preview'}</h3><p>{item?.notes}</p>
-          <div className="ace-grid"><div><p>Suggested price</p><strong>{item?.suggested_price == null ? 'Manual pricing required' : '$' + item.suggested_price.toFixed(2)}</strong><p className="helper-text">Per entire set or individual item</p></div>
-            <label>Final selling price ($)<input type="number" min="0" step="0.01" placeholder={item?.suggested_price ?? 'Required'} value={draft.price} onChange={e => change('price', e.target.value)} /></label></div>
+          <div className="ace-grid"><div><p>Suggested price</p><strong>{suggestedPrice == null ? 'Manual pricing required' : '$' + suggestedPrice.toFixed(2)}</strong><p className="helper-text">Per entire set or individual item</p>{draft.materialType === 'Complete subject set' && (draft.condition !== 'Like New / Unused' || draft.writing !== 'No writing') && <p className="helper-text">Complete-set base price. Adjust the selling price for condition or writing.</p>}</div>
+            <label>Final selling price ($)<input type="number" min="0" step="0.01" placeholder={suggestedPrice ?? 'Required'} value={draft.price} onChange={e => change('price', e.target.value)} /></label></div>
           <p><strong>{draft.quantity} sellable set(s) / item(s) = {draft.quantity} sticker(s).</strong> Student PACEs inside a set share one sticker.</p>
         </section>
         {error && <p role="alert" className="warning-text">{error}</p>}

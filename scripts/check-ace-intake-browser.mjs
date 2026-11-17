@@ -56,6 +56,12 @@ try {
   assert.equal(await page.locator('dialog').count(), 0);
   assert.equal(await page.getByRole('combobox', { name: 'Grade / Level' }).evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)');
 
+  await page.getByRole('combobox', { name: 'Subject', exact: true }).selectOption('Word Building');
+  await page.getByRole('combobox', { name: 'Condition', exact: true }).selectOption('Good');
+  await page.getByRole('textbox', { name: 'Listing SKU' }).fill('unfinished SKU');
+  assert.equal(await page.getByText('$8.00', { exact: true }).isVisible(), true);
+  await page.getByRole('textbox', { name: 'Listing SKU' }).fill('');
+  await page.getByRole('combobox', { name: 'Condition', exact: true }).selectOption('Like New / Unused');
   await page.getByRole('button', { name: 'Take Photo', exact: true }).click();
   await page.getByRole('button', { name: 'Use This Photo' }).click();
   await page.getByAltText('ACE listing photo preview').waitFor();

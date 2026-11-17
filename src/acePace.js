@@ -28,14 +28,7 @@ export function buildAceItem(draft, prices=ACE_PRICES) {
   if (complete && (!draft.confirmed || numbers.length !== Number(draft.expectedCount))) throw new Error('Confirm every expected student PACE is present.');
   if (complete && !draft.custom && numbers.some(n=>!aceNumbersForLevel(draft.level).includes(n))) throw new Error('PACE numbers do not match this level. Use custom numbering to override.');
   if (['Student PACE','PACE Test','Score Key','Test Key'].includes(draft.materialType) && numbers.length !== 1) throw new Error('Individual intake requires one PACE number.');
-  const unused = draft.condition === 'Like New / Unused' && draft.writing === 'No writing';
-  let suggested = null;
-  if(complete && unused && numbers.length===12) suggested = Number(prices[draft.older?'older':'complete']);
-  else if(draft.materialType==='Partial subject set') suggested = numbers.length*Number(prices.partial);
-  else if(draft.materialType==='Student PACE' && unused) suggested = Number(prices.individual);
-  else if(draft.materialType==='PACE Test') suggested = Number(prices.test);
-  else if(draft.materialType==='Score Key') suggested = Number(prices.scoreKey);
-  if(suggested !== null) suggested = Math.round(suggested*100)/100;
+  const suggested = getAceSuggestedPrice(draft, prices);
   const price = draft.price === '' ? suggested : Number(draft.price);
   if(price !== null && (!Number.isFinite(price) || price < 0)) throw new Error('Enter a valid selling price.');
   const missing = (draft.custom ? [] : aceNumbersForLevel(draft.level)).filter(n=>!numbers.includes(n));
@@ -57,4 +50,20 @@ export function aceStickerItem(saved) {
   const quantity = Number(saved.received_quantity ?? 1);
   if (!Number.isInteger(quantity) || quantity < 1) throw new Error('Invalid sticker quantity.');
   return { ...saved, label_quantity: quantity };
+}
+
+export function getAceSuggestedPrice(draft, prices = ACE_PRICES) {
+  const unused = draft.condition === 'Like New / Unused' && draft.writing === 'No writing';
+  let suggested = null;
+  if (draft.materialType === 'Complete subject set' && Number(draft.expectedCount ?? 12) === 12) {
+    suggested = Number(prices[draft.older ? 'older' : 'complete']);
+  } else if (draft.materialType === 'Partial subject set') {
+    try {
+      const numbers = draft.custom ? parseAceNumbers(draft.customNumbers) : [...new Set(draft.numbers || [])];
+      suggested = numbers.length * Number(prices.partial);
+    } catch { return null; }
+  } else if (draft.materialType === 'Student PACE' && unused) suggested = Number(prices.individual);
+  else if (draft.materialType === 'PACE Test') suggested = Number(prices.test);
+  else if (draft.materialType === 'Score Key') suggested = Number(prices.scoreKey);
+  return suggested !== null && Number.isFinite(suggested) ? Math.round(suggested * 100) / 100 : null;
 }

@@ -41,7 +41,7 @@ test('older, unknown, mixed, used, manual overrides and editable pricing',()=>{
   assert.equal(buildAceItem(draft({older:true})).final_price,5);
   assert.equal(buildAceItem(draft({edition:'Unknown'})).final_price,8);
   assert.match(buildAceItem(draft({edition:'Mixed editions'})).title,/Mixed Editions/);
-  assert.equal(buildAceItem(draft({writing:'Some writing'})).final_price,null);
+  assert.equal(buildAceItem(draft({writing:'Some writing'})).final_price,8);
   assert.equal(buildAceItem(draft({price:'0'})).final_price,0);
   assert.equal(buildAceItem(draft(),{...ACE_PRICES,complete:7}).final_price,7);
   assert.throws(()=>buildAceItem(draft({price:'-1'})));
@@ -74,4 +74,24 @@ test('listing SKU accepts custom numbers and generated IDs while rejecting unrea
   assert.equal(aceStickerItem({ ...item, quantity: 20, received_quantity: 1 }).label_quantity, 1);
   assert.equal(aceStickerItem({ ...item, received_quantity: 3 }).label_quantity, 3);
   assert.equal(aceStickerItem(item).ace_details.numbers.length, 12);
+});
+
+test('Word Building complete-set suggestion stays visible for condition changes and unfinished fields', async () => {
+  const { getAceSuggestedPrice, ACE_SUBJECTS } = await import('./acePace.js');
+  for (const subject of ACE_SUBJECTS) {
+    for (let level = 1; level <= 12; level++) {
+      const selection = draft({ subject, level: String(level), numbers: aceNumbersForLevel(level) });
+      assert.equal(buildAceItem(selection).suggested_price, 8);
+    }
+  }
+  for (const condition of ['Like New / Unused', 'Good', 'Fair', 'Poor']) {
+    const selection = draft({ subject: 'Word Building', condition });
+    assert.equal(getAceSuggestedPrice(selection), 8);
+    assert.equal(buildAceItem(selection).final_price, 8);
+  }
+  const unfinished = draft({ subject: 'Word Building', condition: 'Good', quantity: 0, sku: 'Invalid SKU' });
+  assert.equal(getAceSuggestedPrice(unfinished), 8);
+  assert.throws(() => buildAceItem(unfinished));
+  assert.equal(buildAceItem(draft({ subject: 'Word Building', condition: 'Good', price: '5' })).final_price, 5);
+  assert.equal(getAceSuggestedPrice(draft({ subject: 'Word Building' }), { ...ACE_PRICES, complete: 6 }), 6);
 });

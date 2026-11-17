@@ -32,3 +32,5 @@ Take Photo opens a live listing camera, with a native phone-camera fallback. Cho
 Saving generates the existing 2 x 1-inch sticker PDF, with one label per received sellable unit. A complete 12-PACE set needs one label; three identical sets need three labels. Reprinting is available on the saved receipt and after Save & Add Another. Existing label queues remain available. The follow-up migration extends the same receipt transaction to persist the image and custom SKU.
 
 The GitHub validation branch runs database/unit tests, changed-file lint, a build, and a headless browser check with a simulated camera. It does not create real inventory or contact Square.
+
+Complete 12-PACE sets show the editable complete-set base price for every condition. Pricing remains visible while other fields are unfinished; validation still blocks invalid saves. Lower the final price for writing or wear as needed. Specialized sets with a different expected count remain manually priced.
