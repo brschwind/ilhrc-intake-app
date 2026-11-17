@@ -6,7 +6,7 @@ permissions:
   contents: read
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     steps:
       - uses: actions/checkout@v4
@@ -18,6 +18,8 @@ jobs:
       - run: node --test src/*.test.js server/*.test.js
       - run: node node_modules/eslint/bin/eslint.js src/App.jsx src/AcePaceIntake.jsx src/ListingPhotoCapture.jsx src/acePace.js src/acePace.test.js src/acePaceMigration.test.js
       - run: npm run build
-      - run: npm install --no-save --package-lock=false playwright@1.56.1 --no-audit --no-fund
-      - run: npx playwright install --with-deps chromium
+      - run: npm install --prefix "$RUNNER_TEMP/ace-browser" --no-package-lock playwright@1.56.1 --no-audit --no-fund
+      - run: node "$RUNNER_TEMP/ace-browser/node_modules/playwright/cli.js" install --with-deps chromium
       - run: node scripts/check-ace-intake-browser.mjs
+        env:
+          ACE_PLAYWRIGHT_MODULE: ${{ runner.temp }}/ace-browser/node_modules/playwright/index.mjs

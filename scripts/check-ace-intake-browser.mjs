@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { writeFile, unlink } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
-import { chromium } from 'playwright';
+import { pathToFileURL } from 'node:url';
+const { chromium } = await import(process.env.ACE_PLAYWRIGHT_MODULE ? pathToFileURL(process.env.ACE_PLAYWRIGHT_MODULE).href : 'playwright');
 
 const fixturePath = new URL('../ace-intake-smoke.html', import.meta.url);
 const html = '<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body><main class="app"><div id="root"></div></main><script type="module">' +
