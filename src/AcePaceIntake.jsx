@@ -28,14 +28,13 @@ export function AcePricingSettings() {
   </form>;
 }
 
-export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhoto, generateSku, onPrint }) {
+export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhoto, generateSku }) {
   const [draft, setDraft] = useState(newAceDraft);
   const [prices, setPrices] = useState(ACE_PRICES);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const [messageKind, setMessageKind] = useState('status');
-  const [stickerError, setStickerError] = useState('');
   const [duplicates, setDuplicates] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [lastSaved, setLastSaved] = useState(null);
@@ -98,7 +97,6 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
     if (lock.current) return;
     lock.current = true;
     setBusy(true);
-    setStickerError('');
     report('Checking this listing...');
     try {
       const candidate = buildAceItem(draft, prices);
@@ -134,26 +132,20 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
       setReceipt({ item: data, synced: false });
       setDuplicates(null);
       setLastSaved(data);
-      print(data);
       await finishSync(data);
     } catch (e) { report(e.message || 'The listing could not be saved. Please try again.', 'error'); }
     finally { lock.current = false; setBusy(false); }
   }
 
-  function print(saved) {
-    try { onPrint(saved); setStickerError(''); }
-    catch (e) { setStickerError('Inventory saved. Sticker could not be created: ' + e.message + '. Use Print Sticker to retry.'); }
-  }
-
   async function finishSync(saved) {
-    report('Listing saved and sticker prepared. Syncing Square...');
+    report('Listing saved and stickers added to the Print Queue. Syncing Square...');
     try { await syncSquare(saved); }
     catch (e) {
       report('Inventory saved, but Square sync needs retry: ' + e.message + '. Do not re-enter this listing. Use Retry Square Sync.', 'error');
       return;
     }
     next();
-    report(saved.received_quantity + ' x ' + saved.title + ' saved. SKU: ' + saved.sku + '. Ready for the next listing.', 'success');
+    report(saved.received_quantity + ' x ' + saved.title + ' saved. SKU: ' + saved.sku + '. ' + saved.received_quantity + ' sticker(s) added to the Print Queue. Ready for the next listing.', 'success');
     heading.current?.focus();
     // Refresh inventory in the background; a slow refresh must not block the next intake.
     Promise.resolve().then(() => onSaved()).catch(() => {
@@ -168,10 +160,9 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
   return <section className="card ace-intake" aria-labelledby="ace-intake-heading">
     <div className="ace-header"><div>
       <h2 id="ace-intake-heading" ref={heading} tabIndex={-1}>ACE PACE Intake</h2>
-      <p className="helper-text">One listing, photo, SKU and sticker for the whole set.</p>
+      <p className="helper-text">One listing, photo and SKU for the whole set. Stickers are added to the Print Queue.</p>
     </div><button className="secondary" disabled={busy} type="button" onClick={onClose}>Back to Book Intake</button></div>
     {lastSaved && <p className="ace-status">Last saved: {lastSaved.title} - SKU {lastSaved.sku} - {lastSaved.received_quantity} set(s) / item(s).</p>}
-    {lastSaved && <div className="intake-actions"><button className="secondary" type="button" onClick={() => print(lastSaved)}>Print Sticker{lastSaved.received_quantity > 1 ? 's' : ''} - {lastSaved.sku}</button></div>}
 
     {receipt ? <section className="ace-receipt">
       <h3>{receipt.item.title}</h3><p><strong>SKU: {receipt.item.sku}</strong></p>
@@ -245,11 +236,10 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
           </div>)}<button className="primary" type="button" onClick={() => save('separate')}>Create Separate Listing</button>
         </section> : <div className="intake-save-bar">
           <button className="primary" type="submit" disabled={!ready} aria-busy={busy}>{busy ? 'Saving...' : 'Save & Add Another'}</button>
-          <p className="helper-text">Saving automatically creates one sticker per sellable set or item.</p>
+          <p className="helper-text">Saving adds one sticker per sellable set or item to the Print Queue for bulk printing later.</p>
         </div>}
       </fieldset>
     </form>}
     <div ref={feedback} tabIndex={-1} className={messageKind === 'error' ? 'warning-text ace-feedback' : 'ace-status ace-feedback'} role={messageKind === 'error' ? 'alert' : 'status'}>{message}</div>
-    {stickerError && <p role="alert" className="warning-text">{stickerError}</p>}
   </section>;
 }

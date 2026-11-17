@@ -82,3 +82,22 @@ test('custom SKU and listing photo persist together; SKU conflicts never receive
     await assert.rejects(receive(db, { ...item, sku: 'invalid sku' }), /SKU must/);
   } finally { await db.close(); }
 });
+
+test('ACE receipts share the bulk Print Queue, one label per sellable unit, without requeuing retries', async () => {
+  const db = await database();
+  try {
+    const request = crypto.randomUUID();
+    const one = await receive(db, candidate(), 1, null, request);
+    await receive(db, candidate(), 1, null, request);
+    const three = await receive(db, candidate(), 3);
+    const partial = buildAceItem({ ...newAceDraft(), materialType: 'Partial subject set', numbers: newAceDraft().numbers.slice(1) });
+    const elevenBooklets = await receive(db, partial, 1);
+    const rows = (await db.query('select id, pending_label_quantity from items where label_printed=false and pending_label_quantity>0 order by id')).rows;
+    const queued = new Map(rows.map(row => [row.id, row.pending_label_quantity]));
+    assert.equal(queued.size, 3);
+    assert.equal(queued.get(one.id), 1);
+    assert.equal(queued.get(three.id), 3);
+    assert.equal(queued.get(elevenBooklets.id), 1);
+    assert.equal(rows.reduce((total, row) => total + row.pending_label_quantity, 0), 5);
+  } finally { await db.close(); }
+});

@@ -1,6 +1,6 @@
 import RemoveCopies from "./RemoveCopies";
 import AcePaceIntake, { AcePricingSettings } from './AcePaceIntake.jsx';
-import { aceMatchesFilters, aceStickerItem, ACE_TYPES, ACE_SUBJECTS } from './acePace.js';
+import { aceMatchesFilters, ACE_TYPES, ACE_SUBJECTS } from './acePace.js';
 import { loadCompleteInventory, inventoryMatchesSearch } from "./inventorySearch.js";
 import { HOMESCHOOL_CURRICULA, knownCurriculum, curriculumFromBook } from "./homeschoolCurriculum.js";
 import { suggestBookCategory, canonicalCategory, priceCategory } from "./bookPricing.js";
@@ -8521,7 +8521,6 @@ function renderUserManagement() {
       syncSquare={syncAceSquare}
       generateSku={generateSku}
       uploadPhoto={async file => uploadCoverImage(await shrinkImageFile(file, 1400, 0.82, { requireReadableImage: true }))}
-      onPrint={saved => generateLabels([aceStickerItem(saved)])}
     />}
     {!aceIntakeOpen && <>
 

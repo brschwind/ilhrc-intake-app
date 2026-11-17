@@ -47,12 +47,6 @@ export function aceMatchesFilters(item, filters) {
   return Object.entries(filters).every(([key,value])=>!value || key==='ace' || (key==='number'?a.numbers.includes(Number(value)):key==='complete'?a.materialType===(value==='true'?'Complete subject set':'Partial subject set'):String(a[key])===value));
 }
 
-export function aceStickerItem(saved) {
-  const quantity = Number(saved.received_quantity ?? 1);
-  if (!Number.isInteger(quantity) || quantity < 1) throw new Error('Invalid sticker quantity.');
-  return { ...saved, label_quantity: quantity };
-}
-
 export function getAceSuggestedPrice(draft, prices = ACE_PRICES) {
   const unused = draft.writing === 'No writing';
   let suggested = null;

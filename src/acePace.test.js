@@ -64,16 +64,12 @@ test('custom numbering and placement override do not assert standard grade align
   assert.equal(item.final_price,null);
 });
 
-test('listing SKU accepts custom numbers and generated IDs while rejecting unreadable barcodes', async () => {
+test('listing SKU accepts custom numbers and generated IDs while rejecting unreadable barcodes', () => {
   assert.equal(buildAceItem(draft({ sku: ' 123456 ' })).sku, '123456');
   assert.equal(buildAceItem(draft({ sku: 'ace-english-4' })).sku, 'ACE-ENGLISH-4');
   assert.equal(buildAceItem(draft()).sku, undefined);
   assert.throws(() => buildAceItem(draft({ sku: 'spaces are invalid' })), /SKU/);
-  const { aceStickerItem } = await import('./acePace.js');
-  const item = buildAceItem(draft());
-  assert.equal(aceStickerItem({ ...item, quantity: 20, received_quantity: 1 }).label_quantity, 1);
-  assert.equal(aceStickerItem({ ...item, received_quantity: 3 }).label_quantity, 3);
-  assert.equal(aceStickerItem(item).ace_details.numbers.length, 12);
+
 });
 
 test('Word Building complete-set suggestion stays visible for condition changes and unfinished fields', async () => {

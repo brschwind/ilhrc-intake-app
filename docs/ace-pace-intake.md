@@ -1,43 +1,27 @@
 # ACE PACE intake
 
-The intake page has an **ACE PACE Intake** button. Complete unused 12-PACE sets default to $8, or $5 when **Older-edition pricing category** is selected. Unknown editions do not automatically receive the older-edition discount. Partial sets use $0.50 per enclosed PACE. Used complete sets, Test Keys, teacher manuals, other resources, and nonstandard complete sets require a manual selling price.
+Use **ACE PACE Intake** below Scan Barcode, Scan Cover and Manual Entry. The form uses the app's normal white fields and sage buttons, with a Grade / Level dropdown and a Writing Present choice. Edition and physical-condition tracking are not required; new items keep Unknown edition and Not assessed condition internally for schema compatibility. Historical condition information stays intact.
 
-Select subject and level, enter an edition or keep Unknown, confirm all student PACEs are present, identify any bundled tests or Score Keys, and enter the number of identical sets. The preview displays the entire bundle price. **Save & Add Another** retains subject, edition, condition, and included numbers. For a different partial set, change the checkboxes before saving. Keys sold separately use **Score Key** individual intake, with one PACE number and their own quantity and price. Compatibility defaults to Unknown; select Confirmed matching only after checking editions.
+Complete 12-PACE sets show the editable complete-set base price ($8 by default), including while other fields are unfinished. Partial sets use $0.50 per included PACE. Individual no-writing PACEs use $0.75, Score Keys $1, and PACE Tests $0.25. Administrators can adjust these defaults in Settings → Lists & Pricing → ACE resale pricing. Existing final prices do not change.
 
-Administrators can adjust defaults in **Settings → Lists & Pricing → ACE resale pricing**. Changes affect future suggestions; existing final selling prices remain unchanged.
+Take Photo opens a listing camera with a phone-camera fallback. Choose Photo supports an existing image. The whole set has one image and one SKU. Enter a SKU, generate one, or leave it blank to assign the next IL HRC number. A duplicate SKU is rejected without receiving stock.
 
-## Inventory architecture
+## Saving and printing
 
-- Existing `items` records, IDs, SKU sequence, labels, location stock, reservations, valuation, and Square integrations are reused.
-- `primary_category` and `subcategory` store Curriculum → ACE / School of Tomorrow independently of the existing pricing categories. The existing ACE curriculum name is reused; no category-option duplicates are inserted.
-- `ace_details` stores actual included numbers, level, edition, condition, writing, material type, completeness, supporting materials, and compatibility as JSONB. Main inventory search examines every included number; the ACE filter panel supports subject, level, number, completeness, edition, material type, and condition.
-- A set is a single sellable SKU (`item_type = individual`) containing multiple booklets. The existing `bundle` type is reserved for assemblies of separately inventoried component SKUs that can be split. ACE sets have no separately stocked child records, so that split workflow does not apply. `ace_details.materialType` identifies complete and partial sets.
-- `receive_ace_intake` creates the record and receives units into Processing in one database transaction, queues labels, and writes an audit record. Exact duplicate increases are rechecked under a row lock, including the final selling price. Separate listings are always permitted.
-- A request receipt prevents repeated delivery of the same request from receiving stock twice. Square sync runs after the database transaction. If it fails, the saved receipt remains onscreen with **Retry Square Sync**; retrying does not receive stock again. Catalog creation uses a stable ACE SKU idempotency key. Avoid closing the form while a sync retry is pending.
-- Each set is one stock unit: three sets have quantity 3, and selling one set removes 1. The final selling price is the whole bundle price used by valuation and Square.
+**Save & Add Another** receives inventory into Processing, queues labels, synchronizes Square and prepares the next form. Subject, level, writing and included numbers are retained; photo, SKU, quantity and manual price reset for the next listing. Validation and progress appear beside the save area. A slow inventory refresh does not block the next entry.
 
-## Rollout
+Saving adds labels to the existing **Print Queue**. It never creates or downloads a per-listing sticker file. Print queued listings together later using the existing bulk label workflow.
 
-Apply `supabase/migrations/20261117140000_ace_pace_intake.sql` after the existing migrations, then deploy the frontend and server together. This migration adds columns and ACE-only tables/functions; it does not reclassify, reprice, or change existing stock. Staff can read ACE pricing; only administrators can update it. The form reports unavailable setup if the migration has not been applied.
+Each sellable set needs one label: one complete 12-PACE set queues one sticker; three identical sets queue three; an 11-PACE partial set queues one. The booklet count never multiplies the number of stickers. Queue changes occur in the same database transaction as receipt. Retrying a receipt or Square sync does not add labels again. Existing queue entries remain untouched.
 
-Run `npm run check`. Tests in `src/acePace.test.js` cover recognition, prices, listing accuracy, compatibility, partial sets, custom numbering, and search. `src/acePaceMigration.test.js` executes the new migration against PostgreSQL through PGlite with existing location inventory functions, checking ordinary-stock preservation, intake quantity, duplicate increments, request retries, and one-set sales through the existing allocation function. Before production rollout, verify the form and Square integration in a configured staging environment.
+## Architecture
 
+Existing items, IDs, SKU sequence, image storage, location stock, label queue, checkout, valuation and Square routes are reused. Curriculum → ACE / School of Tomorrow is independent of the app's pricing categories. Structured ace_details stores subject, level, actual PACE numbers, writing, completeness and included supporting materials.
 
-## Revised intake layout and stickers
+A set is one sellable SKU, with no separately stocked children. The existing bundle type is reserved for assemblies of separately inventoried component records. Labels recognize ACE set metadata and show the enclosed PACE count.
 
-ACE intake opens inline below Scan Barcode, Scan Cover, and Manual Entry, using the app's normal white fields and sage buttons. Grade / Level is a dropdown. Edition tracking and older-edition pricing controls are absent from intake; new listings keep Unknown edition internally for compatibility with existing records.
+receive_ace_intake atomically creates the catalog record, receives stock into Processing, queues labels, writes an audit record and stores a request receipt for retry protection. The follow-up migration persists the image and optional custom SKU in that transaction. Duplicate lookup serializes metadata to valid JSON before passing it to the Supabase eq filter.
 
-Take Photo opens a live listing camera, with a native phone-camera fallback. Choose Photo also supports an existing image. The listing image uses the existing book-covers storage bucket. SKU may be entered manually or generated with the existing SKU sequence; leaving it blank assigns one when saved. A SKU already in use is rejected without receiving stock. Increasing a matching listing keeps that listing's SKU.
+## Verification
 
-Saving generates the existing 2 x 1-inch sticker PDF, with one label per received sellable unit. A complete 12-PACE set needs one label; three identical sets need three labels. Reprinting is available on the saved receipt and after Save & Add Another. Existing label queues remain available. The follow-up migration extends the same receipt transaction to persist the image and custom SKU.
-
-The GitHub validation branch runs database/unit tests, changed-file lint, a build, and a headless browser check with a simulated camera. It does not create real inventory or contact Square.
-
-Complete 12-PACE sets show the editable complete-set base price for every condition. Pricing remains visible while other fields are unfinished; validation still blocks invalid saves. Lower the final price for writing or wear as needed. Specialized sets with a different expected count remain manually priced.
-
-
-## Single save action and writing-only intake
-
-The only submit action is Save & Add Another. Every successful stock receipt automatically creates its sticker PDF before Square synchronization, so a Square retry never needs to receive the stock again or create another automatic sticker. Successful synchronization prepares the next form immediately; a slow inventory refresh runs separately. Required complete-set confirmation and save errors are announced beside the save area, with progress shown during save.
-
-Condition is no longer an intake choice or a condition claim in generated descriptions. Writing Present drives writing-related pricing; new records keep Not assessed internally for the existing schema, while historical condition information is preserved. The ACE inventory filter offers Writing Present in place of Condition.
+Run npm run check. ACE tests cover grade recognition, prices, descriptions, exact Supabase/PostgreSQL JSON matching, safe receipt retries, custom SKUs, photos, one-unit sales and bulk label queue quantities. The isolated browser check exercises save validation, camera capture, duplicate choices, queue-only saving with no downloads, Square retry behavior, keyboard submission, next-entry reset and mobile width without creating real inventory or contacting Square.
