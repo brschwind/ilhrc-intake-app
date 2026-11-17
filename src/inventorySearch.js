@@ -15,6 +15,8 @@ export function inventoryMatchesSearch(item, query) {
   const text = normalize([
     item.title,item.author,item.curriculum,item.publisher,item.subject,item.grade_level,
     item.isbn,item.publisher_barcode,item.publisher_item_number,item.sku,item.category,
+    item.primary_category,item.subcategory,
+    ...(item.ace_details?.numbers || []),item.ace_details?.level,item.ace_details?.materialType,
     ...(item.bundle_contents || []),
     ...[item.isbn,item.publisher_barcode,item.publisher_item_number,item.sku].map(value=>String(value||'').replace(/[^a-zA-Z0-9]/g,'')),
   ].filter(Boolean).join(' '));

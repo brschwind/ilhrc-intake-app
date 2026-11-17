@@ -1589,7 +1589,7 @@ app.post("/create-square-item", requireAuth, async (req, res) => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          idempotency_key: `${sku}-${Date.now()}`,
+          idempotency_key: req.body.idempotency_key || `${sku}-${Date.now()}`,
           object: {
             type: "ITEM",
             id: "#ITEM",
@@ -1631,7 +1631,7 @@ app.post("/create-square-item", requireAuth, async (req, res) => {
 
 const variation = data.catalog_object?.item_data?.variations?.[0];
 
-const quantity = req.body.quantity || 1;
+const quantity = req.body.quantity ?? 1;
 
 const inventoryResponse = await fetch(
   `${SQUARE_BASE_URL}/v2/inventory/changes/batch-create`,

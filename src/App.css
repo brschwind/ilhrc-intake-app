@@ -5535,6 +5535,17 @@ button:disabled {
 .intake-quantity-control button { flex: 0 0 36px; min-width: 36px; min-height: 44px; padding: 0; margin: 0; }
 
 .shelf-picker { width:100%; }
+.ace-dialog { width:min(900px,94vw); max-height:90vh; overflow:auto; border:1px solid #cbd5e1; border-radius:16px; padding:24px; color:#243449; }
+.ace-dialog::backdrop { background:rgb(15 23 42 / 55%); }
+.ace-dialog fieldset { border:0; padding:0; min-width:0; }
+.ace-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin:16px 0; }
+.ace-grid label { display:flex; flex-direction:column; gap:6px; }
+.ace-dialog input:not([type=checkbox]), .ace-dialog select, .ace-filter-panel input:not([type=checkbox]), .ace-filter-panel select { width:100%; box-sizing:border-box; }
+.ace-dialog input[type=checkbox], .ace-filter-panel input[type=checkbox] { width:auto; margin-right:8px; }
+.ace-dialog form>fieldset>label { display:block; margin:12px 0; }
+.ace-header,.ace-actions { display:flex; justify-content:space-between; align-items:center; gap:12px; flex-wrap:wrap; }
+.ace-numbers { display:grid; grid-template-columns:repeat(auto-fit,minmax(95px,1fr)); gap:12px; margin:18px 0; }
+.ace-filter-panel { margin:16px 0; padding:12px; border:1px solid #cbd5e1; border-radius:8px; }
 .shelf-picker-fields { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-top:8px; }
 .shelf-picker-fields label { display:flex; flex-direction:column; gap:4px; min-width:0; }
 .shelf-picker-fields select { width:100%; min-width:0; }

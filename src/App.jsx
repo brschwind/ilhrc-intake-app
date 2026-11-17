@@ -1,4 +1,6 @@
 import RemoveCopies from "./RemoveCopies";
+import AcePaceIntake, { AcePricingSettings } from './AcePaceIntake.jsx';
+import { aceMatchesFilters, ACE_TYPES, ACE_SUBJECTS } from './acePace.js';
 import { loadCompleteInventory, inventoryMatchesSearch } from "./inventorySearch.js";
 import { HOMESCHOOL_CURRICULA, knownCurriculum, curriculumFromBook } from "./homeschoolCurriculum.js";
 import { suggestBookCategory, canonicalCategory, priceCategory } from "./bookPricing.js";
@@ -415,6 +417,8 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
     }
   });
   const [showBackToTop, setShowBackToTop] = useState(false);
+  const [aceIntakeOpen, setAceIntakeOpen] = useState(false);
+  const [aceFilters, setAceFilters] = useState({});
   const [bundleComponents, setBundleComponents] = useState([]);
   const [bundleDraft, setBundleDraft] = useState(loadSavedBundleDraft);
   const [bundleReviewOpen, setBundleReviewOpen] = useState(false);
@@ -4053,8 +4057,9 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
         title: item.title || "Untitled Book",
         sku: item.sku || "",
         final_price: item.final_price || 0,
-        quantity: item.quantity || 1,
+        quantity: item.quantity ?? 1,
         notes: item.notes || "",
+        ...(item.ace_details ? { idempotency_key: `ace-${item.sku}` } : {}),
       }),
     });
     const data = await response.json().catch(() => ({}));
@@ -4064,6 +4069,23 @@ const earlyDuplicate = await detectEarlyIsbnDuplicate(analyzedBook);
     }
 
     return data;
+  }
+
+  async function syncAceSquare(saved) {
+    if (saved.square_variation_id) {
+      const response = await authFetch('/update-square-inventory', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({square_variation_id:saved.square_variation_id,quantity:saved.quantity}),
+      });
+      const result = await response.json();
+      if (!response.ok || !result.success) throw new Error(JSON.stringify(result.error || 'Square stock sync failed'));
+    } else {
+      const result = await createSquareListing({...saved, quantity:0});
+      const {error} = await supabase.from('items').update({square_item_id:result.square_item_id,square_variation_id:result.square_variation_id}).eq('id',saved.id);
+      if(error) throw error;
+      saved.square_item_id=result.square_item_id;
+      saved.square_variation_id=result.square_variation_id;
+    }
   }
 
   async function activateIndividualItem(item) {
@@ -5989,7 +6011,7 @@ const bundleParentByComponentId = bundleComponents.reduce((parents, link) => {
 }, {});
 
 const filteredItems = items.filter((item) => {
-  const matchesSearch = inventoryMatchesSearch(item, searchTerm);
+  const matchesSearch = inventoryMatchesSearch(item, searchTerm) && aceMatchesFilters(item, aceFilters);
 
   const matchesCurriculum =
     !curriculumFilter || item.curriculum === curriculumFilter;
@@ -6022,6 +6044,7 @@ const filteredItems = items.filter((item) => {
 }).sort((a, b) => compareInventoryItems(a, b, inventorySortBy));
 
 const activeInventoryFilterCount = [
+  ...Object.values(aceFilters),
   curriculumFilter,
   subjectFilter,
   categoryFilter,
@@ -8299,6 +8322,7 @@ function renderUserManagement() {
       <span>Book Intake</span>
       <div className="intake-title-row">
         <h2>Add Item</h2>
+        <button type="button" className="primary" onClick={() => setAceIntakeOpen(true)}>ACE PACE Intake</button>
         <details className="intake-help">
           <summary aria-label="Book processing help" title="Book processing help">?</summary>
           <div className="intake-help-content">
@@ -8989,6 +9013,11 @@ function renderUserManagement() {
       {!authLoading && !shouldShowPasswordSetup && isAuthenticated && view === "inventory" && (
         <section className="card">
           <h2>Inventory</h2>
+          <details className="ace-filter-panel"><summary>ACE curriculum filters</summary><div className="ace-grid">
+            <label><input type="checkbox" checked={!!aceFilters.ace} onChange={e=>setAceFilters({...aceFilters,ace:e.target.checked?'yes':''})}/> ACE curriculum only</label>
+            {Object.entries({subject:ACE_SUBJECTS,level:Array.from({length:12},(_,i)=>String(i+1)),materialType:ACE_TYPES,edition:[...new Set(items.filter(i=>i.ace_details).map(i=>i.ace_details.edition))],condition:['Like New / Unused','Good','Fair','Poor'],complete:['true','false']}).map(([key,values])=><label key={key}>{{subject:'Subject',level:'Grade / Level',materialType:'Material type',edition:'Edition',condition:'Condition',complete:'Complete / Partial'}[key]}<select value={aceFilters[key]||''} onChange={e=>setAceFilters({...aceFilters,[key]:e.target.value})}><option value="">All</option>{values.map(value=><option key={value} value={value}>{key==='complete'?(value==='true'?'Complete sets':'Partial sets'):value}</option>)}</select></label>)}
+            <label>PACE number<input type="number" value={aceFilters.number||''} onChange={e=>setAceFilters({...aceFilters,number:e.target.value})}/></label><button type="button" onClick={()=>setAceFilters({})}>Clear ACE Filters</button>
+          </div></details>
         <div className="stats-grid">
   <div className="stat-card">
     <strong>Total Titles</strong>
@@ -9738,7 +9767,7 @@ function renderUserManagement() {
                 locationFilter ||
                 inventoryDateFrom ||
                 inventoryDateTo ||
-                inventorySortBy !== "newest") && (
+                inventorySortBy !== "newest" || Object.values(aceFilters).some(Boolean)) && (
                 <button
                   type="button"
                   className="filter-reset"
@@ -9752,6 +9781,7 @@ function renderUserManagement() {
                     setInventoryDateFrom("");
                     setInventoryDateTo("");
                     setInventorySortBy("newest");
+                    setAceFilters({});
                   }}
                 >
                   Reset Filters
@@ -9910,6 +9940,7 @@ function renderUserManagement() {
             </nav>
 
             <div className="options-content">
+          {isAdmin && optionsSection === "lists" && <AcePricingSettings />}
 
           {optionsSection === "lists" && (<>
 
@@ -11088,6 +11119,7 @@ function renderUserManagement() {
 )}
   </section>
 )}
+      {showStaffShell && aceIntakeOpen && <AcePaceIntake onClose={()=>setAceIntakeOpen(false)} onSaved={loadItems} syncSquare={syncAceSquare} />}
       {showBackToTop && (
         <button
           type="button"
