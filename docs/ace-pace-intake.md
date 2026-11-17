@@ -34,3 +34,10 @@ Saving generates the existing 2 x 1-inch sticker PDF, with one label per receive
 The GitHub validation branch runs database/unit tests, changed-file lint, a build, and a headless browser check with a simulated camera. It does not create real inventory or contact Square.
 
 Complete 12-PACE sets show the editable complete-set base price for every condition. Pricing remains visible while other fields are unfinished; validation still blocks invalid saves. Lower the final price for writing or wear as needed. Specialized sets with a different expected count remain manually priced.
+
+
+## Single save action and writing-only intake
+
+The only submit action is Save & Add Another. Every successful stock receipt automatically creates its sticker PDF before Square synchronization, so a Square retry never needs to receive the stock again or create another automatic sticker. Successful synchronization prepares the next form immediately; a slow inventory refresh runs separately. Required complete-set confirmation and save errors are announced beside the save area, with progress shown during save.
+
+Condition is no longer an intake choice or a condition claim in generated descriptions. Writing Present drives writing-related pricing; new records keep Not assessed internally for the existing schema, while historical condition information is preserved. The ACE inventory filter offers Writing Present in place of Condition.

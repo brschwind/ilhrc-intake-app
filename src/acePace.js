@@ -14,8 +14,9 @@ export function parseAceNumbers(text) {
   }
   return [...new Set(numbers)].sort((a,b)=>a-b);
 }
-export const newAceDraft = () => ({subject:'English',level:'4',edition:'Unknown',condition:'Like New / Unused',writing:'No writing',materialType:'Complete subject set',older:false,custom:false,numbers:aceNumbersForLevel(4),customNumbers:'',expectedCount:12,confirmed:false,tests:false,keys:false,compatibility:'Unknown',quantity:1,price:'',sku:''});
+export const newAceDraft = () => ({subject:'English',level:'4',edition:'Unknown',writing:'No writing',materialType:'Complete subject set',older:false,custom:false,numbers:aceNumbersForLevel(4),customNumbers:'',expectedCount:12,confirmed:false,tests:false,keys:false,compatibility:'Unknown',quantity:1,price:'',sku:''});
 export function buildAceItem(draft, prices=ACE_PRICES) {
+  const condition = draft.condition || 'Not assessed';
   const sku = String(draft.sku || '').trim().toUpperCase();
   if (sku && !/^[A-Z0-9][A-Z0-9._/-]{0,63}$/.test(sku)) throw new Error('Use 1-64 letters, numbers, dots, slashes, underscores or hyphens for the SKU.');
   const numbers = draft.custom ? parseAceNumbers(draft.customNumbers) : [...new Set(draft.numbers)].sort((a,b)=>a-b);
@@ -36,8 +37,8 @@ export function buildAceItem(draft, prices=ACE_PRICES) {
   const suffix = complete ? `PACEs ${range} — Complete Set` : draft.materialType==='Partial subject set' ? `${numbers.length} PACEs${missing.length?` (Missing ${missing.join(', ')})`:''}` : `${draft.materialType}${range?` ${range}`:''}`;
   const title = `ACE ${draft.subject} — ${draft.level?`Level ${draft.level} — `:''}${suffix}${draft.edition==='Mixed editions'?' — Mixed Editions':''}`;
   const components = [draft.tests?'tests':null,draft.keys?'Score Keys':null].filter(Boolean);
-  const notes = `${complete?'Complete':set?'Partial':'Individual'} ${draft.materialType}. Included PACE numbers: ${numbers.join(', ') || 'Not specified'}.${missing.length?` Missing: ${missing.join(', ')}.`:''} ${draft.level?`Approximate level ${draft.level}; specialized courses may differ.`:''} Condition: ${draft.condition}. ${draft.writing}. Edition: ${draft.edition}. ${components.length?`Bundled ${components.join(' and ')}; edition compatibility: ${draft.compatibility}.`:'Student bundles include no separate tests or keys.'} Price is for one ${set?'entire bundle':'item'}.`;
-  return {...(sku ? {sku} : {}),title,notes,category:set?'Bundle / Kit':draft.materialType==='Score Key'||draft.materialType==='Test Key'?'Answer Key':draft.materialType==='Teacher Manual'?'Teacher Guide':'Workbook & Tests',primary_category:'Curriculum',subcategory:'ACE / School of Tomorrow',curriculum:'ACE',publisher:'ACE / School of Tomorrow',subject:draft.subject,grade_level:String(draft.level),edition:draft.edition,condition:draft.condition,final_price:price,suggested_price:suggested,quantity:Number(draft.quantity),item_type:'individual',ace_details:{subject:draft.subject,level:String(draft.level),numbers,edition:draft.edition,condition:draft.condition,writing:draft.writing,materialType:draft.materialType,complete,tests:draft.tests,keys:draft.keys,compatibility:components.length?draft.compatibility:'Unknown',older:draft.older,expectedCount:Number(draft.expectedCount)}};
+  const notes = `${complete?'Complete':set?'Partial':'Individual'} ${draft.materialType}. Included PACE numbers: ${numbers.join(', ') || 'Not specified'}.${missing.length?` Missing: ${missing.join(', ')}.`:''} ${draft.level?`Approximate level ${draft.level}; specialized courses may differ.`:''} ${draft.writing}. Edition: ${draft.edition}. ${components.length?`Bundled ${components.join(' and ')}; edition compatibility: ${draft.compatibility}.`:'Student bundles include no separate tests or keys.'} Price is for one ${set?'entire bundle':'item'}.`;
+  return {...(sku ? {sku} : {}),title,notes,category:set?'Bundle / Kit':draft.materialType==='Score Key'||draft.materialType==='Test Key'?'Answer Key':draft.materialType==='Teacher Manual'?'Teacher Guide':'Workbook & Tests',primary_category:'Curriculum',subcategory:'ACE / School of Tomorrow',curriculum:'ACE',publisher:'ACE / School of Tomorrow',subject:draft.subject,grade_level:String(draft.level),edition:draft.edition,condition,final_price:price,suggested_price:suggested,quantity:Number(draft.quantity),item_type:'individual',ace_details:{subject:draft.subject,level:String(draft.level),numbers,edition:draft.edition,condition,writing:draft.writing,materialType:draft.materialType,complete,tests:draft.tests,keys:draft.keys,compatibility:components.length?draft.compatibility:'Unknown',older:draft.older,expectedCount:Number(draft.expectedCount)}};
 }
 export function aceMatchesFilters(item, filters) {
   if(!Object.values(filters).some(Boolean)) return true;
@@ -53,7 +54,7 @@ export function aceStickerItem(saved) {
 }
 
 export function getAceSuggestedPrice(draft, prices = ACE_PRICES) {
-  const unused = draft.condition === 'Like New / Unused' && draft.writing === 'No writing';
+  const unused = draft.writing === 'No writing';
   let suggested = null;
   if (draft.materialType === 'Complete subject set' && Number(draft.expectedCount ?? 12) === 12) {
     suggested = Number(prices[draft.older ? 'older' : 'complete']);

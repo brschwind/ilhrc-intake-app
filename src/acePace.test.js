@@ -95,3 +95,15 @@ test('Word Building complete-set suggestion stays visible for condition changes 
   assert.equal(buildAceItem(draft({ subject: 'Word Building', condition: 'Good', price: '5' })).final_price, 5);
   assert.equal(getAceSuggestedPrice(draft({ subject: 'Word Building' }), { ...ACE_PRICES, complete: 6 }), 6);
 });
+
+test('writing-only intake never claims a physical condition and retains replacement PACE pricing', () => {
+  const selection = draft({ subject: 'Word Building' });
+  assert.equal(selection.condition, undefined);
+  const item = buildAceItem(selection);
+  assert.equal(item.condition, 'Not assessed');
+  assert.equal(item.ace_details.condition, 'Not assessed');
+  assert.equal(item.notes.includes('Condition:'), false);
+  assert.equal(item.suggested_price, 8);
+  assert.equal(buildAceItem(draft({ materialType: 'Student PACE', numbers: [1037] })).suggested_price, .75);
+  assert.equal(buildAceItem(draft({ materialType: 'Student PACE', numbers: [1037], writing: 'Some writing' })).suggested_price, null);
+});

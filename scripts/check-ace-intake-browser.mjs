@@ -9,7 +9,7 @@ const html = '<!doctype html><html><head><meta name="viewport" content="width=de
   'import React from "react"; import {createRoot} from "react-dom/client";' +
   'import AcePaceIntake from "/src/AcePaceIntake.jsx"; import {aceStickerItem} from "/src/acePace.js"; import "/src/App.css";' +
   'window.acePrints=[]; createRoot(document.getElementById("root")).render(React.createElement(AcePaceIntake,{' +
-  'onClose:()=>{},onSaved:async()=>{},syncSquare:async()=>{},generateSku:async()=>"ILHRC-999999",' +
+  'onClose:()=>{},onSaved:async()=>{if(window.aceNeverRefresh)await new Promise(()=>{});},syncSquare:async()=>{if(window.aceFailSync){window.aceFailSync=false;throw new Error("Simulated Square failure");}},generateSku:async()=>"ILHRC-999999",' +
   'uploadPhoto:async file=>{window.aceUploaded={type:file.type,size:file.size};return "https://ace-test.supabase.co/storage/v1/object/public/book-covers/test.jpg";},' +
   'onPrint:item=>window.acePrints.push(aceStickerItem(item))}));</script></body></html>';
 await writeFile(fixturePath, html);
@@ -32,12 +32,14 @@ try {
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   let savedPayload;
+  let receiptCalls = 0;
   await page.route('https://ace-test.supabase.co/**', async route => {
     const url = route.request().url();
     let body;
     if (url.includes('/ace_pricing')) body = { prices: { complete: 8, older: 5, individual: .75, partial: .5, scoreKey: 1, test: .25 } };
     else if (url.includes('/rpc/receive_ace_intake')) {
       const request = route.request().postDataJSON();
+      receiptCalls += 1;
       savedPayload = request.p_item;
       body = { ...request.p_item, id: 100, sku: request.p_item.sku || 'ILHRC-999999', quantity: request.p_quantity, received_quantity: request.p_quantity };
     } else if (url.includes('/storage/')) {
@@ -57,24 +59,32 @@ try {
   assert.equal(await page.getByRole('combobox', { name: 'Grade / Level' }).evaluate(el => getComputedStyle(el).backgroundColor), 'rgb(255, 255, 255)');
 
   await page.getByRole('combobox', { name: 'Subject', exact: true }).selectOption('Word Building');
-  await page.getByRole('combobox', { name: 'Condition', exact: true }).selectOption('Good');
+  assert.equal(await page.getByRole('combobox', { name: 'Condition', exact: true }).count(), 0);
   await page.getByRole('textbox', { name: 'Listing SKU' }).fill('unfinished SKU');
   assert.equal(await page.getByText('$8.00', { exact: true }).isVisible(), true);
   await page.getByRole('textbox', { name: 'Listing SKU' }).fill('');
-  await page.getByRole('combobox', { name: 'Condition', exact: true }).selectOption('Like New / Unused');
   await page.getByRole('button', { name: 'Take Photo', exact: true }).click();
   await page.getByRole('button', { name: 'Use This Photo' }).click();
   await page.getByAltText('ACE listing photo preview').waitFor();
   await page.getByRole('textbox', { name: 'Listing SKU' }).fill('ace-math-5');
+  assert.equal(await page.getByRole('button', { name: 'Save & Print Sticker', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Save & Add Another', exact: true }).click();
+  await page.getByText('Confirm that all expected student PACEs are present before saving.').waitFor();
+  assert.equal(receiptCalls, 0);
   await page.getByLabel('All 12 student PACEs are present').check();
-  await page.getByRole('button', { name: 'Save & Print Sticker', exact: true }).click();
+  await page.evaluate(() => { window.aceFailSync = true; window.aceNeverRefresh = true; });
+  await page.getByRole('button', { name: 'Save & Add Another', exact: true }).click();
   await page.getByRole('button', { name: /Print Sticker - ACE-MATH-5/ }).waitFor();
   assert.equal(savedPayload.sku, 'ACE-MATH-5');
   assert.equal(savedPayload.image_url, 'https://ace-test.supabase.co/storage/v1/object/public/book-covers/test.jpg');
   assert.equal(savedPayload.ace_details.numbers.length, 12);
   assert.ok((await page.evaluate(() => window.aceUploaded)).size > 0);
   assert.equal(await page.evaluate(() => window.acePrints[0].label_quantity), 1);
-  await page.getByRole('button', { name: 'Add Another Listing' }).click();
+  assert.equal(receiptCalls, 1);
+  await page.getByRole('button', { name: 'Retry Square Sync' }).click();
+  await page.getByRole('button', { name: 'Save & Add Another', exact: true }).waitFor();
+  assert.equal(receiptCalls, 1, 'Square retry must not receive stock again');
+  assert.equal(await page.evaluate(() => window.acePrints.length), 1, 'Square retry must not create a second sticker');
   assert.equal(await page.getByRole('textbox', { name: 'Listing SKU' }).inputValue(), '');
   assert.equal(await page.getByAltText('ACE listing photo preview').count(), 0);
   await page.getByRole('button', { name: 'Generate SKU', exact: true }).click();
@@ -86,10 +96,23 @@ try {
   await page.waitForFunction(() => window.acePrints.length === 2);
   assert.equal(await page.evaluate(() => window.acePrints[1].label_quantity), 3);
   assert.equal(await page.evaluate(() => window.acePrints[1].ace_details.numbers.length), 11);
+  await page.waitForFunction(() => document.querySelector('#ace-sku')?.value === '');
+  assert.equal(await page.getByRole('combobox', { name: 'Subject', exact: true }).inputValue(), 'Word Building');
+  assert.equal(await page.getByRole('combobox', { name: 'Writing present', exact: true }).inputValue(), 'No writing');
+  await page.getByRole('button', { name: 'Complete Set', exact: true }).click();
+  await page.getByLabel('All 12 student PACEs are present').check();
+  await page.getByRole('textbox', { name: 'Listing SKU' }).fill('KEYBOARD-SAVE');
+  await page.getByRole('textbox', { name: 'Listing SKU' }).press('Enter');
+  await page.waitForFunction(() => window.acePrints.length === 3);
+  await page.waitForFunction(() => document.querySelector('#ace-sku')?.value === '');
+  assert.equal(receiptCalls, 3);
+  assert.equal(await page.evaluate(() => window.acePrints[2].label_quantity), 1);
+  assert.equal(savedPayload.condition, 'Not assessed');
+  assert.equal(savedPayload.notes.includes('Condition:'), false);
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   assert.deepEqual(errors, []);
-  console.log('ACE browser checks passed: grade dropdown, camera capture, SKU, one sticker per set, partial quantities, next listing reset and mobile width.');
+  console.log('ACE browser checks passed: visible incomplete-set errors, automatic stickers before Square sync, one save action, next listing reset, keyboard save, no condition control and mobile width.');
 } finally {
   await browser?.close();
   server.kill();

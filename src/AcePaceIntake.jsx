@@ -34,6 +34,8 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
+  const [messageKind, setMessageKind] = useState('status');
+  const [stickerError, setStickerError] = useState('');
   const [duplicates, setDuplicates] = useState(null);
   const [receipt, setReceipt] = useState(null);
   const [lastSaved, setLastSaved] = useState(null);
@@ -41,7 +43,7 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
   const lock = useRef(false);
   const requestId = useRef(null);
   const uploadedPhoto = useRef(null);
-  const continueNext = useRef(false);
+  const feedback = useRef(null);
   const heading = useRef(null);
 
   useEffect(() => {
@@ -52,6 +54,14 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
     });
   }, []);
   useEffect(() => () => { if (photo?.preview) URL.revokeObjectURL(photo.preview); }, [photo]);
+
+  function report(text, kind = 'status') {
+    setMessage(text);
+    setMessageKind(kind);
+    if (kind === 'error' || kind === 'choice') {
+      requestAnimationFrame(() => feedback.current?.focus());
+    }
+  }
 
   function change(key, value) {
     setDraft(current => ({ ...current, [key]: value }));
@@ -88,10 +98,11 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
     if (lock.current) return;
     lock.current = true;
     setBusy(true);
-    setMessage('');
+    setStickerError('');
+    report('Checking this listing...');
     try {
       const candidate = buildAceItem(draft, prices);
-      if (candidate.final_price === null) throw new Error('Enter a manual selling price for this material and condition.');
+      if (candidate.final_price === null) throw new Error('Enter a manual selling price for this material.');
       const candidateSignature = JSON.stringify(candidate);
       const retry = requestId.current?.candidateSignature === candidateSignature;
       if (retry) existingId = requestId.current.existingId;
@@ -101,10 +112,15 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
           .eq('subject', candidate.subject).eq('grade_level', candidate.grade_level)
           .eq('edition', candidate.edition).eq('condition', candidate.condition).in('status', ['Available', 'Hold']);
         if (error) throw error;
-        if (data.length) { setDuplicates(data); return; }
+        if (data.length) {
+          setDuplicates(data);
+          report('Matching listing found. Choose Increase Existing Quantity or Create Separate Listing below.', 'choice');
+          return;
+        }
       }
       if (!retry) {
         if (photo && uploadedPhoto.current?.file !== photo.file) {
+          report('Uploading the listing photo...');
           uploadedPhoto.current = { file: photo.file, url: await uploadPhoto(photo.file) };
         }
         requestId.current = {
@@ -112,6 +128,7 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
           payload: { ...candidate, image_url: uploadedPhoto.current?.url || '' },
         };
       }
+      report('Adding this listing to inventory...');
       const { data, error } = await supabase.rpc('receive_ace_intake', {
         p_item: requestId.current.payload, p_quantity: candidate.quantity,
         p_existing_id: existingId, p_request_id: requestId.current.id,
@@ -119,28 +136,32 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
       if (error) throw error;
       setReceipt({ item: data, synced: false });
       setDuplicates(null);
+      setLastSaved(data);
+      print(data);
       await finishSync(data);
-    } catch (e) { setMessage(e.message); }
+    } catch (e) { report(e.message || 'The listing could not be saved. Please try again.', 'error'); }
     finally { lock.current = false; setBusy(false); }
   }
 
   function print(saved) {
-    try { onPrint(saved); }
-    catch (e) { setMessage('Inventory saved. Sticker could not be created: ' + e.message + '. Use Print Sticker to retry.'); }
+    try { onPrint(saved); setStickerError(''); }
+    catch (e) { setStickerError('Inventory saved. Sticker could not be created: ' + e.message + '. Use Print Sticker to retry.'); }
   }
 
   async function finishSync(saved) {
+    report('Listing saved and sticker prepared. Syncing Square...');
     try { await syncSquare(saved); }
     catch (e) {
-      setMessage('Inventory saved. Square sync needs retry: ' + e.message + '. Do not re-enter these sets.');
+      report('Inventory saved, but Square sync needs retry: ' + e.message + '. Do not re-enter this listing. Use Retry Square Sync.', 'error');
       return;
     }
-    setReceipt({ item: saved, synced: true });
-    setLastSaved(saved);
-    setMessage(saved.received_quantity + ' x ' + saved.title + ' added to Processing. SKU: ' + saved.sku + '. Sticker PDF created, one sticker per sellable set or item.');
-    print(saved);
-    await onSaved();
-    if (continueNext.current) next();
+    next();
+    report(saved.received_quantity + ' x ' + saved.title + ' saved. SKU: ' + saved.sku + '. Ready for the next listing.', 'success');
+    heading.current?.focus();
+    // Refresh inventory in the background; a slow refresh must not block the next intake.
+    Promise.resolve().then(() => onSaved()).catch(() => {
+      report('The listing was saved, but the inventory screen could not refresh. Refresh the page to see the updated inventory.', 'error');
+    });
   }
 
   const select = (label, key, options) => <label>{label}<select value={draft[key]} onChange={e => change(key, e.target.value)}>
@@ -152,21 +173,18 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
       <h2 id="ace-intake-heading" ref={heading} tabIndex={-1}>ACE PACE Intake</h2>
       <p className="helper-text">One listing, photo, SKU and sticker for the whole set.</p>
     </div><button className="secondary" disabled={busy} type="button" onClick={onClose}>Back to Book Intake</button></div>
-    {message && <p role="status" className="ace-status">{message}</p>}
+    {lastSaved && <p className="ace-status">Last saved: {lastSaved.title} - SKU {lastSaved.sku} - {lastSaved.received_quantity} set(s) / item(s).</p>}
     {lastSaved && <div className="intake-actions"><button className="secondary" type="button" onClick={() => print(lastSaved)}>Print Sticker{lastSaved.received_quantity > 1 ? 's' : ''} - {lastSaved.sku}</button></div>}
 
     {receipt ? <section className="ace-receipt">
       <h3>{receipt.item.title}</h3><p><strong>SKU: {receipt.item.sku}</strong></p>
       {receipt.item.image_url && <img className="ace-photo-preview" src={receipt.item.image_url} alt="Saved ACE listing" />}
       {!receipt.synced ? <button className="primary" disabled={busy} type="button" onClick={async () => {
-        setBusy(true); try { await finishSync(receipt.item); } finally { setBusy(false); }
-      }}>Retry Square Sync</button> : <div className="intake-actions">
-        <button className="primary" type="button" onClick={next}>Add Another Listing</button>
-        <button className="secondary" type="button" onClick={() => {
-          next(); setDraft(current => ({ ...current, materialType: 'Score Key', numbers: [current.numbers[0]], confirmed: false }));
-        }}>Add Separately Priced Score Key</button>
-      </div>}
-    </section> : <form onSubmit={event => { event.preventDefault(); save(); }}>
+        if (lock.current) return;
+        lock.current = true; setBusy(true);
+        try { await finishSync(receipt.item); } finally { lock.current = false; setBusy(false); }
+      }}>Retry Square Sync</button> : <button className="secondary" type="button" onClick={next}>Add Another Listing</button>}
+    </section> : <form aria-busy={busy} onInvalid={event => report(event.target.type === 'checkbox' ? 'Confirm that all expected student PACEs are present before saving.' : event.target.validationMessage, 'error')} onSubmit={event => { event.preventDefault(); save(); }}>
       <fieldset className="ace-fields" disabled={busy}>
         <div className="ace-grid">
           {select('Subject', 'subject', ACE_SUBJECTS)}
@@ -179,7 +197,6 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
             }
           }}>{Array.from({ length: 12 }, (_, i) => <option key={i} value={String(i + 1)}>Level {i + 1}</option>)}<option value="custom">Custom course / numbering</option></select></label>
           {select('Material type', 'materialType', ACE_TYPES)}
-          {select('Condition', 'condition', ['Like New / Unused', 'Good', 'Fair', 'Poor'])}
           {select('Writing present', 'writing', ['No writing', 'Some writing', 'Completed', 'Unknown'])}
           <label>Number of identical sets / items<input type="number" required min="1" step="1" value={draft.quantity} onChange={e => change('quantity', Number(e.target.value))} /></label>
         </div>
@@ -204,7 +221,7 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
           setDraft(current => ({ ...current, numbers: number ? [number] : [], level: String(aceLevelForNumber(number) || current.level) }));
           setDuplicates(null); requestId.current = null;
         }} /></label>}
-        {draft.materialType === 'Complete subject set' && <label className="ace-check"><input type="checkbox" checked={draft.confirmed} onChange={e => change('confirmed', e.target.checked)} />All {draft.expectedCount} student PACEs are present</label>}
+        {draft.materialType === 'Complete subject set' && <label className="ace-check"><input type="checkbox" required checked={draft.confirmed} onChange={e => change('confirmed', e.target.checked)} />All {draft.expectedCount} student PACEs are present</label>}
         {/subject set$/.test(draft.materialType) && <div className="ace-supporting-materials">
           <label className="ace-check"><input type="checkbox" checked={draft.tests} onChange={e => change('tests', e.target.checked)} />Include tests in this bundle</label>
           <label className="ace-check"><input type="checkbox" checked={draft.keys} onChange={e => change('keys', e.target.checked)} />Include Score Keys in this bundle</label>
@@ -219,7 +236,7 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
         </div>
         <section className="ace-listing-preview" aria-label="Listing preview">
           <h3>{item?.title || 'Listing preview'}</h3><p>{item?.notes}</p>
-          <div className="ace-grid"><div><p>Suggested price</p><strong>{suggestedPrice == null ? 'Manual pricing required' : '$' + suggestedPrice.toFixed(2)}</strong><p className="helper-text">Per entire set or individual item</p>{draft.materialType === 'Complete subject set' && (draft.condition !== 'Like New / Unused' || draft.writing !== 'No writing') && <p className="helper-text">Complete-set base price. Adjust the selling price for condition or writing.</p>}</div>
+          <div className="ace-grid"><div><p>Suggested price</p><strong>{suggestedPrice == null ? 'Manual pricing required' : '$' + suggestedPrice.toFixed(2)}</strong><p className="helper-text">Per entire set or individual item</p>{draft.materialType === 'Complete subject set' && draft.writing !== 'No writing' && <p className="helper-text">Complete-set base price. Adjust the selling price for writing.</p>}</div>
             <label>Final selling price ($)<input type="number" min="0" step="0.01" placeholder={suggestedPrice ?? 'Required'} value={draft.price} onChange={e => change('price', e.target.value)} /></label></div>
           <p><strong>{draft.quantity} sellable set(s) / item(s) = {draft.quantity} sticker(s).</strong> Student PACEs inside a set share one sticker.</p>
         </section>
@@ -230,10 +247,12 @@ export default function AcePaceIntake({ onClose, onSaved, syncSquare, uploadPhot
             {!!item?.sku && item.sku !== existing.sku?.toUpperCase() && <p className="helper-text">Create a separate listing to use your new SKU, or clear the SKU field to add to {existing.sku}.</p>}
           </div>)}<button className="primary" type="button" onClick={() => save('separate')}>Create Separate Listing</button>
         </section> : <div className="intake-save-bar">
-          <button className="primary" type="submit" disabled={!ready || !!error} onClick={() => { continueNext.current = false; }}>{busy ? 'Saving...' : 'Save & Print Sticker'}</button>
-          <button className="secondary" type="submit" disabled={!ready || !!error} onClick={() => { continueNext.current = true; }}>Save &amp; Add Another</button>
+          <button className="primary" type="submit" disabled={!ready} aria-busy={busy}>{busy ? 'Saving...' : 'Save & Add Another'}</button>
+          <p className="helper-text">Saving automatically creates one sticker per sellable set or item.</p>
         </div>}
       </fieldset>
     </form>}
+    <div ref={feedback} tabIndex={-1} className={messageKind === 'error' ? 'warning-text ace-feedback' : 'ace-status ace-feedback'} role={messageKind === 'error' ? 'alert' : 'status'}>{message}</div>
+    {stickerError && <p role="alert" className="warning-text">{stickerError}</p>}
   </section>;
 }
