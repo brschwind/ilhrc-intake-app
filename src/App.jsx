@@ -584,6 +584,8 @@ export default function App({ connectionsWorkflowService, connectionsStaffEnable
   const [labelLocationFilter, setLabelLocationFilter] = useState("");
   const [labelDateFrom, setLabelDateFrom] = useState("");
   const [labelDateTo, setLabelDateTo] = useState("");
+  const [selectedLabelIds, setSelectedLabelIds] = useState([]);
+  const [removingLabels, setRemovingLabels] = useState(false);
 
   const [locationFilter, setLocationFilter] = useState("");
   const [inventoryDateFrom, setInventoryDateFrom] = useState("");
@@ -5828,10 +5830,13 @@ async function addSelectedToPrintQueue() {
 }
 
 async function removeFromPrintQueue(itemsToRemove) {
+  if (removingLabels) return;
   const queueItems = (itemsToRemove || []).filter(Boolean);
   if (queueItems.length === 0) return;
-  if (!confirm(`Remove ${queueItems.length === 1 ? `“${queueItems[0].title}”` : `${queueItems.length} visible titles`} from the print queue?`)) return;
+  if (!confirm(`Remove ${queueItems.length === 1 ? `"${queueItems[0].title}"` : `${queueItems.length} titles`} from the print queue? Inventory will stay unchanged.`)) return;
 
+  setRemovingLabels(true);
+  try {
   const { error } = await supabase
     .from("items")
     .update({
@@ -5849,7 +5854,13 @@ async function removeFromPrintQueue(itemsToRemove) {
   await logAudit("inventory_labels_dequeued", "items", null, {
     item_ids: queueItems.map((item) => item.id),
   });
+  setSelectedLabelIds((current) => current.filter((id) => !queueItems.some((item) => item.id === id)));
   await loadItems();
+  } catch (error) {
+    alert("Could not remove labels from the queue: " + error.message);
+  } finally {
+    setRemovingLabels(false);
+  }
 }
 
 function generateLabels(itemsToPrint) {
@@ -10798,11 +10809,32 @@ function renderUserManagement() {
 
 <button
   className="secondary"
-  disabled={labelItems.length === 0}
+  disabled={removingLabels || labelItems.length === 0}
   onClick={() => removeFromPrintQueue(labelItems)}
 >
   Remove Visible from Queue
 </button>
+
+<button
+  type="button"
+  className="secondary"
+  disabled={removingLabels || !labelItems.some((item) => selectedLabelIds.includes(item.id))}
+  onClick={() => removeFromPrintQueue(labelItems.filter((item) => selectedLabelIds.includes(item.id)))}
+>
+  {removingLabels ? "Removing…" : `Remove Selected from Queue (${labelItems.filter((item) => selectedLabelIds.includes(item.id)).length})`}
+</button>
+
+{labelItems.length > 0 && (
+  <label className="checkbox-label">
+    <input
+      type="checkbox"
+      disabled={removingLabels}
+      checked={labelItems.every((item) => selectedLabelIds.includes(item.id))}
+      onChange={(event) => setSelectedLabelIds(event.target.checked ? labelItems.map((item) => item.id) : [])}
+    />
+    Select all visible listings
+  </label>
+)}
 
           <p>
   {labelItems.length} titles waiting for labels
@@ -10819,6 +10851,18 @@ function renderUserManagement() {
               <BookCoverImage src={item.image_url} alt={item.title} />
 
               <div>
+                <label className="checkbox-label">
+                  <input
+                    type="checkbox"
+                    aria-label={`Select ${item.title} for removal from the print queue`}
+                    checked={selectedLabelIds.includes(item.id)}
+                    disabled={removingLabels}
+                    onChange={(event) => setSelectedLabelIds((current) => event.target.checked
+                      ? [...new Set([...current, item.id])]
+                      : current.filter((id) => id !== item.id))}
+                  />
+                  Select listing
+                </label>
                 <h3>{item.title}</h3>
                 {item.item_type === "bundle" && (
                   <p className="bundle-badge">Bundle sticker · {item.bundle_piece_count || 0} pieces</p>
@@ -10828,7 +10872,7 @@ function renderUserManagement() {
                 <p><strong>Labels queued:</strong> {getQueuedLabelQuantity(item)}</p>
                 <p><strong>Category:</strong> {item.category}</p>
                 <p><strong>Queued:</strong> {formatDateAdded(item.label_queued_at || item.created_at)}</p>
-                <button type="button" className="secondary" onClick={() => removeFromPrintQueue([item])}>
+                <button type="button" className="secondary" disabled={removingLabels} onClick={() => removeFromPrintQueue([item])}>
                   Remove from Queue
                 </button>
               </div>
